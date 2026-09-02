@@ -28,6 +28,9 @@ VLAN_KIND = ("vlan", "s_vlan")
 FAMILY = ("ipv4", "ipv6")
 ALLOC_STATUS = ("reservada", "liberada")
 PREFIX_KIND = ("p2p",)
+DIRECTION = ("import", "export")
+PROFILE_KIND = ("produto",)
+AUTH_ORIGIN = ("manual",)
 
 
 class Device(Base):
@@ -281,6 +284,132 @@ class IpPrefix(Base):
         Enum(*ALLOC_STATUS, name="alloc_status"), default="reservada", nullable=False
     )
     notes: Mapped[str | None] = mapped_column(Text())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class PolicyProfile(Base):
+    """Produto de roteamento reutilizável (§6.5/§25.5) — catálogo read-only no ciclo A.
+
+    direction import nasce no ciclo B junto da renderização; os seeds deste
+    plano são os 6 produtos de exportação do §25.5.
+    """
+
+    __tablename__ = "bgp_policy_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)  # slug EN
+    label: Mapped[str] = mapped_column(String(64), nullable=False)  # PT-BR
+    direction: Mapped[str] = mapped_column(Enum(*DIRECTION, name="direction"), nullable=False)
+    kind: Mapped[str] = mapped_column(
+        Enum(*PROFILE_KIND, name="profile_kind"), default="produto", nullable=False
+    )
+    prefixes: Mapped[list | None] = mapped_column(JSON)  # CIDRs de cdn/personalizado
+    notes: Mapped[str | None] = mapped_column(Text())
+    admin_status: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class Community(Base):
+    """Community BGP reutilizável (§25.6) — catálogo read-only no ciclo A.
+
+    O valor concreto (ex.: NO_EXPORT vs ASN:tag) é definido na renderização do
+    ciclo B conforme o template e o ASN local; aqui só o nome lógico.
+    """
+
+    __tablename__ = "communities"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text())
+    admin_status: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class BgpSession(Base):
+    """Sessão BGP por família (§6.3) — SoT da intenção; sem renderização (ciclo B)."""
+
+    __tablename__ = "bgp_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    circuit_id: Mapped[int] = mapped_column(ForeignKey("circuits.id"), nullable=False)
+    device_id: Mapped[int] = mapped_column(ForeignKey("devices.id"), nullable=False)
+    afi: Mapped[str] = mapped_column(Enum(*FAMILY, name="family"), nullable=False)
+    local_address: Mapped[str] = mapped_column(String(64), nullable=False)
+    remote_address: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_address: Mapped[str | None] = mapped_column(String(64))
+    asn_local: Mapped[int | None] = mapped_column(BigInteger)  # default device.asn (§4); sempre resolvido no serviço
+    asn_remote: Mapped[int] = mapped_column(BigInteger, nullable=False)  # default organization.asn (§4)
+    description: Mapped[str | None] = mapped_column(String(255))
+    import_profile_id: Mapped[int | None] = mapped_column(ForeignKey("bgp_policy_profiles.id"))
+    export_profile_id: Mapped[int | None] = mapped_column(ForeignKey("bgp_policy_profiles.id"))
+    maximum_prefix: Mapped[int | None] = mapped_column(Integer)
+    maximum_prefix_threshold: Mapped[int | None] = mapped_column(Integer)  # 0-100 (%)
+    local_preference: Mapped[int | None] = mapped_column(Integer)
+    med: Mapped[int | None] = mapped_column(Integer)
+    prepend: Mapped[int | None] = mapped_column(Integer)  # 0-10
+    keepalive: Mapped[int | None] = mapped_column(Integer)
+    holdtime: Mapped[int | None] = mapped_column(Integer)
+    bfd_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    graceful_restart: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    shutdown: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    allow_default_route: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    password_ref: Mapped[str | None] = mapped_column(String(255))  # path Vault; valor nunca no banco
+    admin_status: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class BgpSessionCommunity(Base):
+    """Associação N:N sessão ↔ community (UNIQUE por par). Linha deletável — a
+    trilha fica na auditoria (ruling 13); sem soft-delete."""
+
+    __tablename__ = "bgp_session_communities"
+
+    __table_args__ = (
+        UniqueConstraint("session_id", "community_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("bgp_sessions.id"), nullable=False)
+    community_id: Mapped[int] = mapped_column(ForeignKey("communities.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class BgpPrefixAuthorization(Base):
+    """Prefixo autorizado de um downstream (origem manual; IRR/RPKI = F5)."""
+
+    __tablename__ = "bgp_prefix_authorizations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False)
+    family: Mapped[str] = mapped_column(Enum(*FAMILY, name="family"), nullable=False)
+    prefix: Mapped[str] = mapped_column(String(64), nullable=False)  # CIDR alinhado
+    origin: Mapped[str] = mapped_column(
+        Enum(*AUTH_ORIGIN, name="auth_origin"), default="manual", nullable=False
+    )
+    notes: Mapped[str | None] = mapped_column(Text())
+    admin_status: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
