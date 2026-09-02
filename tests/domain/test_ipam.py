@@ -1,5 +1,4 @@
 import pytest
-from sqlalchemy.orm import Session
 
 from gerenet.config import get_settings
 from gerenet.domain import models
