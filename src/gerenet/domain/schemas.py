@@ -11,7 +11,8 @@ class DeviceCreate(BaseModel):
     model: str | None = None
     family: str | None = None
     role: str | None = None
-    site: str | None = None
+    site_id: int | None = None
+    asn: int | None = Field(default=None, ge=1, le=4294967295)  # reservados barrados no serviço
     credential_group_id: int | None = None
     tags: list[str] = Field(default_factory=list)
 
@@ -22,7 +23,8 @@ class DeviceUpdate(BaseModel):
     model: str | None = None
     family: str | None = None
     role: str | None = None
-    site: str | None = None
+    site_id: int | None = None
+    asn: int | None = Field(default=None, ge=1, le=4294967295)
     tags: list[str] | None = None
 
 
@@ -37,7 +39,8 @@ class DeviceOut(BaseModel):
     model: str | None
     family: str | None
     role: str | None
-    site: str | None
+    site_id: int | None
+    asn: int | None
     vrp_version: str | None
     comm_status: str
     admin_status: bool

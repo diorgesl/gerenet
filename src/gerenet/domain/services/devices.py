@@ -6,10 +6,13 @@ from sqlalchemy.orm import Session
 
 from gerenet.domain import models
 from gerenet.domain.schemas import DeviceCreate
-from gerenet.domain.services.errors import ConflictError, NotFoundError
+from gerenet.domain.services.errors import ConflictError, NotFoundError, ValidationError
+from gerenet.domain.validators import asn_valido
 
 
 def create_device(session: Session, data: DeviceCreate) -> models.Device:
+    if data.asn is not None and not asn_valido(data.asn):
+        raise ValidationError(f"ASN inválido ou reservado: {data.asn}.")
     dev = models.Device(**data.model_dump())
     session.add(dev)
     try:

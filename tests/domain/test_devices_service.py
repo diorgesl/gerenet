@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from gerenet.domain.schemas import DeviceCreate
 from gerenet.domain.services.devices import create_device, disable_device, get_device, list_devices
-from gerenet.domain.services.errors import ConflictError, NotFoundError
+from gerenet.domain.services.errors import ConflictError, NotFoundError, ValidationError
 
 
 def test_cria_lista_desativa_device(db_session: Session) -> None:
@@ -33,3 +33,8 @@ def test_ssh_port_persiste_e_default_e_none(db_session: Session) -> None:
 def test_get_device_inexistente(db_session: Session) -> None:
     with pytest.raises(NotFoundError):
         get_device(db_session, 9999)
+
+
+def test_asn_reservado_vira_erro_de_validacao(db_session: Session) -> None:
+    with pytest.raises(ValidationError, match="reservado"):
+        create_device(db_session, DeviceCreate(name="ne8k", management_address="10.0.0.7", asn=23456))

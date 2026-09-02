@@ -30,7 +30,8 @@ def add(
     model: str | None = typer.Option(None, help="Modelo (ex.: NE8000-M8)."),
     family: str | None = typer.Option(None, help="Família (ex.: ne8000)."),
     role: str | None = typer.Option(None, help="Função (ex.: borda)."),
-    site: str | None = typer.Option(None, help="Site/POP."),
+    site_id: int | None = typer.Option(None, "--site-id", help="ID do site/POP."),
+    asn: int | None = typer.Option(None, "--asn", min=1, max=4294967295, help="ASN local do roteador."),
 ) -> None:
     """Cadastra um equipamento Huawei."""
     with get_session() as session:
@@ -44,7 +45,8 @@ def add(
                     model=model,
                     family=family,
                     role=role,
-                    site=site,
+                    site_id=site_id,
+                    asn=asn,
                 ),
             )
         except GerenetError as exc:
