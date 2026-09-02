@@ -30,6 +30,13 @@ def test_asn_invalido_ou_reservado_rejeitado(db_session: Session) -> None:
             create_organization(db_session, OrganizationCreate(name="Org X", asn=asn), actor="cli")
 
 
+def test_asn_4_bytes_valido_persiste(db_session: Session) -> None:
+    org = create_organization(
+        db_session, OrganizationCreate(name="Org 4 bytes", asn=4000000000), actor="cli"
+    )
+    assert org.asn == 4000000000
+
+
 def test_asn_duplicado_mesmo_desativado_vira_conflito(db_session: Session) -> None:
     org = create_organization(db_session, OrganizationCreate(name="Org A", asn=64512), actor="cli")
     disable_organization(db_session, org.id, actor="cli")

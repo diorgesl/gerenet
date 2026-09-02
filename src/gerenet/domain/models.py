@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import JSON, Boolean, BigInteger, DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from gerenet.db import Base
@@ -30,7 +30,7 @@ class Device(Base):
     family: Mapped[str | None] = mapped_column(String(64))
     role: Mapped[str | None] = mapped_column(String(64))
     site_id: Mapped[int | None] = mapped_column(ForeignKey("sites.id"))
-    asn: Mapped[int | None] = mapped_column(Integer)  # ASN local do roteador (§5)
+    asn: Mapped[int | None] = mapped_column(BigInteger)  # ASN local do roteador (§5)
     vrp_version: Mapped[str | None] = mapped_column(String(64))
     uptime: Mapped[str | None] = mapped_column(String(128))
     admin_status: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -148,7 +148,7 @@ class Organization(Base):
     name: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     legal_name: Mapped[str | None] = mapped_column(String(255))
     kind: Mapped[str] = mapped_column(Enum(*ORG_KIND, name="org_kind"), default="downstream", nullable=False)
-    asn: Mapped[int | None] = mapped_column(Integer, unique=True)
+    asn: Mapped[int | None] = mapped_column(BigInteger, unique=True)
     irr_as_set: Mapped[str | None] = mapped_column(String(64))
     commercial_status: Mapped[str] = mapped_column(String(16), default="ativo", nullable=False)
     operational_status: Mapped[str] = mapped_column(String(16), default="ativo", nullable=False)

@@ -50,6 +50,15 @@ def test_asn_reservado_vira_erro_de_validacao(db_session: Session) -> None:
         )
 
 
+def test_asn_4_bytes_valido_persiste(db_session: Session) -> None:
+    dev = create_device(
+        db_session,
+        DeviceCreate(name="ne8k-4byte", management_address="10.0.0.11", asn=4000000000),
+        actor="cli",
+    )
+    assert dev.asn == 4000000000
+
+
 def test_criar_e_desativar_device_auditam(db_session: Session) -> None:
     dev = create_device(
         db_session,
