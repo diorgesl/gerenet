@@ -1,0 +1,6 @@
+Value Required version (\S+)
+Value uptime (.+)
+
+Start
+  ^VRP \(R\) software, Version ${version}
+  ^.* uptime is ${uptime} -> Record
