@@ -55,6 +55,7 @@ def connect_and_run(device, username: str, password: str, commands: list[str], s
         conn = ConnectHandler(
             device_type="huawei_vrp",
             host=device.management_address,
+            port=device.ssh_port or 22,
             username=username,
             password=password,
             conn_timeout=settings.connect_timeout,

@@ -16,6 +16,7 @@ class Device(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     management_address: Mapped[str] = mapped_column(String(255), nullable=False)
+    ssh_port: Mapped[int | None] = mapped_column(Integer)  # None = porta padrão 22 na conexão
     vendor: Mapped[str] = mapped_column(String(32), default="huawei", nullable=False)
     model: Mapped[str | None] = mapped_column(String(64))
     family: Mapped[str | None] = mapped_column(String(64))

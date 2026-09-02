@@ -92,3 +92,29 @@ def test_conecta_e_roda_com_host_key_ok(monkeypatch: pytest.MonkeyPatch) -> None
     saidas = connect_and_run(dev, "u", "p", ["display version"], SETTINGS)
     assert saidas == {"display version": "saida bruta"}
     conn.send_command.assert_called_once_with("display version", read_timeout=SETTINGS.read_timeout)
+
+
+def test_usa_porta_ssh_do_device(monkeypatch: pytest.MonkeyPatch) -> None:
+    kwargs_vistos: dict = {}
+    monkeypatch.setattr(
+        "gerenet.automation.netmiko_conn.ConnectHandler",
+        lambda **kwargs: kwargs_vistos.update(kwargs) or _conexao_fake(),
+    )
+    dev = MagicMock()
+    dev.name, dev.management_address, dev.host_key_fingerprint = "r1", "10.0.0.1", _fingerprint_de(b"chave-de-teste")
+    dev.ssh_port = 61341
+    connect_and_run(dev, "u", "p", ["display version"], SETTINGS)
+    assert kwargs_vistos["port"] == 61341
+
+
+def test_porta_default_22_quando_device_sem_ssh_port(monkeypatch: pytest.MonkeyPatch) -> None:
+    kwargs_vistos: dict = {}
+    monkeypatch.setattr(
+        "gerenet.automation.netmiko_conn.ConnectHandler",
+        lambda **kwargs: kwargs_vistos.update(kwargs) or _conexao_fake(),
+    )
+    dev = MagicMock()
+    dev.name, dev.management_address, dev.host_key_fingerprint = "r1", "10.0.0.1", _fingerprint_de(b"chave-de-teste")
+    dev.ssh_port = None
+    connect_and_run(dev, "u", "p", ["display version"], SETTINGS)
+    assert kwargs_vistos["port"] == 22

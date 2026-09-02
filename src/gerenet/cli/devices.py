@@ -26,6 +26,7 @@ def resolver(session, device: str):
 def add(
     name: str = typer.Option(..., help="Nome único do equipamento."),
     address: str = typer.Option(..., "--address", help="Endereço de gerenciamento."),
+    ssh_port: int | None = typer.Option(None, "--ssh-port", min=1, max=65535, help="Porta SSH (default: 22)."),
     model: str | None = typer.Option(None, help="Modelo (ex.: NE8000-M8)."),
     family: str | None = typer.Option(None, help="Família (ex.: ne8000)."),
     role: str | None = typer.Option(None, help="Função (ex.: borda)."),
@@ -36,7 +37,15 @@ def add(
         try:
             dev = svc.create_device(
                 session,
-                DeviceCreate(name=name, management_address=address, model=model, family=family, role=role, site=site),
+                DeviceCreate(
+                    name=name,
+                    management_address=address,
+                    ssh_port=ssh_port,
+                    model=model,
+                    family=family,
+                    role=role,
+                    site=site,
+                ),
             )
         except GerenetError as exc:
             typer.echo(f"Erro: {exc}", err=True)

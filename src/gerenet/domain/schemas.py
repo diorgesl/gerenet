@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class DeviceCreate(BaseModel):
     name: str = Field(min_length=1, max_length=64)
     management_address: str
+    ssh_port: int | None = Field(default=None, ge=1, le=65535)
     vendor: str = "huawei"
     model: str | None = None
     family: str | None = None
@@ -17,6 +18,7 @@ class DeviceCreate(BaseModel):
 
 class DeviceUpdate(BaseModel):
     admin_status: bool | None = None
+    ssh_port: int | None = Field(default=None, ge=1, le=65535)
     model: str | None = None
     family: str | None = None
     role: str | None = None
@@ -30,6 +32,7 @@ class DeviceOut(BaseModel):
     id: int
     name: str
     management_address: str
+    ssh_port: int | None
     vendor: str
     model: str | None
     family: str | None

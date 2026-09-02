@@ -56,16 +56,17 @@ e re-rode. Registre no commit o padrão real observado.
 
 ## Passo 3 — Registrar device, host key e credencial no gerenet
 
-**3a. Descobrir o fingerprint real (formato OpenSSH `sha256:`):**
+**3a. Descobrir o fingerprint real (formato OpenSSH `sha256:`)** — troque `<porta>` pela
+porta SSH real (ex.: `-p 61341`; `ssh-keygen -lf` lê do stdin com `-f -`, não `-` solto):
 
 ```bash
-ssh-keyscan -t rsa <ip-mgmt> 2>/dev/null | ssh-keygen -lf -E sha256 -   # anotar "SHA256:..."
+ssh-keyscan -p <porta> -t rsa <ip-mgmt> 2>/dev/null | ssh-keygen -lf -E sha256 -f -   # anotar "SHA256:..."
 ```
 
 **3b. Cadastrar o device** (nomes VRP derivam do ASN em fases futuras; aqui use um nome de lab):
 
 ```bash
-uv run gerenet devices add --name <nome> --address <ip-mgmt> --family ne8000 --role borda
+uv run gerenet devices add --name <nome> --address <ip-mgmt> --ssh-port <porta> --family ne8000 --role borda
 ```
 
 **3c. Registrar o fingerprint** (é validado em TODA conexão — fail-closed; erro de digitação
