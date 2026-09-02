@@ -1,6 +1,8 @@
 import pytest
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from gerenet.domain import models
 from gerenet.domain.schemas import (
     CircuitCreate,
     CircuitUpdate,
@@ -96,6 +98,26 @@ def test_update_circuito_revalida_vinculos(db_session: Session) -> None:
     outro_site = create_site(db_session, SiteCreate(name="pop-rj-02"), actor="cli")
     with pytest.raises(ValidationError, match="não pertence ao site"):
         update_circuit(db_session, circ.id, CircuitUpdate(site_id=outro_site.id), actor="cli")
+
+
+def test_update_circuito_audita_delta_somente_dos_campos_mudados(db_session: Session) -> None:
+    org_id, site_id, sw_id, ne_id, _ = _ambiente(db_session)
+    circ = create_circuit(
+        db_session,
+        _circuito(site_id, org_id, sw_id, ne_id, description="desc original"),
+        actor="cli",
+    )
+    update_circuit(db_session, circ.id, CircuitUpdate(description="desc nova"), actor="cli")
+
+    eventos = list(
+        db_session.scalars(select(models.AuditEvent).order_by(models.AuditEvent.id))
+    )
+    circuitos = [e for e in eventos if e.type.startswith("circuit.")]
+    assert [e.type for e in circuitos] == ["circuit.create", "circuit.update"]
+    # contrato do delta: antes/depois carregam apenas os campos alterados,
+    # com o valor anterior lido da linha armazenada
+    assert circuitos[1].details["antes"] == {"description": "desc original"}
+    assert circuitos[1].details["depois"] == {"description": "desc nova"}
 
 
 def test_get_circuito_inexistente(db_session: Session) -> None:

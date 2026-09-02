@@ -95,6 +95,26 @@ def test_desativar_duas_vezes_nao_audita_de_novo(db_session: Session, client: Te
     assert tipos == ["device.create", "device.disable"]
 
 
+def test_patch_update_audita_tipo_update(db_session: Session, client: TestClient) -> None:
+    criado = client.post(
+        "/api/v1/devices",
+        json={"name": "r2-upd", "management_address": "10.0.0.7"},
+        headers=_auth(),
+    )
+    assert criado.status_code == 201
+    dev_id = criado.json()["id"]
+    resp = client.patch(
+        f"/api/v1/devices/{dev_id}", json={"name": "r2-renomeado"}, headers=_auth()
+    )
+    assert resp.status_code == 200
+
+    tipos = [
+        e.type
+        for e in db_session.scalars(select(models.AuditEvent).order_by(models.AuditEvent.id))
+    ]
+    assert tipos == ["device.create", "device.update"]
+
+
 def test_post_asn_reservado_da_400(client: TestClient) -> None:
     resp = client.post(
         "/api/v1/devices",
