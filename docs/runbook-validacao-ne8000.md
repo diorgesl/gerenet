@@ -159,8 +159,19 @@ nenhum backup/config bruto versionado; nada de escrita no equipamento (esta fase
 
 ## Critérios de aceite (cortes 0–2, do plano)
 
-- [ ] `uv run pytest` verde com o compose de pé (26 tests + o golden novo)
-- [ ] CLI: `devices add|list`, `hostkey register`, `vault seed`, `collect run`, `snapshot show` funcionando
+Executada em 2026-09-02 contra NE8000 real (VRP 8.240, gerência na porta 61341).
+
+- [x] `uv run pytest` verde com o compose de pé (32 tests, golden real incluso)
+- [x] CLI: `devices add|list`, `hostkey register`, `vault seed`, `collect run`, `snapshot show` funcionando
 - [ ] API: `/healthz`, CRUD de devices autenticado, `POST /devices/{id}/collect` (202/409/404), snapshots
-- [ ] Coleta real read-only de 1 NE8000: snapshot success com `version` parseado, backup em `data/backups/`, device atualizado, `job_runs`/`audit_events` íntegros
-- [ ] Nenhuma credencial em git/banco/logs; host key validada antes de toda conexão; nenhum comando fora da allowlist
+      — coberta pela suíte (32 passed); sem chamada manual via curl nesta execução
+- [x] Coleta real read-only de 1 NE8000: snapshot `success` com `version` parseado (8.240 + uptime),
+      backup em `data/backups/ne8k-lab/` (config 172.6K, gitignored), device atualizado
+      (`comm_status=ok`, `vrp_version=8.240`, `last_collected_at`), `job_runs`/`audit_events` íntegros
+- [x] Nenhuma credencial em git/banco/logs; host key validada antes de toda conexão (fail-closed
+      demonstrado ao vivo: fingerprint errado ⇒ coleta recusada sem executar comando);
+      nenhum comando fora da allowlist
+
+Observações da execução: worker no macOS precisa de `OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES`
+(crash do fork do RQ × runtime ObjC — não afeta container Linux); `ssh-keyscan -t rsa` não basta
+se o servidor negocia outra chave — registrar a que o paramiko recebe (o erro de host key mostra).
