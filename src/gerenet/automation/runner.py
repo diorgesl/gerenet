@@ -1,3 +1,4 @@
+import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -23,6 +24,27 @@ def _nome_do_arquivo(comando: str) -> str:
     return partes[1] if len(partes) > 1 else "output"
 
 
+_LIBERTA_LOCK = """
+if redis.call("get", KEYS[1]) == ARGV[1] then
+    return redis.call("del", KEYS[1])
+end
+return 0
+"""
+
+
+def _liberta_lock(redis: Redis, chave_lock: str, token: str) -> None:
+    """Libera o lock via compare-and-delete: só apaga se o valor ainda for o nosso token.
+
+    Se o TTL expirou e outro worker readquiriu, o lock dele não é tocado. Falha de
+    comunicação com o Redis aqui é ignorada — o TTL expira sozinho e o resultado
+    da coleta não pode ser mascarado por falha na liberação.
+    """
+    try:
+        redis.eval(_LIBERTA_LOCK, 1, chave_lock, token)
+    except Exception:  # redis indisponível na liberação: TTL expira sozinho
+        pass
+
+
 def run_collection(
     device_id: int,
     *,
@@ -32,14 +54,19 @@ def run_collection(
     session_override: Session | None = None,
 ) -> dict:
     settings = settings or get_settings()
+    session_propria = session_override is None
     session = session_override or SessionLocal()
     job: JobRun | None = None
     snapshot: DeviceSnapshot | None = None
 
     redis = Redis.from_url(settings.redis_url)
     chave_lock = f"gerenet:lock:device:{device_id}"
-    if not redis.set(chave_lock, "1", nx=True, ex=settings.lock_ttl_seconds):
+    # Token único por execução: a liberação só apaga o lock se ainda for nosso.
+    token = secrets.token_hex(16)
+    if not redis.set(chave_lock, token, nx=True, ex=settings.lock_ttl_seconds):
         redis.close()
+        if session_propria:
+            session.close()
         return {"status": "error", "snapshot_id": None, "error": "Equipamento já está sendo coletado (lock ativo)."}
     try:
         dev = device_svc.get_device(session, device_id)
@@ -116,5 +143,7 @@ def run_collection(
             session.commit()
         return {"status": "error", "snapshot_id": snapshot.id if snapshot else None, "error": str(exc)}
     finally:
-        redis.delete(chave_lock)  # no-op se o lock nunca foi adquirido
+        _liberta_lock(redis, chave_lock, token)
+        if session_propria:
+            session.close()
         redis.close()

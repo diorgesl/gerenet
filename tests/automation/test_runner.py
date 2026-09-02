@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from redis import Redis
 from sqlalchemy.orm import Session
 
 from gerenet.automation.netmiko_conn import ConnectionFailed
@@ -98,3 +99,76 @@ def test_falha_de_conexao_marca_device_como_fail(
     db_session.refresh(dev)
     assert dev.comm_status == "fail"
     assert dev.consecutive_failures == 1
+
+
+def test_sessao_autocriada_e_fechada(
+    db_session: Session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dev = _dev_com_grupo(db_session, "r3", "10.0.0.3")
+    settings = Settings(_env_file=None, backups_dir=tmp_path)
+    fechadas: list[object] = []
+
+    def _fabrica_sessao():
+        from gerenet.db import SessionLocal as _SessionLocalReal
+
+        sessao = _SessionLocalReal()
+        _close_real = sessao.close
+
+        def _close_rastreado():
+            fechadas.append(sessao)
+            _close_real()
+
+        sessao.close = _close_rastreado
+        return sessao
+
+    monkeypatch.setattr("gerenet.automation.runner.SessionLocal", _fabrica_sessao)
+    monkeypatch.setattr("gerenet.automation.runner.VaultSecretStore", VaultFake)
+    monkeypatch.setattr(
+        "gerenet.automation.runner._conectar_e_executar",
+        lambda device, username, password, commands, settings: {cmd: SAIDAS[cmd] for cmd in commands},
+    )
+
+    resultado = run_collection(dev.id, settings=settings)
+    assert resultado["status"] == "success"
+    assert len(fechadas) == 1
+
+
+def test_lock_alheio_nao_e_liberado(db_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    dev = _dev_com_grupo(db_session, "r4", "10.0.0.4")
+    settings = Settings(_env_file=None, backups_dir=Path("/tmp"))
+    redis = Redis.from_url(settings.redis_url)
+    chave = f"gerenet:lock:device:{dev.id}"
+    redis.set(chave, "token-de-outro", nx=True, ex=300)
+    try:
+        # Lock de outro worker ativo: o runner cai no early-return antes de conectar.
+        resultado = run_collection(dev.id, settings=settings)
+        assert resultado["status"] == "error"
+        assert "lock" in resultado["error"]
+        assert redis.get(chave) == b"token-de-outro"
+    finally:
+        redis.delete(chave)
+        redis.close()
+
+
+def test_lock_proprio_e_liberado(
+    db_session: Session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dev = _dev_com_grupo(db_session, "r5", "10.0.0.5")
+    settings = Settings(_env_file=None, backups_dir=tmp_path)
+    redis = Redis.from_url(settings.redis_url)
+    chave = f"gerenet:lock:device:{dev.id}"
+
+    monkeypatch.setattr("gerenet.automation.runner.VaultSecretStore", VaultFake)
+    monkeypatch.setattr(
+        "gerenet.automation.runner._conectar_e_executar",
+        lambda device, username, password, commands, settings: {cmd: SAIDAS[cmd] for cmd in commands},
+    )
+
+    try:
+        resultado = run_collection(dev.id, settings=settings, session_override=db_session)
+        assert resultado["status"] == "success"
+        # Compare-and-delete no caminho feliz: o lock próprio foi liberado.
+        assert redis.get(chave) is None
+    finally:
+        redis.delete(chave)
+        redis.close()
