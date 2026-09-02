@@ -1,0 +1,71 @@
+import base64
+import hashlib
+from unittest.mock import MagicMock
+
+import pytest
+
+from gerenet.automation.netmiko_conn import (
+    CommandNotAllowed,
+    HostKeyMismatch,
+    connect_and_run,
+)
+from gerenet.config import Settings
+
+SETTINGS = Settings(_env_file=None)
+
+
+def _fingerprint_de(bytes_chave: bytes) -> str:
+    b64 = base64.b64encode(hashlib.sha256(bytes_chave).digest()).decode()
+    return f"sha256:{b64}"
+
+
+def _conexao_fake() -> MagicMock:
+    conn = MagicMock()
+    chave = MagicMock()
+    chave.asbytes.return_value = b"chave-de-teste"
+    conn.remote_conn.transport.get_remote_server_key.return_value = chave
+    return conn
+
+
+def test_recusa_comando_fora_da_allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "gerenet.automation.netmiko_conn.ConnectHandler",
+        lambda **kwargs: _conexao_fake(),
+    )
+    dev = MagicMock()
+    dev.name, dev.management_address, dev.host_key_fingerprint = "r1", "10.0.0.1", _fingerprint_de(b"chave-de-teste")
+    with pytest.raises(CommandNotAllowed):
+        connect_and_run(dev, "u", "p", ["configure terminal"], SETTINGS)
+
+
+def test_fingerprint_ausente_impede_conexao(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "gerenet.automation.netmiko_conn.ConnectHandler",
+        lambda **kwargs: _conexao_fake(),
+    )
+    dev = MagicMock()
+    dev.name, dev.management_address, dev.host_key_fingerprint = "r1", "10.0.0.1", None
+    with pytest.raises(HostKeyMismatch):
+        connect_and_run(dev, "u", "p", ["display version"], SETTINGS)
+
+
+def test_fingerprint_divergente_impede_conexao(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "gerenet.automation.netmiko_conn.ConnectHandler",
+        lambda **kwargs: _conexao_fake(),
+    )
+    dev = MagicMock()
+    dev.name, dev.management_address, dev.host_key_fingerprint = "r1", "10.0.0.1", "sha256:outra=="
+    with pytest.raises(HostKeyMismatch):
+        connect_and_run(dev, "u", "p", ["display version"], SETTINGS)
+
+
+def test_conecta_e_roda_com_host_key_ok(monkeypatch: pytest.MonkeyPatch) -> None:
+    conn = _conexao_fake()
+    conn.send_command.return_value = "saida bruta"
+    monkeypatch.setattr("gerenet.automation.netmiko_conn.ConnectHandler", lambda **kwargs: conn)
+    dev = MagicMock()
+    dev.name, dev.management_address, dev.host_key_fingerprint = "r1", "10.0.0.1", _fingerprint_de(b"chave-de-teste")
+    saidas = connect_and_run(dev, "u", "p", ["display version"], SETTINGS)
+    assert saidas == {"display version": "saida bruta"}
+    conn.send_command.assert_called_once_with("display version", read_timeout=SETTINGS.read_timeout)
