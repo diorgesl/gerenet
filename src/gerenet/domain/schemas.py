@@ -112,3 +112,42 @@ class ContactUpdate(BaseModel):
     email: str | None = Field(default=None, max_length=255)
     phone: str | None = Field(default=None, max_length=32)
     kind: Literal["tecnico", "noc", "admin"] | None = None
+
+
+class CircuitCreate(BaseModel):
+    code: str = Field(min_length=1, max_length=64)
+    organization_id: int
+    site_id: int
+    access_device_id: int
+    access_port: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9/\-]+$")
+    edge_device_id: int
+    backup_edge_device_id: int | None = None
+    stack: Literal["ipv4", "ipv6", "dual"] = "dual"
+    vlan_mode: Literal["unica", "separada"] = "unica"
+    qinq: bool = False
+    vrf: str | None = Field(default=None, max_length=64)
+    mtu: int | None = Field(default=None, ge=576, le=9600)
+    bandwidth: str | None = Field(default=None, max_length=32)
+    bfd: bool = False
+    p2p_v4_len: Literal[30, 31] = 31
+    description: str | None = Field(default=None, max_length=255)
+    notes: str | None = None
+
+
+class CircuitUpdate(BaseModel):
+    organization_id: int | None = None
+    site_id: int | None = None
+    access_device_id: int | None = None
+    access_port: str | None = Field(default=None, min_length=1, max_length=64, pattern=r"^[A-Za-z0-9/\-]+$")
+    edge_device_id: int | None = None
+    backup_edge_device_id: int | None = None
+    stack: Literal["ipv4", "ipv6", "dual"] | None = None
+    vlan_mode: Literal["unica", "separada"] | None = None
+    qinq: bool | None = None
+    vrf: str | None = Field(default=None, max_length=64)
+    mtu: int | None = Field(default=None, ge=576, le=9600)
+    bandwidth: str | None = Field(default=None, max_length=32)
+    bfd: bool | None = None
+    p2p_v4_len: Literal[30, 31] | None = None
+    description: str | None = Field(default=None, max_length=255)
+    notes: str | None = None
