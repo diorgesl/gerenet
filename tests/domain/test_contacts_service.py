@@ -51,3 +51,17 @@ def test_update_contact_muda_organizacao(db_session: Session) -> None:
     )
     assert atualizado.organization_id == org_b
     assert atualizado.phone == "11 99999-0000"
+
+
+def test_update_contact_organizacao_zero_vira_nao_encontrada(db_session: Session) -> None:
+    org_id = _org(db_session)
+    contato = create_contact(db_session, ContactCreate(organization_id=org_id, name="Fulano"), actor="cli")
+    with pytest.raises(NotFoundError):
+        update_contact(db_session, contato.id, ContactUpdate(organization_id=0), actor="cli")
+
+
+def test_update_contact_organizacao_nula_explicita_rejeitada(db_session: Session) -> None:
+    org_id = _org(db_session)
+    contato = create_contact(db_session, ContactCreate(organization_id=org_id, name="Fulano"), actor="cli")
+    with pytest.raises(ValidationError, match="organization_id é obrigatório"):
+        update_contact(db_session, contato.id, ContactUpdate(organization_id=None), actor="cli")

@@ -45,7 +45,12 @@ def update_contact(session: Session, contact_id: int, data: ContactUpdate, *, ac
     mudancas = data.model_dump(exclude_unset=True)
     if not mudancas:
         return contato
-    if mudancas.get("organization_id"):
+    # Presença explícita ("in" + None check), como em circuits: um id 0 explícito
+    # segue para o check de existência e vira NotFoundError, em vez de pular a
+    # validação e explodir como IntegrityError cru no commit (finding Task 7).
+    if "organization_id" in mudancas:
+        if mudancas["organization_id"] is None:
+            raise ValidationError("organization_id é obrigatório.")
         get_organization(session, mudancas["organization_id"])
     if mudancas.get("email") and not email_valido(mudancas["email"]):
         raise ValidationError(f"E-mail inválido: {mudancas['email']}.")
