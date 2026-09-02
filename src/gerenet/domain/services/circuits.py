@@ -97,7 +97,10 @@ def update_circuit(session: Session, circuit_id: int, data: CircuitUpdate, *, ac
         session.commit()
     except IntegrityError as exc:
         session.rollback()
-        raise ConflictError(f"Já existe um circuito com o código {mudancas.get('code')}.") from exc
+        # CircuitUpdate não tem campo code; mensagem fixa (PT-BR) para o operador
+        raise ConflictError(
+            f"Não foi possível atualizar o circuito {circuit_id}: conflito de integridade."
+        ) from exc
     session.refresh(circ)
     return circ
 
