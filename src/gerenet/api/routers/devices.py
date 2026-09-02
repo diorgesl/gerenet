@@ -55,7 +55,13 @@ def atualizar(device_id: int, data: DeviceUpdate, session: SessionDep) -> object
         if mudancas.get("asn") is not None and not asn_valido(mudancas["asn"]):
             raise ValidationError(f"ASN inválido ou reservado: {mudancas['asn']}.")
         antes = {campo: getattr(dev, campo) for campo in mudancas}
-        desativando = mudancas.get("admin_status") is False and set(mudancas) == {"admin_status"}
+        desativando = (
+            mudancas.get("admin_status") is False
+            and set(mudancas) == {"admin_status"}
+            and dev.admin_status is not False
+        )
+        if mudancas == {"admin_status": False} and not desativando:
+            return dev  # repeat disable: sem transição, sem evento (Ruling 5)
         registrar(
             session,
             tipo="device.disable" if desativando else "device.update",
