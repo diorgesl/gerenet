@@ -33,6 +33,7 @@ Topologia da operação, registrada na sessão de design de 2026-09-02: **o MPLS
 8. **Password de sessão BGP no Vault** (§6.3 "armazenada como segredo"): valor nunca no banco — coluna guarda apenas o path (`gerenet/bgp-sessions/<id>/password`, padrão SecretStore da F1); exposições mostram só `has_password`.
 9. **ASN local do roteador entra no cadastro de devices** (`devices.asn`, migração; dado do §5 que a F1 não modelou); a sessão usa `asn_local` default do device com override explícito.
 10. **Sem máquina de estados §6.6 neste ciclo**: só `admin_status` (ativo/desativado, padrão F1; desativar nunca exclui — §14.1). A máquina completa (rascunho → … → desativado) nasce no ciclo C junto das mudanças; desativar circuito **preserva** reservas (histórico), liberação explícita para reuso fica para a remoção de serviço (ciclo C).
+11. **(registrada em 2026-09-02, durante o P1)** — PATCH combinado em devices (`admin_status=false` + outros campos) dispara `device.update` e **não** reseta `comm_status` para `unknown` (a rota da F1 resetava em qualquer desativação). Desativação pura (único campo) dispara `device.disable`; desativação repetida é no-op **sem evento** de auditoria (transição de fato, Ruling 5). Quem planejar o P3 (API dos novos objetos) não deve "restaurar" o reset da F1 sem decisão explícita.
 
 ## 4. Modelo de dados
 
