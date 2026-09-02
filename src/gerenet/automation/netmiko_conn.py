@@ -6,7 +6,10 @@ from netmiko import ConnectHandler
 
 from gerenet.automation.hostkeys import normalize_fingerprint
 
-_ALLOWED_COMMAND = re.compile(r"^display\b")
+# Linha única começando com "display": aceita o comando sozinho ou com argumentos.
+# (Com \n/\r já excluídos no laço, o fullmatch garante que nada além de uma linha
+# display seja enviado — "display\nreboot" jamais chegaria ao equipamento.)
+_ALLOWED_COMMAND = re.compile(r"display(?:\s|$).*")
 
 
 class HostKeyMismatch(Exception):
@@ -45,7 +48,7 @@ def connect_and_run(device, username: str, password: str, commands: list[str], s
             "nenhum fingerprint registrado — use `gerenet hostkey register` antes de coletar",
         )
     for cmd in commands:
-        if not _ALLOWED_COMMAND.match(cmd):
+        if "\n" in cmd or "\r" in cmd or _ALLOWED_COMMAND.fullmatch(cmd) is None:
             raise CommandNotAllowed(f"Comando fora da allowlist read-only: {cmd!r}")
 
     try:

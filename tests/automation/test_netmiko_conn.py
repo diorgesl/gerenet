@@ -37,6 +37,19 @@ def test_recusa_comando_fora_da_allowlist(monkeypatch: pytest.MonkeyPatch) -> No
     handler.assert_not_called()
 
 
+def test_recusa_comando_multilinha_antes_de_conectar(monkeypatch: pytest.MonkeyPatch) -> None:
+    """'display\\nreboot' casa com ^display\\b (\\b entre 'y' e '\\n'); o netmiko mandaria
+    as duas linhas e o equipamento executaria a segunda. A allowlist é a única
+    garantia read-only (§19): rejeitar antes de qualquer conexão."""
+    handler = MagicMock(return_value=_conexao_fake())
+    monkeypatch.setattr("gerenet.automation.netmiko_conn.ConnectHandler", handler)
+    dev = MagicMock()
+    dev.name, dev.management_address, dev.host_key_fingerprint = "r1", "10.0.0.1", _fingerprint_de(b"chave-de-teste")
+    with pytest.raises(CommandNotAllowed):
+        connect_and_run(dev, "u", "p", ["display\nreboot"], SETTINGS)
+    handler.assert_not_called()
+
+
 def test_fingerprint_ausente_impede_conexao(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "gerenet.automation.netmiko_conn.ConnectHandler",

@@ -133,6 +133,40 @@ def test_sessao_autocriada_e_fechada(
     assert len(fechadas) == 1
 
 
+def test_redis_fora_do_ar_retorna_dict_e_fecha_sessao(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Redis fora do ar antes do try interno: contrato dict mantido, sem exceção propagada,
+    e a sessão autocriada é fechada (o fix anterior cobriu os caminhos dentro do try)."""
+    from redis.exceptions import ConnectionError as RedisConnectionError
+
+    fechadas: list[object] = []
+
+    def _fabrica_sessao():
+        from gerenet.db import SessionLocal as _SessionLocalReal
+
+        sessao = _SessionLocalReal()
+        _close_real = sessao.close
+
+        def _close_rastreado():
+            fechadas.append(sessao)
+            _close_real()
+
+        sessao.close = _close_rastreado
+        return sessao
+
+    def _from_url_que_falha(*args, **kwargs):
+        raise RedisConnectionError("redis fora do ar")
+
+    monkeypatch.setattr("gerenet.automation.runner.SessionLocal", _fabrica_sessao)
+    monkeypatch.setattr("gerenet.automation.runner.Redis.from_url", _from_url_que_falha)
+
+    # A falha acontece antes de qualquer acesso ao banco: device inexistente basta.
+    resultado = run_collection(9999, settings=Settings(_env_file=None))
+    assert resultado["status"] == "error"
+    assert resultado["snapshot_id"] is None
+    assert resultado["error"]
+    assert len(fechadas) == 1
+
+
 def test_lock_alheio_nao_e_liberado(db_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
     dev = _dev_com_grupo(db_session, "r4", "10.0.0.4")
     settings = Settings(_env_file=None, backups_dir=Path("/tmp"))
