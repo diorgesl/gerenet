@@ -5,17 +5,23 @@ from sqlalchemy.orm import Session
 from gerenet.domain import models
 from gerenet.domain.schemas import (
     BgpSessionCreate,
+    BgpSessionUpdate,
     CircuitCreate,
     DeviceCreate,
     OrganizationCreate,
     SiteCreate,
 )
 from gerenet.domain.services.bgp_sessions import (
+    add_community,
     create_session,
+    disable_session,
     get_session,
     list_sessions,
+    remove_community,
+    update_session,
 )
 from gerenet.domain.services.circuits import create_circuit
+from gerenet.domain.services.communities import list_communities
 from gerenet.domain.services.devices import create_device
 from gerenet.domain.services.errors import ConflictError, NotFoundError, ValidationError
 from gerenet.domain.services.organizations import create_organization
@@ -328,3 +334,168 @@ def test_audita_criacao(db_session: Session) -> None:
 def test_get_e_sessao_inexistente(db_session: Session) -> None:
     with pytest.raises(NotFoundError, match="Sessão BGP 9999 não encontrada"):
         get_session(db_session, 9999)
+
+
+def test_update_altera_campos_e_audita_delta(db_session: Session) -> None:
+    env = _ambiente(db_session)
+    circ_id = _circuito(db_session, env, code="CIRC-0030", edge_id=env["ne1_id"])
+    sessao = create_session(db_session, _sessao_data(env, circ_id, env["ne1_id"]), actor="cli")
+    atualizada = update_session(
+        db_session, sessao.id, BgpSessionUpdate(description="sessão principal", med=50),
+        actor="cli",
+    )
+    assert atualizada.description == "sessão principal"
+    assert atualizada.med == 50
+    evento = db_session.scalars(
+        select(models.AuditEvent).order_by(models.AuditEvent.id.desc())
+    ).all()[0]
+    assert evento.type == "bgp_session.update"
+    assert evento.details["antes"] == {"description": None, "med": None}
+    assert evento.details["depois"] == {"description": "sessão principal", "med": 50}
+
+
+def test_update_null_explicito_em_campo_obrigatorio_rejeitado(db_session: Session) -> None:
+    env = _ambiente(db_session)
+    circ_id = _circuito(db_session, env, code="CIRC-0031", edge_id=env["ne1_id"])
+    sessao = create_session(db_session, _sessao_data(env, circ_id, env["ne1_id"]), actor="cli")
+    for campo in ("circuit_id", "device_id", "afi", "local_address", "remote_address", "asn_local", "asn_remote"):
+        with pytest.raises(ValidationError, match=f"{campo} é obrigatório"):
+            update_session(db_session, sessao.id, BgpSessionUpdate(**{campo: None}), actor="cli")
+
+
+def test_update_null_explicito_limpa_campo_opcional(db_session: Session) -> None:
+    env = _ambiente(db_session)
+    circ_id = _circuito(db_session, env, code="CIRC-0032", edge_id=env["ne1_id"])
+    sessao = create_session(
+        db_session,
+        _sessao_data(
+            env, circ_id, env["ne1_id"], description="com descrição",
+            source_address="100.64.0.1", maximum_prefix=500,
+        ),
+        actor="cli",
+    )
+    atualizada = update_session(
+        db_session, sessao.id,
+        BgpSessionUpdate(description=None, source_address=None, maximum_prefix=None),
+        actor="cli",
+    )
+    assert atualizada.description is None
+    assert atualizada.source_address is None
+    assert atualizada.maximum_prefix is None
+
+
+def test_update_troca_device_para_backup_e_revalida(db_session: Session) -> None:
+    env = _ambiente(db_session)
+    circ_id = create_circuit(
+        db_session,
+        CircuitCreate(
+            code="CIRC-0033", organization_id=env["org_id"], site_id=env["site_id"],
+            access_device_id=env["sw_id"], access_port="GE0/0/1",
+            edge_device_id=env["ne1_id"], backup_edge_device_id=env["ne2_id"],
+        ),
+        actor="cli",
+    ).id
+    sessao = create_session(db_session, _sessao_data(env, circ_id, env["ne1_id"]), actor="cli")
+    atualizada = update_session(db_session, sessao.id, BgpSessionUpdate(device_id=env["ne2_id"]), actor="cli")
+    assert atualizada.device_id == env["ne2_id"]
+    # asn_local continua o da criação (64600) — snapshot da intenção, não re-deriva
+
+
+def test_update_para_device_fora_do_circuito_rejeitado(db_session: Session) -> None:
+    env = _ambiente(db_session)
+    circ_id = _circuito(db_session, env, code="CIRC-0034", edge_id=env["ne1_id"])
+    sessao = create_session(db_session, _sessao_data(env, circ_id, env["ne1_id"]), actor="cli")
+    with pytest.raises(ValidationError, match="não é edge/backup_edge"):
+        update_session(db_session, sessao.id, BgpSessionUpdate(device_id=env["ne2_id"]), actor="cli")
+
+
+def test_update_colide_com_outra_sessao(db_session: Session) -> None:
+    env = _ambiente(db_session)
+    circ_a = _circuito(db_session, env, code="CIRC-0035", edge_id=env["ne1_id"], vrf="CLIENTE-A")
+    create_session(db_session, _sessao_data(env, circ_a, env["ne1_id"]), actor="cli")
+    # segunda sessão em VRF diferente convive…
+    circ_b = _circuito(db_session, env, code="CIRC-0036", edge_id=env["ne1_id"])
+    sessao_b = create_session(
+        db_session,
+        _sessao_data(env, circ_b, env["ne1_id"], local="100.64.2.1", remote="100.64.2.2"),
+        actor="cli",
+    )
+    # …mas mudar a sessão B para a VRF CLIENTE-A colide com a sessão A
+    with pytest.raises(ConflictError, match="Já existe sessão ipv4 ativa no equipamento ne8k-bgp1"):
+        update_session(
+            db_session, sessao_b.id, BgpSessionUpdate(circuit_id=circ_a), actor="cli"
+        )
+
+
+def test_update_mantem_a_propria_linha_fora_da_colisao(db_session: Session) -> None:
+    env = _ambiente(db_session)
+    circ_id = _circuito(db_session, env, code="CIRC-0037", edge_id=env["ne1_id"])
+    sessao = create_session(db_session, _sessao_data(env, circ_id, env["ne1_id"]), actor="cli")
+    # reenviar os próprios valores não colide consigo mesma
+    atualizada = update_session(
+        db_session, sessao.id,
+        BgpSessionUpdate(local_address="100.64.0.1", remote_address="100.64.0.2",
+                         description="no-op de conteúdo"),
+        actor="cli",
+    )
+    assert atualizada.description == "no-op de conteúdo"
+
+
+def test_disable_idempotente_audita_uma_transicao(db_session: Session) -> None:
+    env = _ambiente(db_session)
+    circ_id = _circuito(db_session, env, code="CIRC-0038", edge_id=env["ne1_id"])
+    sessao = create_session(db_session, _sessao_data(env, circ_id, env["ne1_id"]), actor="cli")
+    disable_session(db_session, sessao.id, actor="cli")
+    assert get_session(db_session, sessao.id).admin_status is False
+    assert list_sessions(db_session) == []
+    assert [s.id for s in list_sessions(db_session, include_disabled=True)] == [sessao.id]
+
+    disable_session(db_session, sessao.id, actor="cli")  # repetido: no-op sem evento
+    eventos = db_session.scalars(
+        select(models.AuditEvent).where(models.AuditEvent.type == "bgp_session.disable")
+    ).all()
+    assert len(eventos) == 1
+
+
+def test_add_remove_community_com_auditoria(db_session: Session) -> None:
+    env = _ambiente(db_session)
+    circ_id = _circuito(db_session, env, code="CIRC-0039", edge_id=env["ne1_id"])
+    sessao = create_session(db_session, _sessao_data(env, circ_id, env["ne1_id"]), actor="cli")
+    com = list_communities(db_session)[0]
+
+    add_community(db_session, sessao.id, com.id, actor="cli")
+    add_community(db_session, sessao.id, com.id, actor="cli")  # repetida: no-op sem evento
+    vinculos = db_session.scalars(
+        select(models.BgpSessionCommunity).where(
+            models.BgpSessionCommunity.session_id == sessao.id
+        )
+    ).all()
+    assert len(vinculos) == 1
+
+    evento = db_session.scalars(
+        select(models.AuditEvent).order_by(models.AuditEvent.id.desc())
+    ).all()[0]
+    assert evento.type == "bgp_session.add_community"
+    assert evento.details["depois"] == {"community_id": com.id, "community": com.name}
+
+    remove_community(db_session, sessao.id, com.id, actor="cli")
+    assert db_session.scalars(
+        select(models.BgpSessionCommunity).where(
+            models.BgpSessionCommunity.session_id == sessao.id
+        )
+    ).all() == []
+    remove_community(db_session, sessao.id, com.id, actor="cli")  # repetido: no-op
+    evento = db_session.scalars(
+        select(models.AuditEvent).order_by(models.AuditEvent.id.desc())
+    ).all()[0]
+    assert evento.type == "bgp_session.remove_community"
+    assert evento.details["antes"] == {"community_id": com.id, "community": com.name}
+    assert evento.details["depois"] is None
+
+
+def test_community_inexistente_na_associacao(db_session: Session) -> None:
+    env = _ambiente(db_session)
+    circ_id = _circuito(db_session, env, code="CIRC-0040", edge_id=env["ne1_id"])
+    sessao = create_session(db_session, _sessao_data(env, circ_id, env["ne1_id"]), actor="cli")
+    with pytest.raises(NotFoundError, match="Community 9999 não encontrada"):
+        add_community(db_session, sessao.id, 9999, actor="cli")

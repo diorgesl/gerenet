@@ -183,3 +183,30 @@ class BgpSessionCreate(BaseModel):
     graceful_restart: bool = False
     shutdown: bool = False
     allow_default_route: bool = False
+
+
+class BgpSessionUpdate(BaseModel):
+    # Not-null na prática (ruling 7): null explícito nesses campos é rejeitado
+    # no serviço com "<campo> é obrigatório."; os demais aceitam null = limpar.
+    circuit_id: int | None = None
+    device_id: int | None = None
+    afi: Literal["ipv4", "ipv6"] | None = None
+    local_address: str | None = Field(default=None, min_length=1, max_length=64)
+    remote_address: str | None = Field(default=None, min_length=1, max_length=64)
+    asn_local: int | None = None
+    asn_remote: int | None = None
+    source_address: str | None = Field(default=None, max_length=64)
+    description: str | None = Field(default=None, max_length=255)
+    import_profile_id: int | None = None
+    export_profile_id: int | None = None
+    maximum_prefix: int | None = None
+    maximum_prefix_threshold: int | None = Field(default=None, ge=0, le=100)
+    local_preference: int | None = None
+    med: int | None = None
+    prepend: int | None = Field(default=None, ge=0, le=10)
+    keepalive: int | None = None
+    holdtime: int | None = None
+    bfd_enabled: bool | None = None
+    graceful_restart: bool | None = None
+    shutdown: bool | None = None
+    allow_default_route: bool | None = None
