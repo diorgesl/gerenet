@@ -166,7 +166,7 @@ Sobreposição de prefixos é regra de **serviço** (não dá para expressar bem
 - `pontas_v4(prefixo)` / `pontas_v6(prefixo, site_base)`: v4 `/31` → local `.0`, remota `.1`; `/30` → local `.1`, remota `.2`. v6 → endereço = base do site + hextets do sufixo + hextet de host: local `…<sufixo>:1`, remota `…<sufixo>:2` dentro do `/126` — ex. golden: `2804:194C:1000::1100:73:1/126` (local) e `…:2/126` (remota), derivados de `100.110.0.73`.
 - `reservar_circuito(session, circuit_id, *, origin, actor)`: valida circuito ativo e site; em transação, grava:
   - `vlans`: 1 linha (`vlan_mode=unica`, `family=NULL`) ou 2 (`separada`, `family=ipv4`/`ipv6`); `qinq=true` ⇒ `kind=s_vlan`;
-  - `ip_prefixes`: p2p v4 `/31` (ou `/30`) + p2p v6 `/126` derivado do v4 escolhido — um par por família ativa do `stack`;
+  - `ip_prefixes`: p2p v4 `/31` (ou `/30`) + p2p v6 `/126` derivado do v4 escolhido — um par por família ativa do `stack`. O sufixo do v6 deriva **sempre** de um v4 p2p (§25.8): circuito `stack=ipv6` também reserva o par v4 (uso interno de derivação, anotado em `notes`); `ipv4` reserva só o v4; `dual` reserva v4 + v6;
   - **idempotente** (§3.2): circuito já reservado ⇒ devolve o estado atual e audita como no-op, sem duplicar;
   - auditoria de reserva (antes/depois com os valores alocados).
 - Conferência formal do `/126` (alinhamento de enlace aceito pelo VRP) com equipamento real fica para o ciclo B; o golden textual §25.8 é a régua do alocador desde já.
