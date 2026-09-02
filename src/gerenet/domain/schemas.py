@@ -158,3 +158,28 @@ class PrefixAuthorizationCreate(BaseModel):
     family: Literal["ipv4", "ipv6"]
     prefix: str = Field(min_length=1, max_length=64)
     notes: str | None = None
+
+
+class BgpSessionCreate(BaseModel):
+    circuit_id: int
+    device_id: int
+    afi: Literal["ipv4", "ipv6"]
+    local_address: str = Field(min_length=1, max_length=64)
+    remote_address: str = Field(min_length=1, max_length=64)
+    source_address: str | None = Field(default=None, max_length=64)
+    asn_local: int | None = None  # default device.asn no serviço (erro se o device não tem)
+    asn_remote: int | None = None  # default organization.asn no serviço (erro se a org não tem)
+    description: str | None = Field(default=None, max_length=255)
+    import_profile_id: int | None = None
+    export_profile_id: int | None = None
+    maximum_prefix: int | None = None
+    maximum_prefix_threshold: int | None = Field(default=None, ge=0, le=100)  # 0–100 (%)
+    local_preference: int | None = None
+    med: int | None = None
+    prepend: int | None = Field(default=None, ge=0, le=10)  # 0–10
+    keepalive: int | None = None
+    holdtime: int | None = None
+    bfd_enabled: bool = False
+    graceful_restart: bool = False
+    shutdown: bool = False
+    allow_default_route: bool = False
