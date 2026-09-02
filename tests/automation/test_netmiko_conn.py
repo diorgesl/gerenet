@@ -28,14 +28,13 @@ def _conexao_fake() -> MagicMock:
 
 
 def test_recusa_comando_fora_da_allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "gerenet.automation.netmiko_conn.ConnectHandler",
-        lambda **kwargs: _conexao_fake(),
-    )
+    handler = MagicMock(return_value=_conexao_fake())
+    monkeypatch.setattr("gerenet.automation.netmiko_conn.ConnectHandler", handler)
     dev = MagicMock()
     dev.name, dev.management_address, dev.host_key_fingerprint = "r1", "10.0.0.1", _fingerprint_de(b"chave-de-teste")
     with pytest.raises(CommandNotAllowed):
         connect_and_run(dev, "u", "p", ["configure terminal"], SETTINGS)
+    handler.assert_not_called()
 
 
 def test_fingerprint_ausente_impede_conexao(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -58,6 +57,17 @@ def test_fingerprint_divergente_impede_conexao(monkeypatch: pytest.MonkeyPatch) 
     dev.name, dev.management_address, dev.host_key_fingerprint = "r1", "10.0.0.1", "sha256:outra=="
     with pytest.raises(HostKeyMismatch):
         connect_and_run(dev, "u", "p", ["display version"], SETTINGS)
+
+
+def test_fingerprint_ilegivel_impede_conexao(monkeypatch: pytest.MonkeyPatch) -> None:
+    conn = _conexao_fake()
+    conn.remote_conn.transport.get_remote_server_key.side_effect = Exception("falha ao ler host key")
+    monkeypatch.setattr("gerenet.automation.netmiko_conn.ConnectHandler", lambda **kwargs: conn)
+    dev = MagicMock()
+    dev.name, dev.management_address, dev.host_key_fingerprint = "r1", "10.0.0.1", _fingerprint_de(b"chave-de-teste")
+    with pytest.raises(HostKeyMismatch):
+        connect_and_run(dev, "u", "p", ["display version"], SETTINGS)
+    conn.disconnect.assert_called_once_with()
 
 
 def test_conecta_e_roda_com_host_key_ok(monkeypatch: pytest.MonkeyPatch) -> None:

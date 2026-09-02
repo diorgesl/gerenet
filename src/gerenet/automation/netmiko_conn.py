@@ -61,7 +61,12 @@ def connect_and_run(device, username: str, password: str, commands: list[str], s
 
     try:
         actual = _fingerprint_do_servidor(conn)
-        if actual is not None and actual != normalize_fingerprint(device.host_key_fingerprint):
+        if actual is None:
+            raise HostKeyMismatch(
+                device.name,
+                "indisponível — verifique a conectividade SSH e tente novamente",
+            )
+        if actual != normalize_fingerprint(device.host_key_fingerprint):
             raise HostKeyMismatch(device.name, actual)
         saidas: dict[str, str] = {}
         for cmd in commands:
