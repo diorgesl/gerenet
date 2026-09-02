@@ -151,3 +151,10 @@ class CircuitUpdate(BaseModel):
     p2p_v4_len: Literal[30, 31] | None = None
     description: str | None = Field(default=None, max_length=255)
     notes: str | None = None
+
+
+class PrefixAuthorizationCreate(BaseModel):
+    organization_id: int
+    family: Literal["ipv4", "ipv6"]
+    prefix: str = Field(min_length=1, max_length=64)
+    notes: str | None = None
