@@ -145,7 +145,7 @@ Cada equipamento deverá possuir:
 - domínio de MPLS;
 - grupo de credencial;
 - método de acesso: SSH e/ou NETCONF;
-- porta de acesso;
+- porta de acesso (SSH de gerenciamento, default 22);
 - status administrativo;
 - status de comunicação;
 - data da última coleta;
