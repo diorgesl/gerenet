@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     read_timeout: float = 60.0
     lock_ttl_seconds: int = 300
 
+    # IPAM p2p (§25.8): bloco privado de enlaces v4 e base v6 por padrão;
+    # cada site pode sobrescrever.
+    p2p_ipv4_block: str = "100.64.0.0/10"
+    p2p_ipv6_base: str = "2804:194C:1000::/48"
+
 
 _override: Settings | None = None
 
