@@ -62,6 +62,14 @@ def test_pontas_v6_derivam_dentro_do_126() -> None:
     assert remota == "2804:194C:1000::1100:73:2/126"
 
 
+def test_base_v6_remove_host_bits_preservando_caixa() -> None:
+    # host bits do texto de origem não podem vazar para o sufixo montado
+    site = models.Site(name="pop-hb", p2p_ipv6_base="2804:194C:1000::5/48")
+    assert base_v6(site) == "2804:194C:1000::"
+    site_lc = models.Site(name="pop-hb-lc", p2p_ipv6_base="2804:194c:1000::5/48")
+    assert base_v6(site_lc) == "2804:194c:1000::"
+
+
 def test_pontas_v6_roundtrip_golden_completo() -> None:
     """Do IPv4 do golden à rede v6 e às duas pontas (spec §6/§25.8)."""
     ipv4 = "100.110.0.73"

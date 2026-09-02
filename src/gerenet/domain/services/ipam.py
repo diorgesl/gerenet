@@ -16,16 +16,28 @@ def bloco_v4(site: models.Site) -> ipaddress.IPv4Network:
     return ipaddress.ip_network(origem, strict=False)
 
 
+def _preserva_caixa(entrada: str, saida: str) -> str:
+    """Espelha no texto canônico `saida` a caixa de `entrada`.
+
+    O ipaddress normaliza o hex para minúsculas; se o texto de origem trouxer
+    letra hex maiúscula (A-F), o resultado volta em maiúsculas — o golden do
+    §25.8 usa '194C'. Entrada sem letra maiúscula sai como o ipaddress gera.
+    """
+    if any(c in "ABCDEF" for c in entrada):
+        return saida.upper()
+    return saida
+
+
 def base_v6(site: models.Site) -> str:
     """Base v6 do site (override) ou o default; forma '2804:194C:1000::'.
 
-    Mantém o texto do endereço como cadastrado, apenas sem o prefixo
-    (ipaddress normalizaria o hex para minúsculas e o golden do §25.8 usa
-    '194C'); o ip_network acima valida a forma antes do corte.
+    Remove o prefixo e os host bits (rede do bloco), devolvendo o texto
+    canônico com a caixa do texto de origem (§25.8 usa '194C'; host bits não
+    podem vazar para o sufixo montado por _addr_v6).
     """
     origem = site.p2p_ipv6_base or get_settings().p2p_ipv6_base
-    ipaddress.ip_network(origem, strict=False)  # valida antes de usar o texto
-    return origem.split("/", 1)[0]
+    rede = ipaddress.ip_network(origem, strict=False)
+    return _preserva_caixa(origem, str(rede.network_address))
 
 
 def derivar_v6(ipv4: str) -> str:
@@ -72,17 +84,11 @@ def pontas_v4(network: str) -> tuple[str, str]:
 
 
 def pontas_v6(network: str) -> tuple[str, str]:
-    """Pontas local/remota de um /126 (rede +1/+2), com prefixo no retorno.
-
-    Preserva a caixa do texto informado (o golden do §25.8 usa '194C';
-    ipaddress normalizaria o hex para minúsculas).
-    """
+    """Pontas local/remota de um /126 (rede +1/+2), com prefixo no retorno."""
     rede = ipaddress.ip_network(network, strict=True)
     if rede.prefixlen != 126:
         raise ValidationError(f"Enlace p2p v6 deve ser /126: {network}.")
     base = int(rede.network_address)
-    local = str(ipaddress.IPv6Address(base + 1))
-    remota = str(ipaddress.IPv6Address(base + 2))
-    if any(c in "ABCDEF" for c in network):
-        local, remota = local.upper(), remota.upper()
+    local = _preserva_caixa(network, str(ipaddress.IPv6Address(base + 1)))
+    remota = _preserva_caixa(network, str(ipaddress.IPv6Address(base + 2)))
     return (f"{local}/126", f"{remota}/126")
