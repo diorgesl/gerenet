@@ -1176,7 +1176,7 @@ def test_derivar_v6_golden_da_spec() -> None:
 def test_derivar_v6_sufixo_curto_sem_zero_padding() -> None:
     assert derivar_v6("100.10.0.5") == "1005"    # "10"+"0"+"5" = "1005" (4 dígitos → 1 hextet)
     assert derivar_v6("100.2.3.4") == "234"      # "2"+"3"+"4" = "234" (hextet único)
-    assert derivar_v6("100.64.0.1") == "6400:1"  # "64"+"0"+"1" = "64001" → "6400:1"
+    assert derivar_v6("100.64.0.1") == "6401"    # "64"+"0"+"1" = "6401" (4 dígitos → 1 hextet)
 
 
 def test_derivar_v6_overflow_levanta_erro() -> None:
