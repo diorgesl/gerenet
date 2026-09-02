@@ -36,7 +36,7 @@ def _limpa_tabelas(db_session: Session) -> None:
     yield
     db_session.execute(
         text(
-            "TRUNCATE audit_events, job_runs, device_snapshots, devices, credential_groups RESTART IDENTITY CASCADE"
+            "TRUNCATE audit_events, job_runs, device_snapshots, vlans, ip_prefixes, circuits, contacts, organizations, sites, devices, credential_groups RESTART IDENTITY CASCADE"
         )
     )
     db_session.commit()
