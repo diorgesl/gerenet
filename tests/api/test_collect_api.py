@@ -21,7 +21,7 @@ def _auth() -> dict[str, str]:
 
 
 def test_dispara_coleta_202(client: TestClient, db_session) -> None:
-    dev = create_device(db_session, DeviceCreate(name="r3", management_address="10.0.0.5"))
+    dev = create_device(db_session, DeviceCreate(name="r3", management_address="10.0.0.5"), actor="cli")
     with patch(
         "gerenet.api.routers.devices.enqueue_collect",
         return_value={"queued": True, "message": "Coleta enfileirada."},
@@ -43,7 +43,7 @@ def test_snapshots_lista_e_detalhe(client: TestClient, db_session) -> None:
     grupo = CredentialGroup(name="automacao", kind="tacacs_password", vault_path="gerenet/credential-groups/automacao")
     db_session.add(grupo)
     db_session.commit()
-    dev = create_device(db_session, DeviceCreate(name="r4", management_address="10.0.0.6", credential_group_id=grupo.id))
+    dev = create_device(db_session, DeviceCreate(name="r4", management_address="10.0.0.6", credential_group_id=grupo.id), actor="cli")
     snap = DeviceSnapshot(device_id=dev.id, status="success", resources={"version": {"version": "8.210"}})
     db_session.add(snap)
     db_session.commit()

@@ -48,6 +48,7 @@ def add(
                     site_id=site_id,
                     asn=asn,
                 ),
+                actor="cli",
             )
         except GerenetError as exc:
             typer.echo(f"Erro: {exc}", err=True)
@@ -72,5 +73,5 @@ def disable(device: str = typer.Argument(..., help="ID ou nome do equipamento.")
         if dev is None:
             typer.echo("Equipamento não encontrado.", err=True)
             raise typer.Exit(1)
-        svc.disable_device(session, dev.id)
+        svc.disable_device(session, dev.id, actor="cli")
     typer.echo(f"Equipamento {dev.name} desativado.")

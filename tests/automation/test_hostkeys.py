@@ -13,7 +13,7 @@ def test_normaliza_fingerprint() -> None:
 def test_registro_gera_audit(db_session: Session) -> None:
     from gerenet.domain.models import AuditEvent
 
-    dev = create_device(db_session, DeviceCreate(name="r1", management_address="10.0.0.1"))
+    dev = create_device(db_session, DeviceCreate(name="r1", management_address="10.0.0.1"), actor="cli")
     dev.host_key_fingerprint = "sha256:xyz"
     evento = AuditEvent(type="hostkey.register", actor="cli", details={"device_id": dev.id, "fingerprint": "sha256:xyz"})
     db_session.add(evento)

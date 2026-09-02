@@ -39,7 +39,7 @@ def _dev_com_grupo(db_session: Session, nome: str, endereco: str):
     grupo = CredentialGroup(name="automacao", kind="tacacs_password", vault_path="gerenet/credential-groups/automacao")
     db_session.add(grupo)
     db_session.commit()
-    dev = create_device(db_session, DeviceCreate(name=nome, management_address=endereco, credential_group_id=grupo.id))
+    dev = create_device(db_session, DeviceCreate(name=nome, management_address=endereco, credential_group_id=grupo.id), actor="cli")
     dev.host_key_fingerprint = "sha256:fake"
     db_session.commit()
     return dev

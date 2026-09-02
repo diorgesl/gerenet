@@ -5,17 +5,28 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from gerenet.domain import models
+from gerenet.domain.audit import registrar
 from gerenet.domain.schemas import DeviceCreate
 from gerenet.domain.services.errors import ConflictError, NotFoundError, ValidationError
 from gerenet.domain.validators import asn_valido
 
 
-def create_device(session: Session, data: DeviceCreate) -> models.Device:
+def create_device(session: Session, data: DeviceCreate, *, actor: str) -> models.Device:
     if data.asn is not None and not asn_valido(data.asn):
         raise ValidationError(f"ASN inválido ou reservado: {data.asn}.")
     dev = models.Device(**data.model_dump())
     session.add(dev)
     try:
+        session.flush()  # define dev.id e valida unicidade antes da auditoria
+        registrar(
+            session,
+            tipo="device.create",
+            ator=actor,
+            objeto="device",
+            objeto_id=dev.id,
+            antes=None,
+            depois=data.model_dump(),
+        )
         session.commit()
     except IntegrityError as exc:
         session.rollback()
@@ -38,9 +49,20 @@ def list_devices(session: Session, include_disabled: bool = False) -> list[model
     return list(session.scalars(stmt))
 
 
-def disable_device(session: Session, device_id: int) -> models.Device:
+def disable_device(session: Session, device_id: int, *, actor: str) -> models.Device:
     dev = get_device(session, device_id)
+    if dev.admin_status is False:
+        return dev  # idempotente: sem transição, sem evento (Ruling 5)
     dev.admin_status = False
+    registrar(
+        session,
+        tipo="device.disable",
+        ator=actor,
+        objeto="device",
+        objeto_id=dev.id,
+        antes={"admin_status": True},
+        depois={"admin_status": False},
+    )
     session.commit()
     return dev
 

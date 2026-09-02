@@ -7,9 +7,11 @@ from sqlalchemy.orm import Session
 from gerenet.api.deps import require_api_key
 from gerenet.db import get_db
 from gerenet.domain import models
+from gerenet.domain.audit import registrar
 from gerenet.domain.schemas import DeviceCreate, DeviceOut, DeviceUpdate, SnapshotOut
 from gerenet.domain.services import devices as svc
-from gerenet.domain.services.errors import ConflictError, NotFoundError
+from gerenet.domain.services.errors import ConflictError, NotFoundError, ValidationError
+from gerenet.domain.validators import asn_valido
 from gerenet.worker.tasks import enqueue_collect
 
 router = APIRouter(prefix="/api/v1/devices", tags=["devices"], dependencies=[Depends(require_api_key)])
@@ -27,9 +29,11 @@ def listar(session: SessionDep, include_disabled: bool = False) -> list:
 @router.post("", response_model=DeviceOut, status_code=201)
 def criar(data: DeviceCreate, session: SessionDep) -> object:
     try:
-        return svc.create_device(session, data)
+        return svc.create_device(session, data, actor="api")
     except ConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/{device_id}", response_model=DeviceOut)
@@ -46,12 +50,30 @@ def atualizar(device_id: int, data: DeviceUpdate, session: SessionDep) -> object
         dev = svc.get_device(session, device_id)
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    for campo, valor in data.model_dump(exclude_unset=True).items():
-        setattr(dev, campo, valor)
-    if data.admin_status is False:
-        dev.comm_status = "unknown"
-    session.commit()
-    session.refresh(dev)
+    mudancas = data.model_dump(exclude_unset=True)
+    try:
+        if mudancas.get("asn") is not None and not asn_valido(mudancas["asn"]):
+            raise ValidationError(f"ASN inválido ou reservado: {mudancas['asn']}.")
+        antes = {campo: getattr(dev, campo) for campo in mudancas}
+        desativando = mudancas.get("admin_status") is False and set(mudancas) == {"admin_status"}
+        registrar(
+            session,
+            tipo="device.disable" if desativando else "device.update",
+            ator="api",
+            objeto="device",
+            objeto_id=dev.id,
+            antes=antes,
+            depois=mudancas,
+        )
+        for campo, valor in mudancas.items():
+            setattr(dev, campo, valor)
+        if desativando:
+            dev.comm_status = "unknown"
+        session.commit()
+        session.refresh(dev)
+    except ValidationError as exc:
+        session.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return dev
 
 
