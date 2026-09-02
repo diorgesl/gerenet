@@ -1,0 +1,36 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: gerenet-db
+    environment:
+      POSTGRES_USER: gerenet
+      POSTGRES_PASSWORD: gerenet
+      POSTGRES_DB: gerenet
+    ports: ["5432:5432"]
+    volumes: [db-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gerenet"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: gerenet-redis
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  vault:
+    image: hashicorp/vault:1.17
+    container_name: gerenet-vault
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: gerenet-dev-root
+    ports: ["8200:8200"]
+    cap_add: [IPC_LOCK]
+
+volumes:
+  db-data:
