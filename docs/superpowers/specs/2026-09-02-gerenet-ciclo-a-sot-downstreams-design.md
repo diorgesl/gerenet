@@ -58,7 +58,7 @@ Padrão da F1: tabelas e colunas em inglês (`snake_case`), mensagens de erro em
 - Regras de serviço: ASN obrigatório para criar sessão BGP; ASN único (mesmo desativado — histórico §14.1); ASN válido de 32 bits fora dos reservados (§14.1: 0, 23456, 64496–64511, 65535–65551 e 4200000000–4294967294).
 
 ### `contacts`
-`id`, `organization_id` FK **not null**, `name` str(128), `email` str(255) nullable (validado), `phone` str(32) nullable, `kind` Enum(`tecnico`, `noc`, `admin`) default `tecnico`, timestamps.
+`id`, `organization_id` FK **not null**, `name` str(128), `email` str(255) nullable (validado), `phone` str(32) nullable, `kind` Enum(`tecnico`, `noc`, `admin`) default `tecnico`, `admin_status` bool default true (soft-delete §14.1 — disable via PATCH), timestamps.
 
 ### `circuits`
 | coluna | tipo | notas |
@@ -164,7 +164,7 @@ Sobreposição de prefixos é regra de **serviço** (não dá para expressar bem
 - `primeiro_livre(session, site_id, comprimento)` → próximo prefixo livre no bloco do site (settings → `site.p2p_ipv4_block`, default `100.64.0.0/10`): varre o bloco por `/31`s (`/30` se `circuit.p2p_v4_len == 30`), pulando os já reservados (ou liberados); erro claro "Bloco p2p do site esgotado." se não couber.
 - `derivar_v6(ipv4: str) -> str`: **regra do sufixo §25.8** — octetos 2–4 do IPv4 concatenados sem zero-padding, relidos como dígitos hex e agrupados em hextets: grupo 1 = os 4 primeiros dígitos, grupo 2 = o restante; grupo vazio é omitido (implícito zero). Ex. golden (verbatim da spec): IPv4 `100.110.0.73` → `110.0.73` → dígitos `110073` → hextets `1100:73`.
 - `pontas_v4(prefixo)` / `pontas_v6(prefixo, site_base)`: v4 `/31` → local `.0`, remota `.1`; `/30` → local `.1`, remota `.2`. v6 → endereço = base do site + hextets do sufixo + hextet de host: local `…<sufixo>:1`, remota `…<sufixo>:2` dentro do `/126` — ex. golden: `2804:194C:1000::1100:73:1/126` (local) e `…:2/126` (remota), derivados de `100.110.0.73`.
-- `reservar_circuito(session, circuit_id, *, origin, actor)`: valida circuito ativo e site; em transação, grava:
+- `reservar_circuito(session, circuit_id, *, actor)`: valida circuito ativo e site; em transação, grava:
   - `vlans`: 1 linha (`vlan_mode=unica`, `family=NULL`) ou 2 (`separada`, `family=ipv4`/`ipv6`); `qinq=true` ⇒ `kind=s_vlan`;
   - `ip_prefixes`: p2p v4 `/31` (ou `/30`) + p2p v6 `/126` derivado do v4 escolhido — um par por família ativa do `stack`. O sufixo do v6 deriva **sempre** de um v4 p2p (§25.8): circuito `stack=ipv6` também reserva o par v4 (uso interno de derivação, anotado em `notes`); `ipv4` reserva só o v4; `dual` reserva v4 + v6;
   - **idempotente** (§3.2): circuito já reservado ⇒ devolve o estado atual e audita como no-op, sem duplicar;
