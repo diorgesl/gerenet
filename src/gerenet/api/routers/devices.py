@@ -1,15 +1,20 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from gerenet.api.deps import require_api_key
 from gerenet.db import get_db
-from gerenet.domain.schemas import DeviceCreate, DeviceOut, DeviceUpdate
+from gerenet.domain import models
+from gerenet.domain.schemas import DeviceCreate, DeviceOut, DeviceUpdate, SnapshotOut
 from gerenet.domain.services import devices as svc
 from gerenet.domain.services.errors import ConflictError, NotFoundError
+from gerenet.worker.tasks import enqueue_collect
 
 router = APIRouter(prefix="/api/v1/devices", tags=["devices"], dependencies=[Depends(require_api_key)])
+
+snap_router = APIRouter(prefix="/api/v1/snapshots", tags=["snapshots"], dependencies=[Depends(require_api_key)])
 
 SessionDep = Annotated[Session, Depends(get_db)]
 
@@ -48,3 +53,38 @@ def atualizar(device_id: int, data: DeviceUpdate, session: SessionDep) -> object
     session.commit()
     session.refresh(dev)
     return dev
+
+
+@router.post("/{device_id}/collect", status_code=202)
+def coletar(device_id: int, session: SessionDep) -> dict:
+    try:
+        svc.get_device(session, device_id)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    resultado = enqueue_collect(device_id, actor="api", origin="api")
+    if not resultado["queued"]:
+        raise HTTPException(status_code=409, detail=resultado["message"])
+    return resultado
+
+
+@router.get("/{device_id}/snapshots", response_model=list[SnapshotOut])
+def snapshots_do_device(device_id: int, session: SessionDep, limit: int = 20) -> list:
+    try:
+        svc.get_device(session, device_id)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    stmt = (
+        select(models.DeviceSnapshot)
+        .where(models.DeviceSnapshot.device_id == device_id)
+        .order_by(models.DeviceSnapshot.id.desc())
+        .limit(min(max(limit, 1), 100))
+    )
+    return list(session.scalars(stmt))
+
+
+@snap_router.get("/{snapshot_id}", response_model=SnapshotOut)
+def detalhe_snapshot(snapshot_id: int, session: SessionDep) -> object:
+    snap = session.get(models.DeviceSnapshot, snapshot_id)
+    if snap is None:
+        raise HTTPException(status_code=404, detail="Snapshot não encontrado.")
+    return snap

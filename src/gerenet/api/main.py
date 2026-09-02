@@ -7,6 +7,7 @@ from gerenet.api.routers import devices
 def create_app() -> FastAPI:
     app = FastAPI(title="gerenet", version="0.1.0")
     app.include_router(devices.router)
+    app.include_router(devices.snap_router)
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
