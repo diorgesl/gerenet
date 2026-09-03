@@ -106,3 +106,53 @@ def test_parse_ipv6_interface_brief_multiplos_enderecos_derivado() -> None:
     ]
     assert linhas[-1] == {"nome": "LoopBack0", "phy": "up", "protocolo": "up(s)",
                           "vpn": "--", "endereco_v6": ""}  # flush de EOF
+def test_parse_bgp_peer_v4_contra_captura_real() -> None:
+    saida = (FIXTURES / "ne8000_display_bgp_peer.txt").read_text(encoding="utf-8")
+    linhas = parse_template("bgp_peer", saida)
+    assert [(l["peer"], l["asn"], l["estado"], l["pref_rcv"], l["up_down"]) for l in linhas] == [
+        ("10.30.70.1", "64526", "Idle(Admin)", "0", "0655h07m"),
+        ("10.247.3.1", "64515", "Established", "37", "0490h58m"),
+        ("10.255.255.0", "64512", "Established", "3", "0655h06m"),
+        ("38.229.6.20", "64533", "Connect", "0", "0655h07m"),
+        ("100.110.0.14", "64520", "Active", "0", "0655h07m"),
+        ("100.110.0.66", "64535", "Idle", "0", "21:48:20"),
+        ("100.110.0.74", "64520", "Established", "1", "0655h06m"),
+        ("100.110.0.78", "64520", "Established", "6", "0655h06m"),
+        ("100.110.0.82", "64525", "Established", "2", "0655h06m"),
+        ("172.25.2.68", "64544", "Idle(Admin)", "0", "0655h07m"),
+        ("198.51.100.254", "64531", "Established", "1090707", "0356h52m"),
+        ("198.19.255.250", "64522", "Established", "1093942", "0244h53m"),
+    ]
+
+
+def test_parse_bgp_peer_v6_contra_captura_real() -> None:
+    saida = (FIXTURES / "ne8000_display_bgp_ipv6_peer.txt").read_text(encoding="utf-8")
+    linhas = parse_template("bgp_peer", saida)
+    assert [(l["peer"], l["asn"], l["estado"]) for l in linhas] == [
+        ("100.110.0.110", "64540", "Connect"),
+        ("2001:DB8:F247:FFF3::1", "64515", "Established"),
+        ("2001:DB8:8000:0:198:51:100:254", "64531", "Established"),
+        ("2001:DB8::3", "64512", "Established"),
+        ("2001:DB8:1000::155:177:2", "64525", "Established"),
+        ("2001:DB8:1000::1100:73:2", "64520", "Established"),
+        ("2001:DB8:1000::1100:77:2", "64520", "Established"),
+        ("2001:DB8::250", "64522", "Established"),
+        ("FC00::2B6", "64544", "Idle(Admin)"),
+        ("FDFF::198:18:255:0", "64528", "Active"),
+    ]
+    assert linhas[2]["pref_rcv"] == "253052"  # contagem larga (6 dígitos; v4 chega a 7)
+
+
+def test_parse_bgp_peer_estado_transitorio_openconfirm_derivado() -> None:
+    # Derivado (sintético, spec §10): a captura real só tem os estados estáveis.
+    saida = (
+        " BGP local router ID : 203.0.113.1\n"
+        " Local AS number : 64512\n"
+        "\n"
+        "  Peer                             V          AS  MsgRcvd  MsgSent  OutQ  Up/Down       State  PrefRcv\n"
+        "  10.99.0.1                       4      64530      101      102     0 0655h07m   OpenConfirm        0\n"
+    )
+    assert parse_template("bgp_peer", saida) == [
+        {"peer": "10.99.0.1", "asn": "64530", "estado": "OpenConfirm",
+         "pref_rcv": "0", "up_down": "0655h07m"},
+    ]
