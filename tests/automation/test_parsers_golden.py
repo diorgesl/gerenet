@@ -39,6 +39,7 @@ def test_parse_interface_brief_standby_derivado() -> None:
         {"nome": "Eth-Trunk127.900", "phy": "^down", "protocolo": "down"},
     ]
 
+
 def test_parse_ip_interface_brief_contra_captura_real() -> None:
     saida = (FIXTURES / "ne8000_display_ip_interface_brief.txt").read_text(encoding="utf-8")
     linhas = parse_template("ip_int_brief", saida)
@@ -54,6 +55,8 @@ def test_parse_ip_interface_brief_contra_captura_real() -> None:
     assert por_nome["Eth-Trunk127.582"]["phy"] == "*down"
     assert por_nome["100GE0/1/53(100M)"]["endereco"] == "unassigned"
     assert por_nome["Eth-Trunk127.1500"]["endereco"] == "198.51.100.17/31"
+
+
 def test_parse_ipv6_interface_brief_contra_captura_real() -> None:
     saida = (FIXTURES / "ne8000_display_ipv6_interface_brief.txt").read_text(encoding="utf-8")
     linhas = parse_template("ipv6_int_brief", saida)
@@ -106,6 +109,8 @@ def test_parse_ipv6_interface_brief_multiplos_enderecos_derivado() -> None:
     ]
     assert linhas[-1] == {"nome": "LoopBack0", "phy": "up", "protocolo": "up(s)",
                           "vpn": "--", "endereco_v6": ""}  # flush de EOF
+
+
 def test_parse_bgp_peer_v4_contra_captura_real() -> None:
     saida = (FIXTURES / "ne8000_display_bgp_peer.txt").read_text(encoding="utf-8")
     linhas = parse_template("bgp_peer", saida)
@@ -156,6 +161,8 @@ def test_parse_bgp_peer_estado_transitorio_openconfirm_derivado() -> None:
         {"peer": "10.99.0.1", "asn": "64530", "estado": "OpenConfirm",
          "pref_rcv": "0", "up_down": "0655h07m"},
     ]
+
+
 def test_parse_bgp_peer_verbose_v4_contra_captura_real() -> None:
     saida = (FIXTURES / "ne8000_display_bgp_peer_verbose.txt").read_text(encoding="utf-8")
     linhas = parse_template("bgp_peer_verbose", saida)

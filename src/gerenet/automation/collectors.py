@@ -2,6 +2,8 @@
 
 Each entry declares the commands to run and how to parse/merge them:
 - `parser` (legacy): single command, single parse, first record as dict.
+- `parser: None` (raw capture): no parse — the output is stored as-is
+  (`config_backup`, `backup: True`).
 - `parsers` + `merge`: one parser per command; `merge_parsed` combines rows
   into the resource shape (spec §4.3).
 - `alvo_sessoes`: dynamic target — `comandos_verbose` derives the commands

@@ -23,7 +23,7 @@ def _conectar_e_executar(device, username: str, password: str, commands: list[st
 def _nome_do_arquivo(comando: str) -> str:
     """Stable file slug for the collected command (ex.: `bgp-ipv6-peer.txt`)."""
     nome = comando.removeprefix("display ").replace(" ", "-")
-    return re.sub(r"[^0-9A-Za-z._-]+", "-", nome) or "output"
+    return re.sub(r"[^0-9A-Za-z._-]+", "-", nome).strip("-") or "output"
 
 
 _LIBERTA_LOCK = """

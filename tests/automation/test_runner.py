@@ -229,6 +229,8 @@ def test_nome_do_arquivo_desambigua_comandos() -> None:
     assert _nome_do_arquivo("display bgp peer") == "bgp-peer"
     assert _nome_do_arquivo("display bgp ipv6 peer") == "bgp-ipv6-peer"
     assert _nome_do_arquivo("display bgp peer 198.51.100.254 verbose") == "bgp-peer-198.51.100.254-verbose"
+    # Comando patológico não pode virar um arquivo chamado "-.txt": fallback preservado.
+    assert _nome_do_arquivo("display !!!") == "output"
 
 
 def test_coleta_multicomando_mergeia_no_snapshot(
@@ -414,3 +416,41 @@ def test_bgp_peers_verbose_so_sessoes_ativas_do_device(
         "bgp-ipv6-peer-2001-DB8-8000-0-198-51-100-254-verbose.txt",
         "bgp-peer-198.51.100.254-verbose.txt",
     ]
+
+
+def test_comandos_verbose_respeita_o_cap_de_50(db_session: Session) -> None:
+    """O cap do catálogo (§4.1) limita os comandos verbose: 51 sessões ativas com
+    (afi, remote_address) distintos geram no máximo 50, sem colapsar no distinct()."""
+    from gerenet.automation.collectors import COLLECTORS, comandos_verbose
+    from gerenet.domain.models import BgpSession, Circuit, Organization, Site
+
+    dev = _dev_com_grupo(db_session, "edge-cap", "10.0.0.100")
+    site = Site(name="site-cap")
+    org = Organization(name="org-cap", asn=64531)
+    db_session.add_all([site, org])
+    db_session.commit()
+    # Circuito mínimo: só os NOT NULL do modelo; os demais campos têm default.
+    circuito = Circuit(
+        code="C-CAP", organization_id=org.id, site_id=site.id,
+        access_device_id=dev.id, access_port="GE0/0/1", edge_device_id=dev.id,
+    )
+    db_session.add(circuito)
+    db_session.commit()
+
+    def sessao(afi: str, remoto: str) -> BgpSession:
+        # Só os NOT NULL de BgpSession: admin_status/shutdown ficam nos defaults
+        # (True/False) e passam no filtro de sessões ativas.
+        return BgpSession(
+            circuit_id=circuito.id, device_id=dev.id, afi=afi,
+            local_address="203.0.113.1", remote_address=remoto,
+            asn_remote=64531,
+        )
+
+    # 51 sessões ativas com pares (afi, remote_address) distintos — 50 é o teto.
+    db_session.add_all([sessao("ipv4", f"10.99.0.{i}") for i in range(1, 52)])
+    db_session.commit()
+
+    comandos = comandos_verbose(COLLECTORS["bgp_peers_verbose"], dev.id, db_session)
+    assert len(comandos) == 50
+    assert len(set(comandos)) == 50  # comando por sessão distinta; o corte é o cap
+    assert all(c.startswith("display bgp ") and c.endswith(" verbose") for c in comandos)
