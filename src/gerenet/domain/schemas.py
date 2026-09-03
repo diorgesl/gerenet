@@ -76,6 +76,7 @@ class SiteUpdate(BaseModel):
     uf: str | None = Field(default=None, min_length=2, max_length=2, pattern="^[A-Za-z]{2}$")
     p2p_ipv4_block: str | None = Field(default=None, max_length=64)
     p2p_ipv6_base: str | None = Field(default=None, max_length=64)
+    admin_status: bool | None = None
 
 
 class OrganizationCreate(BaseModel):
@@ -96,6 +97,7 @@ class OrganizationUpdate(BaseModel):
     asn: int | None = None
     irr_as_set: str | None = Field(default=None, max_length=64)
     notes: str | None = None
+    admin_status: bool | None = None
 
 
 class ContactCreate(BaseModel):
@@ -112,6 +114,7 @@ class ContactUpdate(BaseModel):
     email: str | None = Field(default=None, max_length=255)
     phone: str | None = Field(default=None, max_length=32)
     kind: Literal["tecnico", "noc", "admin"] | None = None
+    admin_status: bool | None = None
 
 
 class CircuitCreate(BaseModel):
@@ -151,6 +154,7 @@ class CircuitUpdate(BaseModel):
     p2p_v4_len: Literal[30, 31] | None = None
     description: str | None = Field(default=None, max_length=255)
     notes: str | None = None
+    admin_status: bool | None = None
 
 
 class PrefixAuthorizationCreate(BaseModel):
@@ -210,3 +214,155 @@ class BgpSessionUpdate(BaseModel):
     graceful_restart: bool | None = None
     shutdown: bool | None = None
     allow_default_route: bool | None = None
+    admin_status: bool | None = None
+
+
+class SiteOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    city: str | None
+    uf: str | None
+    p2p_ipv4_block: str | None
+    p2p_ipv6_base: str | None
+    admin_status: bool
+
+
+class OrganizationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    legal_name: str | None
+    kind: str
+    asn: int | None
+    irr_as_set: str | None
+    notes: str | None
+    admin_status: bool
+
+
+class ContactOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    organization_id: int
+    name: str
+    email: str | None
+    phone: str | None
+    kind: str
+    admin_status: bool
+
+
+class CircuitOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    code: str
+    organization_id: int
+    site_id: int
+    access_device_id: int
+    access_port: str
+    edge_device_id: int
+    backup_edge_device_id: int | None
+    stack: str
+    vlan_mode: str
+    qinq: bool
+    vrf: str | None
+    mtu: int | None
+    bandwidth: str | None
+    bfd: bool
+    p2p_v4_len: int
+    description: str | None
+    notes: str | None
+    admin_status: bool
+
+
+class CircuitDetailOut(CircuitOut):
+    """Circuito reservado: pontas derivadas dos enlaces p2p (ruling 4).
+
+    v4 sem máscara (pontas_v4); v6 com '/126' (pontas_v6). Linhas internas
+    de derivação (stack=ipv6) não são expostas.
+    """
+
+    ipv4_local: str | None = None
+    ipv4_remote: str | None = None
+    ipv6_local: str | None = None
+    ipv6_remote: str | None = None
+
+
+class BgpSessionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    circuit_id: int
+    device_id: int
+    afi: str
+    local_address: str
+    remote_address: str
+    source_address: str | None
+    asn_local: int | None
+    asn_remote: int | None
+    description: str | None
+    import_profile_id: int | None
+    export_profile_id: int | None
+    maximum_prefix: int | None
+    maximum_prefix_threshold: int | None
+    local_preference: int | None
+    med: int | None
+    prepend: int | None
+    keepalive: int | None
+    holdtime: int | None
+    bfd_enabled: bool
+    graceful_restart: bool
+    shutdown: bool
+    allow_default_route: bool
+    has_password: bool  # property do modelo — o valor nunca trafega aqui
+    admin_status: bool
+
+
+class PrefixAuthorizationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    organization_id: int
+    family: str
+    prefix: str
+    origin: str
+    notes: str | None
+    admin_status: bool
+
+
+class PolicyProfileOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    label: str
+    direction: str
+    kind: str
+    prefixes: list | None
+    notes: str | None
+    admin_status: bool
+
+
+class AuditEventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    type: str
+    actor: str
+    details: dict
+    created_at: datetime
+
+
+class PrefixAuthorizationDisable(BaseModel):
+    """PATCH de autorização aceita só {"admin_status": false} (ruling 2)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    admin_status: Literal[False]
+
+
+class BgpSessionPasswordIn(BaseModel):
+    password: str = Field(min_length=1, max_length=128)

@@ -369,6 +369,12 @@ class BgpSession(Base):
     shutdown: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     allow_default_route: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     password_ref: Mapped[str | None] = mapped_column(String(255))  # path Vault; valor nunca no banco
+
+    @property
+    def has_password(self) -> bool:
+        """Senha definida? (valor só no Vault — password_ref guarda o path)."""
+        return self.password_ref is not None
+
     admin_status: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
