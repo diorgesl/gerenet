@@ -156,3 +156,34 @@ def test_parse_bgp_peer_estado_transitorio_openconfirm_derivado() -> None:
         {"peer": "10.99.0.1", "asn": "64530", "estado": "OpenConfirm",
          "pref_rcv": "0", "up_down": "0655h07m"},
     ]
+def test_parse_bgp_peer_verbose_v4_contra_captura_real() -> None:
+    saida = (FIXTURES / "ne8000_display_bgp_peer_verbose.txt").read_text(encoding="utf-8")
+    linhas = parse_template("bgp_peer_verbose", saida)
+    assert linhas == [{
+        "peer": "198.51.100.254", "asn": "64531", "descricao": "UPSTREAM-FNA",
+        "estado": "Established", "filtro_import": "ASN64531-V4-IMPORT",
+        "filtro_export": "XPL-UPSTREAM-AS64531-V4-EXPORT",
+    }]
+
+
+def test_parse_bgp_peer_verbose_v6_contra_captura_real() -> None:
+    saida = (FIXTURES / "ne8000_display_bgp_ipv6_peer_verbose.txt").read_text(encoding="utf-8")
+    linhas = parse_template("bgp_peer_verbose", saida)
+    assert linhas == [{
+        "peer": "2001:DB8:8000:0:198:51:100:254", "asn": "64531", "descricao": "UPSTREAM-v6",
+        "estado": "Established", "filtro_import": "ASN64531-V6-IMPORT",
+        "filtro_export": "XPL-UPSTREAM-AS64531-V6-EXPORT",
+    }]
+
+
+def test_parse_bgp_peer_verbose_idle_admin_sem_up_for_derivado() -> None:
+    # Derivado (sintético, spec §10): admin-down não traz 'Up for' nem descrição/filtros
+    # — a segunda regra de estado (sem duração) precisa casar o Idle(Admin).
+    saida = (
+        "         BGP Peer is 10.99.0.1,  remote AS 64530\n"
+        "         BGP current state: Idle(Admin)\n"
+    )
+    assert parse_template("bgp_peer_verbose", saida) == [{
+        "peer": "10.99.0.1", "asn": "64530", "descricao": "", "estado": "Idle(Admin)",
+        "filtro_import": "", "filtro_export": "",
+    }]

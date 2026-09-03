@@ -1,0 +1,14 @@
+Value Required peer (\S+)
+Value Required asn (\d+)
+Value descricao (.+)
+Value estado (\S+)
+Value filtro_import ([A-Za-z0-9_-]+)
+Value filtro_export ([A-Za-z0-9_-]+)
+
+Start
+  ^\s*BGP Peer is ${peer},\s+remote AS ${asn}\s*$$
+  ^\s*Peer's description: "${descricao}"\s*$$
+  ^\s*BGP current state: ${estado}, Up for .*$$
+  ^\s*BGP current state: ${estado}\s*$$
+  ^\s*Import route filter is: ${filtro_import}(\(\d+\))?\s*$$
+  ^\s*Export route filter is: ${filtro_export}(\(\d+\))?\s*$$
