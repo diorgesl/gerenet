@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from gerenet.api.routers import contacts, devices, organizations, sites
+from gerenet.api.routers import circuits, contacts, devices, organizations, sites
 
 
 # uvicorn gerenet.api.main:create_app --factory
@@ -12,6 +12,7 @@ def create_app() -> FastAPI:
     app.include_router(organizations.router)
     app.include_router(organizations.downstreams_router)
     app.include_router(contacts.router)
+    app.include_router(circuits.router)
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:

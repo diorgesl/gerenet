@@ -4,6 +4,10 @@ from typer.testing import CliRunner
 
 from gerenet.cli.main import app
 from gerenet.domain import models
+from gerenet.domain.schemas import DeviceCreate, OrganizationCreate, SiteCreate
+from gerenet.domain.services.devices import create_device
+from gerenet.domain.services.organizations import create_organization
+from gerenet.domain.services.sites import create_site, link_device
 
 runner = CliRunner()
 
@@ -98,3 +102,54 @@ def test_cli_contacts_add_list_disable(db_session: Session) -> None:
     off = runner.invoke(app, ["contacts", "disable", str(1)])
     assert off.exit_code == 0
     assert "Ana NOC" not in runner.invoke(app, ["contacts", "list"]).output
+
+
+def test_cli_circuits_add_reserve_disable(db_session: Session) -> None:
+    site = create_site(db_session, SiteCreate(name="POP-CIRC-CLI"), actor="cli")
+    org = create_organization(
+        db_session, OrganizationCreate(name="Org Circ CLI", asn=64513), actor="cli"
+    )
+    sw = create_device(
+        db_session, DeviceCreate(name="sw-circ-cli", management_address="10.9.1.2"), actor="cli"
+    )
+    ne = create_device(
+        db_session, DeviceCreate(name="ne-circ-cli", management_address="10.9.1.1", asn=64601),
+        actor="cli",
+    )
+    for dev in (sw, ne):
+        link_device(db_session, site.id, dev.id, actor="cli")
+
+    add = runner.invoke(
+        app,
+        [
+            "circuits", "add", "--code", "CIRC-CLI-1",
+            "--organization-id", str(org.id), "--site-id", str(site.id),
+            "--access-device-id", str(sw.id), "--access-port", "GE0/0/1",
+            "--edge-device-id", str(ne.id),
+        ],
+    )
+    assert add.exit_code == 0, add.output
+    assert "CIRC-CLI-1" in add.output
+    assert "CIRC-CLI-1" in runner.invoke(app, ["circuits", "list"]).output
+
+    reserva = runner.invoke(app, ["circuits", "reserve", "CIRC-CLI-1"])
+    assert reserva.exit_code == 0, reserva.output
+
+    circ_db = db_session.scalar(select(models.Circuit).where(models.Circuit.code == "CIRC-CLI-1"))
+    assert circ_db is not None
+    assert db_session.scalar(
+        select(models.Vlan).where(models.Vlan.circuit_id == circ_db.id)
+    ) is not None
+
+    repetida = runner.invoke(app, ["circuits", "reserve", "CIRC-CLI-1"])
+    assert repetida.exit_code == 0
+    vlans = list(db_session.scalars(select(models.Vlan).where(models.Vlan.circuit_id == circ_db.id)))
+    assert len(vlans) == 1
+
+    off = runner.invoke(app, ["circuits", "disable", "CIRC-CLI-1"])
+    assert off.exit_code == 0
+    assert "CIRC-CLI-1" not in runner.invoke(app, ["circuits", "list"]).output
+
+    faltante = runner.invoke(app, ["circuits", "reserve", "nao-existe"])
+    assert faltante.exit_code == 1
+    assert "não encontrado" in faltante.output
