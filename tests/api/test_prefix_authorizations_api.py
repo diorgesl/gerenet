@@ -79,6 +79,16 @@ def test_cria_lista_detalha(client: TestClient, db_session: Session) -> None:
     assert client.get("/api/v1/prefix-authorizations/9999", headers=_auth()).status_code == 404
 
 
+def test_post_organizacao_inexistente_404(client: TestClient) -> None:
+    resp = client.post(
+        "/api/v1/prefix-authorizations",
+        json={"organization_id": 9999, "family": "ipv4", "prefix": "203.0.113.0/24"},
+        headers=_auth(),
+    )
+    assert resp.status_code == 404
+    assert "não encontrada" in resp.json()["detail"]
+
+
 def test_patch_so_desativa(client: TestClient, db_session: Session) -> None:
     org_a, _ = _orgs(db_session)
     auth = client.post(
