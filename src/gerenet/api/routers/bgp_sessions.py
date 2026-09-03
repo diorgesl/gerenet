@@ -42,6 +42,8 @@ def criar(data: BgpSessionCreate, session: SessionDep) -> object:
         return svc.create_session(session, data, actor="api")
     except ConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

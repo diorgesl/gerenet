@@ -254,6 +254,34 @@ def test_password_set_grava_vault_e_audita(client: TestClient, db_session: Sessi
         assert "md5-api-segredo" not in str(evento.details)
 
 
+def test_criacao_com_circuito_ou_device_inexistente_da_404(
+    client: TestClient, db_session: Session
+) -> None:
+    env = _ambiente(db_session)
+    sem_circ = client.post(
+        "/api/v1/bgp-sessions",
+        json={
+            "circuit_id": 9999, "device_id": env["ne1_id"], "afi": "ipv4",
+            "local_address": "100.64.5.1", "remote_address": "100.64.5.2",
+        },
+        headers=_auth(),
+    )
+    assert sem_circ.status_code == 404
+    assert "não encontrado" in sem_circ.json()["detail"]
+
+    circ = _circuito(client, env, "CIRC-1011")
+    sem_device = client.post(
+        "/api/v1/bgp-sessions",
+        json={
+            "circuit_id": circ, "device_id": 9999, "afi": "ipv4",
+            "local_address": "100.64.6.1", "remote_address": "100.64.6.2",
+        },
+        headers=_auth(),
+    )
+    assert sem_device.status_code == 404
+    assert "não encontrado" in sem_device.json()["detail"]
+
+
 def test_password_longa_nao_ecoa_no_422(client: TestClient, db_session: Session) -> None:
     """422 de validação não ecoa o valor enviado nem a chave 'input' (senha)."""
     env = _ambiente(db_session)
