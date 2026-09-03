@@ -1,0 +1,33 @@
+*down: administratively down
+!down: FIB overload down
+^down: standby
+(l): loopback
+(s): spoofing
+(d): Dampening Suppressed
+(E): E-Trunk down
+(td): transceiver unmatch down
+(D): DF backup down
+The number of interface that is UP in Physical is 14
+The number of interface that is DOWN in Physical is 5
+The number of interface that is UP in Protocol is 11
+The number of interface that is DOWN in Protocol is 8
+Interface                         IP Address/Mask      Physical   Protocol VPN
+100GE0/1/53(100M)                 unassigned           up         down     --
+40GE0/1/52                        unassigned           down       down     --
+Eth-Trunk127                      unassigned           up         down     --
+Eth-Trunk127.400                  172.17.0.253/30      up         up       --
+Eth-Trunk127.401                  unassigned           up         down     --
+Eth-Trunk127.529                  100.110.0.57/30      up         up       --
+Eth-Trunk127.582                  172.25.2.69/31       *down      down     --
+Eth-Trunk127.625                  100.110.0.1/30       up         up       --
+Eth-Trunk127.642                  100.110.0.33/30      *down      down     --
+Eth-Trunk127.1500                 198.51.100.17/31      up         up       --
+Eth-Trunk127.4024                 100.110.0.73/30      up         up       --
+Eth-Trunk127.4027                 100.110.0.77/30      up         up       --
+Eth-Trunk127.389998               100.89.255.1/24      up         up       --
+GigabitEthernet0/0/0              192.168.0.1/24       down       down     l3vpn
+GigabitEthernet0/1/0.1003(10G)    10.254.101.29/30     down       down     --
+LoopBack0                         203.0.113.1/32     up         up(s)    --
+LoopBack1                         unassigned           up         up(s)    --
+Virtual-Ethernet0/1/101.100       100.127.190.1/30     up         up       --
+Virtual-Template0                 unassigned           up         up(s)    --

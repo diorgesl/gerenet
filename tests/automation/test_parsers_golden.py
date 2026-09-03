@@ -38,3 +38,19 @@ def test_parse_interface_brief_standby_derivado() -> None:
     assert parse_template("int_brief", saida) == [
         {"nome": "Eth-Trunk127.900", "phy": "^down", "protocolo": "down"},
     ]
+
+def test_parse_ip_interface_brief_contra_captura_real() -> None:
+    saida = (FIXTURES / "ne8000_display_ip_interface_brief.txt").read_text(encoding="utf-8")
+    linhas = parse_template("ip_int_brief", saida)
+    assert len(linhas) == 19
+    por_nome = {linha["nome"]: linha for linha in linhas}
+    assert por_nome["Eth-Trunk127.4024"] == {
+        "nome": "Eth-Trunk127.4024", "endereco": "100.110.0.73/30",
+        "phy": "up", "protocolo": "up", "vpn": "--",
+    }
+    assert por_nome["LoopBack0"]["endereco"] == "203.0.113.1/32"
+    assert por_nome["GigabitEthernet0/0/0"]["vpn"] == "l3vpn"
+    assert por_nome["GigabitEthernet0/0/0"]["endereco"] == "192.168.0.1/24"
+    assert por_nome["Eth-Trunk127.582"]["phy"] == "*down"
+    assert por_nome["100GE0/1/53(100M)"]["endereco"] == "unassigned"
+    assert por_nome["Eth-Trunk127.1500"]["endereco"] == "198.51.100.17/31"
