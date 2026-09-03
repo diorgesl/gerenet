@@ -37,6 +37,7 @@ def list_contacts(session: Session, organization_id: int | None = None) -> list[
     stmt = select(models.Contact).order_by(models.Contact.name)
     if organization_id is not None:
         stmt = stmt.where(models.Contact.organization_id == organization_id)
+    stmt = stmt.where(models.Contact.admin_status.is_(True))
     return list(session.scalars(stmt))
 
 
