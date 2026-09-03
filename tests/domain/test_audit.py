@@ -64,5 +64,27 @@ def test_registrar_mascara_sem_alterar_chamada_original(db_session: Session) -> 
     assert depois == {"password": "outro"}  # original intacto (mascarar copia)
 
 
+def test_mascarar_preserva_bool_em_chave_sensivel() -> None:
+    saida = mascarar(
+        {
+            "antes": {"has_password": False},
+            "depois": {"has_password": True},
+        }
+    )
+    assert saida["antes"] == {"has_password": False}
+    assert saida["depois"] == {"has_password": True}
+
+
+def test_mascarar_mascara_sensivel_nao_bool_nao_string() -> None:
+    saida = mascarar(
+        {
+            "antes": {"password": ["a", "b"]},
+            "depois": {"token_id": 5},
+        }
+    )
+    assert saida["antes"] == {}
+    assert saida["depois"] == {"token_id": "[mascarado]"}
+
+
 def test_campos_sensiveis_listados() -> None:
     assert set(CAMPO_SENSIVEL) == {"password", "senha", "secret", "token"}

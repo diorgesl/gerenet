@@ -4,6 +4,9 @@ Cada evento é um AuditEvent com type "<objeto>.<acao>" (ex.: "circuit.create",
 "device.disable", "circuit.reserve") e details = {objeto, objeto_id, antes, depois}.
 antes/depois carregam apenas os campos alterados; campos sensíveis (password,
 senha, secret, token) nunca são gravados — quando alterados, viram "[mascarado]".
+Exceção: valor bool sob chave sensível (flag como has_password) atravessa intacto
+nos dois painéis — bool não carrega segredo; "[mascarado]" na trilha significa que
+um valor real de segredo esteve ali, e fabricá-lo para uma flag seria enganoso.
 A tabela audit_events não recebe UPDATE nem DELETE em nenhum caminho de código.
 """
 from collections.abc import Mapping
@@ -20,7 +23,9 @@ def mascarar(paineis: Mapping[str, dict | None]) -> dict[str, dict | None]:
 
     Cada painel é copiado; chave sensível (substring case-insensitive de
     CAMPO_SENSIVEL) é removida de "antes" e vira "[mascarado]" em "depois"
-    (sinaliza a mudança sem revelar o valor).
+    (sinaliza a mudança sem revelar o valor). Exceção: valor bool (flag como
+    has_password) atravessa intacto nos dois painéis — segredos são strings
+    ou estruturas; bool não carrega segredo.
     """
     saida: dict[str, dict | None] = {}
     for painel, valores in paineis.items():
@@ -30,6 +35,8 @@ def mascarar(paineis: Mapping[str, dict | None]) -> dict[str, dict | None]:
         copia = dict(valores)
         for chave in list(copia):
             if any(termo in chave.lower() for termo in CAMPO_SENSIVEL):
+                if isinstance(copia[chave], bool):
+                    continue
                 copia.pop(chave)
                 if painel == "depois":
                     copia[chave] = "[mascarado]"

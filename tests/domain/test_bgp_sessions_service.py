@@ -555,6 +555,11 @@ def test_set_password_registra_ref_e_audita(db_session: Session) -> None:
         )
     ]
     assert tipos == ["bgp_session.create", "bgp_session.password_set"]
+    (evento,) = db_session.scalars(
+        select(models.AuditEvent).where(models.AuditEvent.type == "bgp_session.password_set")
+    )
+    assert evento.details["antes"] == {"has_password": False}
+    assert evento.details["depois"] == {"has_password": True}
 
 
 def test_set_password_troca_audita_novamente(db_session: Session) -> None:
@@ -575,6 +580,11 @@ def test_set_password_troca_audita_novamente(db_session: Session) -> None:
     assert tipos == [
         "bgp_session.create", "bgp_session.password_set", "bgp_session.password_set",
     ]
+    eventos = db_session.scalars(
+        select(models.AuditEvent).where(models.AuditEvent.type == "bgp_session.password_set")
+    ).all()
+    assert [e.details["antes"] for e in eventos] == [{"has_password": False}, {"has_password": True}]
+    assert [e.details["depois"] for e in eventos] == [{"has_password": True}, {"has_password": True}]
 
 
 def test_set_password_sessao_inexistente_da_404(db_session: Session) -> None:
