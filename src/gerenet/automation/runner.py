@@ -1,3 +1,4 @@
+import re
 import secrets
 from datetime import UTC, datetime
 
@@ -6,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from gerenet.automation.collectors import COLLECTORS
 from gerenet.automation.netmiko_conn import connect_and_run
+from gerenet.automation.parsers.huawei_vrp.merge import merge_parsed
 from gerenet.automation.parsers.huawei_vrp.registry import parse_template
 from gerenet.config import Settings, get_settings
 from gerenet.db import SessionLocal
@@ -19,8 +21,9 @@ def _conectar_e_executar(device, username: str, password: str, commands: list[st
 
 
 def _nome_do_arquivo(comando: str) -> str:
-    partes = comando.split()
-    return partes[1] if len(partes) > 1 else "output"
+    """Stable file slug for the collected command (ex.: `bgp-ipv6-peer.txt`)."""
+    nome = comando.removeprefix("display ").replace(" ", "-")
+    return re.sub(r"[^0-9A-Za-z._-]+", "-", nome) or "output"
 
 
 _LIBERTA_LOCK = """
@@ -97,9 +100,17 @@ def run_collection(
                         caminho.write_text(saida, encoding="utf-8")
                         lista_arquivos.append(str(caminho))
                     arquivos_brutos[nome] = lista_arquivos
-                    if spec["parser"]:
+                    if spec.get("parser"):
+                        # Simple resource: one command, one parse, first record as dict.
                         linhas = parse_template(spec["parser"], saidas[spec["commands"][0]])
                         recursos[nome] = linhas[0] if linhas else {"erro": "Saída sem registros parseáveis."}
+                    elif spec.get("parsers"):
+                        # Multi-command resource: per-command parser + merge into the shape.
+                        por_comando = {
+                            comando: parse_template(spec["parsers"][comando], saidas[comando])
+                            for comando in spec["commands"]
+                        }
+                        recursos[nome] = merge_parsed(spec["merge"], por_comando)
                     else:
                         recursos[nome] = {"backup": True}
                 except Exception as exc:  # noqa: BLE001 — falha de recurso vira erro no dict

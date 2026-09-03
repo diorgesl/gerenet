@@ -206,3 +206,52 @@ def test_lock_proprio_e_liberado(
     finally:
         redis.delete(chave)
         redis.close()
+
+
+def test_nome_do_arquivo_desambigua_comandos() -> None:
+    from gerenet.automation.runner import _nome_do_arquivo
+
+    assert _nome_do_arquivo("display version") == "version"
+    assert _nome_do_arquivo("display current-configuration") == "current-configuration"
+    assert _nome_do_arquivo("display interface brief") == "interface-brief"
+    assert _nome_do_arquivo("display bgp peer") == "bgp-peer"
+    assert _nome_do_arquivo("display bgp ipv6 peer") == "bgp-ipv6-peer"
+    assert _nome_do_arquivo("display bgp peer 198.51.100.254 verbose") == "bgp-peer-198.51.100.254-verbose"
+
+
+def test_coleta_multicomando_mergeia_no_snapshot(
+    db_session: Session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gerenet.domain.models import DeviceSnapshot
+
+    dev = _dev_com_grupo(db_session, "r6", "10.0.0.6")
+    settings = Settings(_env_file=None, backups_dir=tmp_path)
+    monkeypatch.setattr("gerenet.automation.runner.VaultSecretStore", VaultFake)
+    # Runner genérico: substitui o catálogo real por um coletor multicomando só.
+    monkeypatch.setattr("gerenet.automation.runner.COLLECTORS", {"bgp_peers": {
+        "commands": ["display bgp peer", "display bgp ipv6 peer"],
+        "parsers": {"display bgp peer": "bgp_peer", "display bgp ipv6 peer": "bgp_peer"},
+        "merge": "bgp_peers",
+    }})
+    monkeypatch.setitem(SAIDAS, "display bgp peer",
+                        Path("tests/fixtures/huawei_vrp/ne8000_display_bgp_peer.txt").read_text(encoding="utf-8"))
+    monkeypatch.setitem(SAIDAS, "display bgp ipv6 peer",
+                        Path("tests/fixtures/huawei_vrp/ne8000_display_bgp_ipv6_peer.txt").read_text(encoding="utf-8"))
+    monkeypatch.setattr(
+        "gerenet.automation.runner._conectar_e_executar",
+        lambda device, username, password, commands, settings: {cmd: SAIDAS[cmd] for cmd in commands},
+    )
+
+    resultado = run_collection(dev.id, settings=settings, session_override=db_session)
+    assert resultado["status"] == "success"
+
+    snap = db_session.query(DeviceSnapshot).filter_by(device_id=dev.id).first()
+    peers = snap.resources["bgp_peers"]
+    assert len(peers) == 22  # 12 v4 + 10 v6
+    assert peers[0] == {"afi": "ipv4", "peer": "10.30.70.1", "asn": 64526,
+                        "estado": "Idle(Admin)", "pref_rcv": 0, "up_down": "0655h07m"}
+    assert peers[-1]["afi"] == "ipv6"
+    assert peers[-1]["asn"] == 64528
+    assert sorted(Path(p).name for p in snap.raw_files["bgp_peers"]) == [
+        "bgp-ipv6-peer.txt", "bgp-peer.txt",
+    ]
