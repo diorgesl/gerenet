@@ -20,6 +20,20 @@ class VaultSecretStore:
         )
 
     def get_credential(self, vault_path: str) -> dict[str, str]:
-        resp = self._client.secrets.kv.v2.read_secret_version(path=vault_path)
-        dados = resp["data"]["data"]
+        dados = self.get_secret(vault_path)
         return {"username": dados["username"], "password": dados["password"]}
+
+    def get_secret(self, path: str) -> dict[str, str]:
+        """Lê o conteúdo de um caminho KV v2 (falha vira RuntimeError)."""
+        try:
+            resp = self._client.secrets.kv.v2.read_secret_version(path=path)
+        except Exception as exc:  # conexão, token, permissão, caminho inexistente
+            raise RuntimeError(f"Falha ao ler o segredo {path}: {exc}") from exc
+        return dict(resp["data"]["data"])
+
+    def set_secret(self, path: str, dados: dict[str, str]) -> None:
+        """Grava/substitui o segredo no caminho KV v2 (idempotente; falha vira RuntimeError)."""
+        try:
+            self._client.secrets.kv.v2.create_or_update_secret(path=path, secret=dados)
+        except Exception as exc:
+            raise RuntimeError(f"Falha ao gravar o segredo {path}: {exc}") from exc

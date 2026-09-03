@@ -221,6 +221,9 @@ def update_session(
             f"Equipamento {device.name} não é edge/backup_edge do circuito {circ.code}."
         )
     org = get_organization(session, circ.organization_id)
+    if "circuit_id" in mudancas and org.asn is None and "asn_remote" not in mudancas:
+        # nova organização sem ASN: o asn_remote da sessão antiga não pode vazar
+        raise ValidationError(f"Organização {org.name} não possui ASN; informe asn_remote.")
 
     _valida_endereco(afi, "local_address", local)
     _valida_endereco(afi, "remote_address", remote)
@@ -331,4 +334,26 @@ def remove_community(
         objeto_id=sessao.id, antes=antes, depois=None,
     )
     session.commit()
+    return sessao
+
+
+def set_password(
+    session: Session, session_id: int, *, actor: str, path: str
+) -> models.BgpSession:
+    """Registra a senha MD5 da sessão — valor já gravado no Vault pelo chamador.
+
+    O banco guarda só o path (password_ref); trocar a senha é transição real e
+    sempre audita antes/depois como has_password. Uma gravação órfã no Vault
+    (falha de commit depois do passo 2) é inofensiva: o path é por session_id e
+    a próxima chamada sobrescreve o valor.
+    """
+    sessao = get_session(session, session_id)
+    antes = {"has_password": sessao.has_password}
+    sessao.password_ref = path
+    registrar(
+        session, tipo="bgp_session.password_set", ator=actor, objeto="bgp_session",
+        objeto_id=sessao.id, antes=antes, depois={"has_password": True},
+    )
+    session.commit()
+    session.refresh(sessao)
     return sessao

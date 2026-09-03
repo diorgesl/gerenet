@@ -18,6 +18,7 @@ from gerenet.domain.services.bgp_sessions import (
     get_session,
     list_sessions,
     remove_community,
+    set_password,
     update_session,
 )
 from gerenet.domain.services.circuits import create_circuit
@@ -499,3 +500,83 @@ def test_community_inexistente_na_associacao(db_session: Session) -> None:
     sessao = create_session(db_session, _sessao_data(env, circ_id, env["ne1_id"]), actor="cli")
     with pytest.raises(NotFoundError, match="Community 9999 não encontrada"):
         add_community(db_session, sessao.id, 9999, actor="cli")
+
+
+def test_update_muda_para_org_sem_asn_exige_asn_remote(db_session: Session) -> None:
+    env = _ambiente(db_session)
+    circ1 = _circuito(db_session, env, code="CIRC-A", edge_id=env["ne1_id"])
+    sessao = create_session(db_session, _sessao_data(env, circ1, env["ne1_id"]), actor="cli")
+
+    org_sem_asn = create_organization(
+        db_session, OrganizationCreate(name="Cliente Sem ASN"), actor="cli"
+    )
+    circ2 = create_circuit(
+        db_session,
+        CircuitCreate(
+            code="CIRC-B",
+            organization_id=org_sem_asn.id,
+            site_id=env["site_id"],
+            access_device_id=env["sw_id"],
+            access_port="GE0/0/2",
+            edge_device_id=env["ne1_id"],
+        ),
+        actor="cli",
+    ).id
+    with pytest.raises(ValidationError, match="não possui ASN; informe asn_remote"):
+        update_session(db_session, sessao.id, BgpSessionUpdate(circuit_id=circ2), actor="cli")
+    # com asn_remote explícito a troca passa
+    atualizada = update_session(
+        db_session,
+        sessao.id,
+        BgpSessionUpdate(circuit_id=circ2, asn_remote=64530),
+        actor="cli",
+    )
+    assert atualizada.circuit_id == circ2
+    assert atualizada.asn_remote == 64530
+
+
+def test_set_password_registra_ref_e_audita(db_session: Session) -> None:
+    env = _ambiente(db_session)
+    circ_id = _circuito(db_session, env, code="CIRC-PW", edge_id=env["ne1_id"])
+    sessao = create_session(db_session, _sessao_data(env, circ_id, env["ne1_id"]), actor="cli")
+    assert sessao.has_password is False
+    caminho = f"gerenet/bgp-sessions/{sessao.id}/password"
+
+    atualizada = set_password(db_session, sessao.id, actor="cli", path=caminho)
+    assert atualizada.password_ref == caminho
+    assert atualizada.has_password is True
+
+    tipos = [
+        e.type
+        for e in db_session.scalars(
+            select(models.AuditEvent)
+            .where(models.AuditEvent.type.in_(["bgp_session.create", "bgp_session.password_set"]))
+            .order_by(models.AuditEvent.id)
+        )
+    ]
+    assert tipos == ["bgp_session.create", "bgp_session.password_set"]
+
+
+def test_set_password_troca_audita_novamente(db_session: Session) -> None:
+    env = _ambiente(db_session)
+    circ_id = _circuito(db_session, env, code="CIRC-PW2", edge_id=env["ne1_id"])
+    sessao = create_session(db_session, _sessao_data(env, circ_id, env["ne1_id"]), actor="cli")
+    caminho = f"gerenet/bgp-sessions/{sessao.id}/password"
+    set_password(db_session, sessao.id, actor="cli", path=caminho)
+    set_password(db_session, sessao.id, actor="cli", path=caminho)
+    tipos = [
+        e.type
+        for e in db_session.scalars(
+            select(models.AuditEvent)
+            .where(models.AuditEvent.type.in_(["bgp_session.create", "bgp_session.password_set"]))
+            .order_by(models.AuditEvent.id)
+        )
+    ]
+    assert tipos == [
+        "bgp_session.create", "bgp_session.password_set", "bgp_session.password_set",
+    ]
+
+
+def test_set_password_sessao_inexistente_da_404(db_session: Session) -> None:
+    with pytest.raises(NotFoundError, match="não encontrada"):
+        set_password(db_session, 9999, actor="cli", path="gerenet/bgp-sessions/9999/password")
