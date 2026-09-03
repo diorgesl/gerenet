@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -79,7 +79,7 @@ def touch_collection(
     device.comm_status = "ok" if ok else "fail"
     device.consecutive_failures = 0 if ok else device.consecutive_failures + 1
     if ok:
-        device.last_collected_at = datetime.now(timezone.utc)
+        device.last_collected_at = datetime.now(UTC)
         if version:
             device.vrp_version = version
         if uptime:

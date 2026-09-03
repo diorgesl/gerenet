@@ -36,7 +36,7 @@ def _fingerprint_do_servidor(conn) -> str | None:
         chave = conn.remote_conn.transport.get_remote_server_key()
         b64 = base64.b64encode(hashlib.sha256(chave.asbytes()).digest()).decode()
         return f"sha256:{b64}"
-    except Exception:
+    except Exception:  # noqa: BLE001 — fingerprint best-effort: sem chave ⇒ None
         return None
 
 
@@ -83,5 +83,5 @@ def connect_and_run(device, username: str, password: str, commands: list[str], s
     finally:
         try:
             conn.disconnect()
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 — disconnect best-effort no finally
             pass

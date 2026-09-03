@@ -1,6 +1,5 @@
 import secrets
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import UTC, datetime
 
 from redis import Redis
 from sqlalchemy.orm import Session
@@ -41,7 +40,7 @@ def _liberta_lock(redis: Redis, chave_lock: str, token: str) -> None:
     """
     try:
         redis.eval(_LIBERTA_LOCK, 1, chave_lock, token)
-    except Exception:  # redis indisponível na liberação: TTL expira sozinho
+    except Exception:  # noqa: BLE001, S110 — redis indisponível na liberação: TTL expira sozinho
         pass
 
 
@@ -79,7 +78,7 @@ def run_collection(
 
             cred = VaultSecretStore(settings.vault_url, settings.vault_token).get_credential(grupo.vault_path)
 
-            inicio = datetime.now(timezone.utc)
+            inicio = datetime.now(UTC)
             snapshot = DeviceSnapshot(device_id=dev.id, status="error")
             session.add(snapshot)
             session.commit()
@@ -103,10 +102,10 @@ def run_collection(
                         recursos[nome] = linhas[0] if linhas else {"erro": "Saída sem registros parseáveis."}
                     else:
                         recursos[nome] = {"backup": True}
-                except Exception as exc:  # HostKeyMismatch, ConnectionFailed, falha de parse etc.
+                except Exception as exc:  # noqa: BLE001 — falha de recurso vira erro no dict
                     erros[nome] = str(exc)
 
-            snapshot.finished_at = datetime.now(timezone.utc)
+            snapshot.finished_at = datetime.now(UTC)
             snapshot.duration_ms = int((snapshot.finished_at - inicio).total_seconds() * 1000)
             snapshot.resources = recursos
             snapshot.errors = erros
@@ -135,15 +134,15 @@ def run_collection(
                 session.commit()
 
             return {"status": snapshot.status, "snapshot_id": snapshot.id}
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — contrato dict preservado em qualquer falha
             if job is not None:
                 job.status = "error"
-                job.finished_at = datetime.now(timezone.utc)
+                job.finished_at = datetime.now(UTC)
                 session.commit()
             return {"status": "error", "snapshot_id": snapshot.id if snapshot else None, "error": str(exc)}
         finally:
             _liberta_lock(redis, chave_lock, token)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — falha pré-lock mantém contrato dict
         # Falha ANTES de adquirir o lock (Redis fora do ar etc.): o contrato dict
         # é mantido; sessão e client são fechados no finally externo.
         return {"status": "error", "snapshot_id": None, "error": str(exc)}
