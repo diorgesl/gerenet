@@ -951,6 +951,7 @@ Complementos registrados em 2026-09-03 (sessão de design do ciclo B):
 
 16. **Ordem dos ciclos de implementação**: depois do ciclo B (parsers + render da intenção + divergência desejado × encontrado), o **motor de mudanças (ciclo C, §12)** precede a interface web; a UI entra como "ciclo do assistente" após o C, consumindo a API existente.
 17. **Servidor MCP sobre as ferramentas do gerenet**: o operador pretende expor as ferramentas (SoT, render, divergência e, depois do ciclo C, mudanças controladas) por um **servidor MCP próprio**, no arco de integrações pós-C — começando por consultas read-only; qualquer mutação passa pelo fluxo de aprovação do §12, nunca direto no equipamento.
+18. **Coluna `circuits.edge_trunk` (aprovado em 2026-09-03)**: o trunk no edge (NE8000) que carrega as subinterfaces do downstream (ex.: `Eth-Trunk127`) entra como coluna **nullable** em `circuits`, preenchível no cadastro/atualização do circuito. O render de subinterface do ciclo B forma `<edge_trunk>.<vid>` a partir dela; circuito sem o campo não gera bloco de subinterface e a divergência devolve aviso (`circuito.sem_trunk`). É a **única migration de schema** do ciclo B (exceção ao congelamento do §14/§7 do ciclo A; seed de `somente-autorizadas` continua sendo a outra exceção).
 
 ---
 

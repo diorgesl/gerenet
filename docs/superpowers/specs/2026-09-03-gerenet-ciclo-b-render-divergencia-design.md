@@ -161,9 +161,10 @@ função.
 
 ### 5.2 Orquestrador e templates
 
-- Entrada: `Device` + `circuits` reservados + `bgp_sessions` ativas (admin_status) +
-  `prefix_authorizations` da org + produto de exportação da sessão + capacidades do device
-  (família/versão; `route_policy` clássico exercitado; XPL registrado apenas).
+- Entrada: `Device` + `circuits` reservados (incl. `edge_trunk`, §7) + `bgp_sessions` ativas
+  (admin_status) + `prefix_authorizations` da org + produto de exportação da sessão +
+  capacidades do device (família/versão; `route_policy` clássico exercitado; XPL registrado
+  apenas).
 - Saída: blocos de comandos VRP **por device**, ordenados para aplicação (interface →
   filtros → políticas → peer/afi), cada bloco anotado com o objeto SoT que o originou
   (para o ciclo C mapear diff/rollback).
@@ -191,8 +192,9 @@ Serviço `reconciliar_device(session, device_id)` — **sem tabela nova**:
 | `peer.asn` | `asn_remote` da sessão | AS da tabela | crítica |
 | `peer.filtros` | nomes renderizados (in/out) | `filtro_import`/`filtro_export` do verbose | crítica |
 | `peer.orfaos` | — | peer presente sem sessão ativa no SoT | atenção |
-| `subinterface.ausente` | circuito reservado do device | subinterface `<trunk>.<vid>` não listada | crítica |
+| `subinterface.ausente` | circuito reservado do device (com `edge_trunk`, §7) | subinterface `<trunk>.<vid>` não listada | crítica |
 | `subinterface.estado` | circuito ativo | phy/protocolo down | atenção |
+| `circuito.sem_trunk` | circuito reservado do device **sem** `edge_trunk` | — | aviso — SoT incompleta: cadastrar o trunk para comparar subinterface |
 | `ponta.v4` / `ponta.v6` | endereço alocado (IPAM §25.8) | endereço no snapshot | crítica |
 
 Cada item: `{tipo, severidade, esperado, encontrado, acao}` em PT-BR. Snapshot ausente →
@@ -200,8 +202,17 @@ Cada item: `{tipo, severidade, esperado, encontrado, acao}` em PT-BR. Snapshot a
 
 ## 7. Modelo de dados
 
-Sem tabela nova, sem migration de schema **exceto** o seed de `bgp_policy_profiles`
-(`direction='import'`, name `somente-autorizadas`, mesmo mecanismo dos seeds do ciclo A).
+Sem tabela nova, sem migration de schema **exceto**:
+
+1. Seed de `bgp_policy_profiles` (`direction='import'`, name `somente-autorizadas`, mesmo
+   mecanismo dos seeds do ciclo A).
+2. Migration de schema **única, aprovada em 2026-09-03** (complemento §25.18 da spec
+   principal): coluna `circuits.edge_trunk` `String(64)` **nullable** — nome do trunk no edge
+   device que carrega as subinterfaces do downstream (ex.: `Eth-Trunk127`). O render (5.2) e a
+   divergência de subinterface (seção 6) consomem o campo; circuito sem `edge_trunk` não gera
+   bloco de subinterface e a divergência devolve aviso `circuito.sem_trunk`. Aceito
+   opcionalmente no cadastro e na atualização do circuito (schemas/serviço/API/CLI do padrão
+   P3, estendidos no plano B2).
 
 ## 8. API e CLI (adições ao padrão do P3)
 
@@ -214,6 +225,8 @@ Sem tabela nova, sem migration de schema **exceto** o seed de `bgp_policy_profil
   aprovação. Associações mudam: `POST /api/v1/bgp-sessions/{id}/communities`
   `{community_id}` (associa) · `DELETE …/communities/{community_id}` (desassocia).
 - `policy-profiles`: já filtra `direction=import` (P3) — documentar no OpenAPI.
+- `circuits`: cadastro e atualização aceitam `edge_trunk` opcional (String ≤ 64; ex.
+  `Eth-Trunk127`) — PATCH `POST/PATCH /api/v1/circuits` e CLI equivalente, padrão P3.
 - CLI: `gerenet reconcile <device>` (id|nome), `gerenet render-config <device>`,
   `gerenet communities list`, `gerenet bgp-sessions community add|remove <session> <community>`.
 
@@ -233,8 +246,8 @@ Auditoria/mascaramento inalterados (regras do ciclo A). Render nunca emite senha
   import/export com produto; peer com max-prefix/timers/BFD/shutdown) + orquestrador (device
   com N circuitos/sessões → blocos completos; idempotência: render 2× = mesmo texto).
 - **Unit — divergência**: snapshot sintético → cada item da tabela da seção 6 (ausente/estado/
-  asn/filtros/órfãos/subinterface/pontas); sem snapshot → aviso; sessão desativada não gera
-  `peer.ausente`.
+  asn/filtros/órfãos/subinterface/pontas/`circuito.sem_trunk`); sem snapshot → aviso; sessão
+  desativada não gera `peer.ausente`.
 - **API**: reconciliation (200 com itens/aviso; 404), desired-config (200/404), communities
   (list; associação add/remove com 404/409; `has_password` nunca presente), policy-profiles
   `direction=import` (seed visível); **sessão com `import_profile_id` = perfil de importação
