@@ -54,3 +54,55 @@ def test_parse_ip_interface_brief_contra_captura_real() -> None:
     assert por_nome["Eth-Trunk127.582"]["phy"] == "*down"
     assert por_nome["100GE0/1/53(100M)"]["endereco"] == "unassigned"
     assert por_nome["Eth-Trunk127.1500"]["endereco"] == "198.51.100.17/31"
+def test_parse_ipv6_interface_brief_contra_captura_real() -> None:
+    saida = (FIXTURES / "ne8000_display_ipv6_interface_brief.txt").read_text(encoding="utf-8")
+    linhas = parse_template("ipv6_int_brief", saida)
+    # 14 registros: 13 interfaces reais + 1 residual do flush de EOF (Filldown persiste
+    # e o TextFSM emite o último grupo com endereco_v6 vazio). O merge descarta o residual.
+    assert len(linhas) == 14
+    esperados = {
+        "Eth-Trunk127.401": "2001:DB8:1000::155:F0CA:A/127",
+        "Eth-Trunk127.582": "FC00::2B7/127",
+        "Eth-Trunk127.624": "Unassigned",
+        "Eth-Trunk127.625": "2001:DB8:1000::1100:0:1/126",
+        "Eth-Trunk127.629": "2001:DB8:1000::1100:1:1/126",
+        "Eth-Trunk127.642": "Unassigned",
+        "Eth-Trunk127.2003": "2001:DB8:F247:FFF3::2/64",
+        "Eth-Trunk127.3899": "2001:DB8:1111::A/126",
+        "Eth-Trunk127.4024": "2001:DB8:1000::1100:73:1/126",
+        "GigabitEthernet0/1/0.1003": "2001:DB8:1111::51/126",
+        "LoopBack0": "2001:DB8::1/128",
+        "LoopBack1": "Unassigned",
+        "Virtual-Ethernet0/1/101.100": "2001:DB8:F190::1/126",
+    }
+    por_nome: dict[str, list[dict]] = {}
+    for linha in linhas:
+        por_nome.setdefault(linha["nome"], []).append(linha)
+    assert set(por_nome) == set(esperados)
+    for nome, endereco in esperados.items():
+        assert endereco in [linha["endereco_v6"] for linha in por_nome[nome]]
+    assert por_nome["Eth-Trunk127.582"][0]["phy"] == "*down"
+    assert linhas[-1] == {
+        "nome": "Virtual-Ethernet0/1/101.100", "phy": "up", "protocolo": "up",
+        "vpn": "--", "endereco_v6": "",
+    }
+    assert len([linha for linha in linhas if linha["endereco_v6"]]) == 13
+
+
+def test_parse_ipv6_interface_brief_multiplos_enderecos_derivado() -> None:
+    # Derivado (sintético, spec §10): mais de um endereço por interface — a captura
+    # real traz um por grupo. ([TENTATIVE] é variante real, presente na fixture.)
+    saida = (
+        "Interface                    Physical              Protocol VPN\n"
+        "Eth-Trunk127.625             up                    up       --\n"
+        "[IPv6 Address/Prefix Length] 2001:DB8:1000::1100:0:1/126\n"
+        "[IPv6 Address/Prefix Length] 2001:DB8:1000::1100:0:2/126  [TENTATIVE]\n"
+        "LoopBack0                    up                    up(s)    --\n"
+        "[IPv6 Address/Prefix Length] 2001:DB8::1/128\n"
+    )
+    linhas = parse_template("ipv6_int_brief", saida)
+    assert [linha["endereco_v6"] for linha in linhas if linha["nome"] == "Eth-Trunk127.625"] == [
+        "2001:DB8:1000::1100:0:1/126", "2001:DB8:1000::1100:0:2/126",
+    ]
+    assert linhas[-1] == {"nome": "LoopBack0", "phy": "up", "protocolo": "up(s)",
+                          "vpn": "--", "endereco_v6": ""}  # flush de EOF

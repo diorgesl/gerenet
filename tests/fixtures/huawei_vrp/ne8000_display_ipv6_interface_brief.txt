@@ -1,0 +1,31 @@
+*down: administratively down
+!down: FIB overload down
+(l): loopback
+(s): spoofing
+Interface                    Physical              Protocol VPN
+Eth-Trunk127.401             up                    up       --
+[IPv6 Address/Prefix Length] 2001:DB8:1000::155:F0CA:A/127
+Eth-Trunk127.582             *down                 down     --
+[IPv6 Address/Prefix Length] FC00::2B7/127  [TENTATIVE]
+Eth-Trunk127.624             up                    down     --
+[IPv6 Address/Prefix Length] Unassigned
+Eth-Trunk127.625             up                    up       --
+[IPv6 Address/Prefix Length] 2001:DB8:1000::1100:0:1/126
+Eth-Trunk127.629             *down                 down     --
+[IPv6 Address/Prefix Length] 2001:DB8:1000::1100:1:1/126  [TENTATIVE]
+Eth-Trunk127.642             *down                 down     --
+[IPv6 Address/Prefix Length] Unassigned
+Eth-Trunk127.2003            up                    up       --
+[IPv6 Address/Prefix Length] 2001:DB8:F247:FFF3::2/64
+Eth-Trunk127.3899            up                    up       --
+[IPv6 Address/Prefix Length] 2001:DB8:1111::A/126
+Eth-Trunk127.4024            up                    up       --
+[IPv6 Address/Prefix Length] 2001:DB8:1000::1100:73:1/126
+GigabitEthernet0/1/0.1003    down                  down     --
+[IPv6 Address/Prefix Length] 2001:DB8:1111::51/126  [TENTATIVE]
+LoopBack0                    up                    up(s)    --
+[IPv6 Address/Prefix Length] 2001:DB8::1/128
+LoopBack1                    up                    up(s)    --
+[IPv6 Address/Prefix Length] Unassigned
+Virtual-Ethernet0/1/101.100  up                    up       --
+[IPv6 Address/Prefix Length] 2001:DB8:F190::1/126
