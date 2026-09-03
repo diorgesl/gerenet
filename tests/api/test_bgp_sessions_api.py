@@ -254,6 +254,23 @@ def test_password_set_grava_vault_e_audita(client: TestClient, db_session: Sessi
         assert "md5-api-segredo" not in str(evento.details)
 
 
+def test_password_longa_nao_ecoa_no_422(client: TestClient, db_session: Session) -> None:
+    """422 de validação não ecoa o valor enviado nem a chave 'input' (senha)."""
+    env = _ambiente(db_session)
+    circ = _circuito(client, env, "CIRC-1010")
+    sessao_id = _sessao(client, env, circ)["id"]
+
+    senha_longa = "x" * 200
+    resp = client.post(
+        f"/api/v1/bgp-sessions/{sessao_id}/password",
+        json={"password": senha_longa},
+        headers=_auth(),
+    )
+    assert resp.status_code == 422
+    assert senha_longa not in resp.text
+    assert '"input"' not in resp.text
+
+
 def test_password_set_vault_fora_do_ar_da_503(
     client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
