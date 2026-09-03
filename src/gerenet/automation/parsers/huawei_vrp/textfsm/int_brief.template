@@ -1,0 +1,7 @@
+Value Required nome (\S+)
+Value Required phy (\S+)
+Value Required protocolo (\S+)
+
+Start
+  ^\s*Interface\s+PHY\s+Protocol\s+InUti\s+OutUti\s+inErrors\s+outErrors\s*$$
+  ^\s*${nome}\s+${phy}\s+${protocolo}\s+\S+\s+\S+\s+\d+\s+\d+\s*$$ -> Record
