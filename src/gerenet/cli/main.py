@@ -1,6 +1,7 @@
 import typer
 
 from gerenet.cli import (
+    bgp_sessions,
     circuits,
     collect,
     contacts,
@@ -18,6 +19,7 @@ app.add_typer(sites.app, name="sites", help="Sites/POPs.")
 app.add_typer(organizations.app, name="organizations", help="Organizações.")
 app.add_typer(contacts.app, name="contacts", help="Contatos de organizações.")
 app.add_typer(circuits.app, name="circuits", help="Circuitos de acesso.")
+app.add_typer(bgp_sessions.app, name="bgp-sessions", help="Sessões BGP.")
 app.add_typer(hostkey.app, name="hostkey", help="Host keys dos equipamentos.")
 app.add_typer(vault.app, name="vault", help="Credenciais de automação no Vault.")
 app.add_typer(collect.app, name="collect", help="Coleta read-only.")

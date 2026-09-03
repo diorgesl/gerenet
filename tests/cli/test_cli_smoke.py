@@ -1,13 +1,17 @@
+import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from typer.testing import CliRunner
 
+from gerenet.cli import bgp_sessions as cli_bgp
 from gerenet.cli.main import app
+from gerenet.config import Settings
 from gerenet.domain import models
 from gerenet.domain.schemas import DeviceCreate, OrganizationCreate, SiteCreate
 from gerenet.domain.services.devices import create_device
 from gerenet.domain.services.organizations import create_organization
 from gerenet.domain.services.sites import create_site, link_device
+from gerenet.secrets.vault_store import VaultSecretStore
 
 runner = CliRunner()
 
@@ -153,3 +157,117 @@ def test_cli_circuits_add_reserve_disable(db_session: Session) -> None:
     faltante = runner.invoke(app, ["circuits", "reserve", "nao-existe"])
     assert faltante.exit_code == 1
     assert "não encontrado" in faltante.output
+
+
+def _ambiente_bgp(db_session: Session) -> dict:
+    site = create_site(db_session, SiteCreate(name="pop-bgp-cli"), actor="cli")
+    org = create_organization(
+        db_session, OrganizationCreate(name="Cliente BGP CLI", asn=64513), actor="cli"
+    )
+    sw = create_device(
+        db_session, DeviceCreate(name="sw-bgp-cli", management_address="10.8.2.2"), actor="cli"
+    )
+    ne = create_device(
+        db_session, DeviceCreate(name="ne-bgp-cli", management_address="10.8.2.1", asn=64610),
+        actor="cli",
+    )
+    for dev in (sw, ne):
+        link_device(db_session, site.id, dev.id, actor="cli")
+    return {"org_id": org.id, "site_id": site.id, "sw_id": sw.id, "ne_id": ne.id}
+
+
+def _circuito_cli(db_session: Session, env: dict, code: str) -> int:
+    from gerenet.domain.schemas import CircuitCreate
+    from gerenet.domain.services.circuits import create_circuit
+
+    return create_circuit(
+        db_session,
+        CircuitCreate(
+            code=code, organization_id=env["org_id"], site_id=env["site_id"],
+            access_device_id=env["sw_id"], access_port="GE0/0/1",
+            edge_device_id=env["ne_id"],
+        ),
+        actor="cli",
+    ).id
+
+
+def test_cli_bgp_sessions_add_list_disable(db_session: Session) -> None:
+    env = _ambiente_bgp(db_session)
+    circ = _circuito_cli(db_session, env, "CIRC-BGP-CLI")
+
+    add = runner.invoke(
+        app,
+        [
+            "bgp-sessions", "add",
+            "--circuit-id", str(circ), "--device-id", str(env["ne_id"]),
+            "--afi", "ipv4",
+            "--local-address", "100.64.10.1", "--remote-address", "100.64.10.2",
+            "--asn-remote", "64513", "--maximum-prefix", "500",
+        ],
+    )
+    assert add.exit_code == 0, add.output
+    assert "criada" in add.output
+
+    lista = runner.invoke(app, ["bgp-sessions", "list"])
+    assert lista.exit_code == 0
+    assert "100.64.10.1" in lista.output
+
+    off = runner.invoke(app, ["bgp-sessions", "disable", "1"])
+    assert off.exit_code == 0
+    assert "100.64.10.1" not in runner.invoke(app, ["bgp-sessions", "list"]).output
+    assert "100.64.10.1" in runner.invoke(app, ["bgp-sessions", "list", "--all"]).output
+
+
+def test_cli_bgp_sessions_password_set(db_session: Session) -> None:
+    env = _ambiente_bgp(db_session)
+    circ = _circuito_cli(db_session, env, "CIRC-BGP-PW")
+    add = runner.invoke(
+        app,
+        [
+            "bgp-sessions", "add",
+            "--circuit-id", str(circ), "--device-id", str(env["ne_id"]),
+            "--afi", "ipv4",
+            "--local-address", "100.64.11.1", "--remote-address", "100.64.11.2",
+        ],
+    )
+    assert add.exit_code == 0, add.output
+
+    setar = runner.invoke(
+        app, ["bgp-sessions", "password", "set", "1"], input="md5-cli-segredo\nmd5-cli-segredo\n"
+    )
+    assert setar.exit_code == 0, setar.output
+    assert "Vault" in setar.output
+
+    sessao = db_session.scalar(select(models.BgpSession).where(models.BgpSession.id == 1))
+    assert sessao is not None and sessao.password_ref == "gerenet/bgp-sessions/1/password"
+
+    settings = Settings(_env_file=None)
+    store = VaultSecretStore(settings.vault_url, settings.vault_token)
+    assert store.get_secret(sessao.password_ref) == {"password": "md5-cli-segredo"}
+
+
+def test_cli_bgp_sessions_password_vault_fora_do_ar(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = _ambiente_bgp(db_session)
+    circ = _circuito_cli(db_session, env, "CIRC-BGP-PW-ERR")
+    add = runner.invoke(
+        app,
+        [
+            "bgp-sessions", "add",
+            "--circuit-id", str(circ), "--device-id", str(env["ne_id"]),
+            "--afi", "ipv4",
+            "--local-address", "100.64.12.1", "--remote-address", "100.64.12.2",
+        ],
+    )
+    assert add.exit_code == 0, add.output
+
+    def _falha(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("conexão recusada")
+
+    monkeypatch.setattr(cli_bgp, "VaultSecretStore", _falha)
+    setar = runner.invoke(
+        app, ["bgp-sessions", "password", "set", "1"], input="md5-x\nmd5-x\n"
+    )
+    assert setar.exit_code == 1
+    assert "Vault indisponível" in setar.output
