@@ -17,11 +17,23 @@ Copyright (c) 2012-2019 Huawei Technologies Co., Ltd.
 Huawei NE8000 uptime is 5 days, 2 hours, 10 minutes
 """
 
+_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "huawei_vrp"
+
+
+def _texto_fixture(nome: str) -> str:
+    return (_FIXTURES / nome).read_text(encoding="utf-8")
+
+
 # Saídas que o fake de conexão devolve, por comando — como o connect_and_run real,
 # que só devolve o que recebeu na lista `commands`.
 SAIDAS = {
     "display version": VERSION_SAIDA,
     "display current-configuration": "sysname r1\n#\n",
+    "display interface brief": _texto_fixture("ne8000_display_interface_brief.txt"),
+    "display ip interface brief": _texto_fixture("ne8000_display_ip_interface_brief.txt"),
+    "display ipv6 interface brief": _texto_fixture("ne8000_display_ipv6_interface_brief.txt"),
+    "display bgp peer": _texto_fixture("ne8000_display_bgp_peer.txt"),
+    "display bgp ipv6 peer": _texto_fixture("ne8000_display_bgp_ipv6_peer.txt"),
 }
 
 
@@ -255,3 +267,84 @@ def test_coleta_multicomando_mergeia_no_snapshot(
     assert sorted(Path(p).name for p in snap.raw_files["bgp_peers"]) == [
         "bgp-ipv6-peer.txt", "bgp-peer.txt",
     ]
+
+
+def test_coleta_completa_registra_snapshot_estruturado(
+    db_session: Session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dev = _dev_com_grupo(db_session, "r7", "10.0.0.7")
+    settings = Settings(_env_file=None, backups_dir=tmp_path)
+
+    monkeypatch.setattr("gerenet.automation.runner.VaultSecretStore", VaultFake)
+    monkeypatch.setattr(
+        "gerenet.automation.runner._conectar_e_executar",
+        lambda device, username, password, commands, settings: {cmd: SAIDAS[cmd] for cmd in commands},
+    )
+
+    resultado = run_collection(dev.id, settings=settings, session_override=db_session)
+    assert resultado["status"] == "success"
+
+    snap = db_session.query(DeviceSnapshot).filter_by(device_id=dev.id).first()
+    # version/config_backup legados preservados; novos recursos adicionados.
+    assert snap.resources["version"]["version"] == "8.210"
+    assert snap.resources["config_backup"]["backup"] is True
+    # O coletor dirigido pelo SoT (bgp_peers_verbose) chega na T9, junto com o
+    # ramo alvo_sessoes do runner; sem sessões ativas o recurso é pulado (§4.1/§12).
+    assert "bgp_peers_detalhes" not in snap.resources
+    assert set(snap.raw_files) == {"version", "config_backup", "interfaces", "bgp_peers"}
+
+    interfaces = snap.resources["interfaces"]
+    assert len(interfaces) == 38  # união canônica das três tabelas das fixtures
+    assert interfaces[0]["nome"] == "100GE0/1/53"  # ordenada por nome canônico
+    por_nome = {interface["nome"]: interface for interface in interfaces}
+    assert por_nome["LoopBack0"] == {
+        "nome": "LoopBack0", "phy": "up", "protocolo": "up(s)",
+        "enderecos_v4": ["203.0.113.1/32"], "enderecos_v6": ["2001:DB8::1/128"], "vpn": None,
+    }
+    assert por_nome["GigabitEthernet0/1/0.1003"] == {
+        "nome": "GigabitEthernet0/1/0.1003", "phy": "down", "protocolo": "down",
+        "enderecos_v4": ["10.254.101.29/30"], "enderecos_v6": ["2001:DB8:1111::51/126"],
+        "vpn": None,
+    }  # sufixo (10G) do interface brief não duplica a entrada
+    assert por_nome["Eth-Trunk127.582"]["phy"] == "*down"
+    assert por_nome["Eth-Trunk127.582"]["enderecos_v4"] == ["172.25.2.69/31"]
+    assert por_nome["Eth-Trunk127.582"]["enderecos_v6"] == ["FC00::2B7/127"]
+    assert por_nome["Eth-Trunk127.97653"]["enderecos_v4"] == []  # só no interface brief
+    assert por_nome["Eth-Trunk127.97653"]["enderecos_v6"] == []
+
+    peers = snap.resources["bgp_peers"]
+    assert len(peers) == 22  # 12 v4 + 10 v6
+    assert peers[0]["afi"] == "ipv4"
+    assert peers[-1] == {"afi": "ipv6", "peer": "FDFF::198:18:255:0", "asn": 64528,
+                         "estado": "Active", "pref_rcv": 0, "up_down": "0655h07m"}
+
+    assert sorted(Path(p).name for p in snap.raw_files["interfaces"]) == [
+        "interface-brief.txt", "ip-interface-brief.txt", "ipv6-interface-brief.txt",
+    ]
+    assert sorted(Path(p).name for p in snap.raw_files["bgp_peers"]) == [
+        "bgp-ipv6-peer.txt", "bgp-peer.txt",
+    ]
+
+
+def test_coleta_recurso_falho_vira_status_parcial(
+    db_session: Session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Falha de parse num recurso não derruba a coleta: status parcial + erro por recurso (§4.3)."""
+    dev = _dev_com_grupo(db_session, "r8", "10.0.0.8")
+    settings = Settings(_env_file=None, backups_dir=tmp_path)
+
+    monkeypatch.setattr("gerenet.automation.runner.VaultSecretStore", VaultFake)
+    monkeypatch.setattr("gerenet.automation.runner._conectar_e_executar",
+                        lambda device, username, password, commands, settings: {
+                            cmd: SAIDAS[cmd] for cmd in commands
+                        })
+    # Comando ausente do fake: o KeyError vira erro só do coletor bgp_peers.
+    monkeypatch.delitem(SAIDAS, "display bgp ipv6 peer")
+
+    resultado = run_collection(dev.id, settings=settings, session_override=db_session)
+    assert resultado["status"] == "partial"
+
+    snap = db_session.query(DeviceSnapshot).filter_by(device_id=dev.id).first()
+    assert "bgp_peers" in snap.errors
+    assert snap.resources["interfaces"]  # os demais recursos sobreviveram
+    assert "bgp_peers" not in snap.resources
