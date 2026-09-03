@@ -271,3 +271,45 @@ def test_cli_bgp_sessions_password_vault_fora_do_ar(
     )
     assert setar.exit_code == 1
     assert "Vault indisponível" in setar.output
+
+
+def test_cli_autorizacoes_ciclo_de_vida(db_session: Session) -> None:
+    org = create_organization(
+        db_session, OrganizationCreate(name="Down CLI A", asn=64523), actor="cli"
+    )
+    add = runner.invoke(
+        app,
+        [
+            "prefix-authorizations", "add",
+            "--organization-id", str(org.id), "--family", "ipv4",
+            "--prefix", "203.0.113.0/24",
+        ],
+    )
+    assert add.exit_code == 0, add.output
+    assert "criada" in add.output
+
+    lista = runner.invoke(app, ["prefix-authorizations", "list"])
+    assert lista.exit_code == 0
+    assert "203.0.113.0/24" in lista.output
+
+    off = runner.invoke(app, ["prefix-authorizations", "disable", "1"])
+    assert off.exit_code == 0
+    assert "203.0.113.0/24" not in runner.invoke(app, ["prefix-authorizations", "list"]).output
+    assert (
+        "203.0.113.0/24"
+        in runner.invoke(app, ["prefix-authorizations", "list", "--all"]).output
+    )
+
+
+def test_cli_policy_profiles_lista(db_session: Session) -> None:
+    lista = runner.invoke(app, ["policy-profiles", "list"])
+    assert lista.exit_code == 0
+    assert len(lista.output.strip().splitlines()) == 6  # seeds de exportação
+
+    so_export = runner.invoke(app, ["policy-profiles", "list", "--direction", "export"])
+    assert so_export.exit_code == 0
+    assert so_export.output == lista.output
+
+    so_import = runner.invoke(app, ["policy-profiles", "list", "--direction", "import"])
+    assert so_import.exit_code == 0
+    assert so_import.output.strip() == ""

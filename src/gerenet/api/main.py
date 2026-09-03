@@ -2,7 +2,16 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from gerenet.api.routers import bgp_sessions, circuits, contacts, devices, organizations, sites
+from gerenet.api.routers import (
+    bgp_sessions,
+    circuits,
+    contacts,
+    devices,
+    organizations,
+    policy_profiles,
+    prefix_authorizations,
+    sites,
+)
 
 
 async def _erro_validacao(request: Request, exc: RequestValidationError) -> JSONResponse:
@@ -26,6 +35,8 @@ def create_app() -> FastAPI:
     app.include_router(contacts.router)
     app.include_router(circuits.router)
     app.include_router(bgp_sessions.router)
+    app.include_router(policy_profiles.router)
+    app.include_router(prefix_authorizations.router)
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
