@@ -108,4 +108,6 @@ def reservar(circuit_id: int, session: SessionDep) -> object:
         reservar_circuito(session, circuit_id, actor="api")
     except ConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _detalhe(session, circ)

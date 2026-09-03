@@ -27,3 +27,9 @@ def test_lista_catalogo_so_leitura(client: TestClient) -> None:
     ).json() == lista
     assert client.get("/api/v1/policy-profiles?direction=import", headers=_auth()).json() == []
     assert client.post("/api/v1/policy-profiles", json={}, headers=_auth()).status_code == 405
+
+
+def test_direction_invalida_da_400(client: TestClient) -> None:
+    resp = client.get("/api/v1/policy-profiles?direction=foo", headers=_auth())
+    assert resp.status_code == 400
+    assert "Direção inválida" in resp.json()["detail"]

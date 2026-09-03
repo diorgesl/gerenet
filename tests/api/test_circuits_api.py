@@ -158,6 +158,22 @@ def test_patch_circuito_desativa_e_audita(client: TestClient, db_session: Sessio
     assert tipos == ["circuit.create", "circuit.disable", "circuit.update"]
 
 
+def test_reserva_com_sufixo_v6_excedente_da_400(client: TestClient, db_session: Session) -> None:
+    """Bloco p2p com octetos 2-4 somando >8 dígitos (172.168.200.128) estoura o
+    sufixo de 2 hextets do §25.8 — derivar_v6 levanta ValidationError → 400."""
+    env = _ambiente(db_session)
+    site_db = db_session.get(models.Site, env["site_id"])
+    site_db.p2p_ipv4_block = "172.168.200.128/25"
+    db_session.commit()
+    circ_id = client.post(
+        "/api/v1/circuits", json=_corpo(env, "CIRC-V6BIG"), headers=_auth()
+    ).json()["id"]
+
+    resp = client.post(f"/api/v1/circuits/{circ_id}/reserve", headers=_auth())
+    assert resp.status_code == 400
+    assert "excede 8 dígitos" in resp.json()["detail"]
+
+
 def test_reserva_de_circuito_desativado_da_409(client: TestClient, db_session: Session) -> None:
     env = _ambiente(db_session)
     circ_id = client.post(

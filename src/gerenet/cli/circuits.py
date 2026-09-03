@@ -104,7 +104,11 @@ def reserve(circuito: str = typer.Argument(..., help="ID ou código do circuito.
         if encontrado is None:
             typer.echo("Circuito não encontrado.", err=True)
             raise typer.Exit(1)
-        reservar_circuito(session, encontrado.id, actor="cli")
+        try:
+            reservar_circuito(session, encontrado.id, actor="cli")
+        except GerenetError as exc:
+            typer.echo(f"Erro: {exc}", err=True)
+            raise typer.Exit(1) from exc
     typer.echo(f"Circuito {encontrado.code} reservado (idempotente).")
 
 

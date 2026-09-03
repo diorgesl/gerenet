@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from gerenet.domain import models
 from gerenet.domain.audit import registrar
 from gerenet.domain.schemas import PrefixAuthorizationCreate
-from gerenet.domain.services.errors import ConflictError, NotFoundError
+from gerenet.domain.services.errors import ConflictError, NotFoundError, ValidationError
 from gerenet.domain.services.organizations import get_organization
 from gerenet.domain.validators import cidr_valido
 
@@ -79,6 +79,8 @@ def list_authorizations(
     family: str | None = None,
     include_disabled: bool = False,
 ) -> list[models.BgpPrefixAuthorization]:
+    if family is not None and family not in ("ipv4", "ipv6"):
+        raise ValidationError(f"Família inválida: {family} (esperado ipv4 ou ipv6).")
     stmt = select(models.BgpPrefixAuthorization).order_by(
         models.BgpPrefixAuthorization.family, models.BgpPrefixAuthorization.prefix
     )

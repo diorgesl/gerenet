@@ -208,6 +208,11 @@ def test_audita_criacao_e_desativacao(db_session: Session) -> None:
     assert len(desativacoes) == 1
 
 
+def test_family_invalida_no_filtro_rejeitada(db_session: Session) -> None:
+    with pytest.raises(ValidationError, match="Família inválida"):
+        list_authorizations(db_session, family="foo")
+
+
 def test_get_e_autorizacao_inexistente(db_session: Session) -> None:
     with pytest.raises(NotFoundError, match="Autorização 9999 não encontrada"):
         get_authorization(db_session, 9999)

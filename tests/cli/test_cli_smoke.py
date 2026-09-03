@@ -108,6 +108,41 @@ def test_cli_contacts_add_list_disable(db_session: Session) -> None:
     assert "Ana NOC" not in runner.invoke(app, ["contacts", "list"]).output
 
 
+def test_cli_circuits_reserve_desativado_da_erro(db_session: Session) -> None:
+    site = create_site(db_session, SiteCreate(name="POP-CIRC-CLI-ERR"), actor="cli")
+    org = create_organization(
+        db_session, OrganizationCreate(name="Org Circ CLI Err", asn=64514), actor="cli"
+    )
+    sw = create_device(
+        db_session, DeviceCreate(name="sw-circ-cli-err", management_address="10.9.1.4"), actor="cli"
+    )
+    ne = create_device(
+        db_session, DeviceCreate(name="ne-circ-cli-err", management_address="10.9.1.3", asn=64602),
+        actor="cli",
+    )
+    for dev in (sw, ne):
+        link_device(db_session, site.id, dev.id, actor="cli")
+
+    add = runner.invoke(
+        app,
+        [
+            "circuits", "add", "--code", "CIRC-CLI-ERR",
+            "--organization-id", str(org.id), "--site-id", str(site.id),
+            "--access-device-id", str(sw.id), "--access-port", "GE0/0/1",
+            "--edge-device-id", str(ne.id),
+        ],
+    )
+    assert add.exit_code == 0, add.output
+
+    off = runner.invoke(app, ["circuits", "disable", "CIRC-CLI-ERR"])
+    assert off.exit_code == 0
+
+    reserva = runner.invoke(app, ["circuits", "reserve", "CIRC-CLI-ERR"])
+    assert reserva.exit_code == 1
+    assert "Erro:" in reserva.output
+    assert "desativado" in reserva.output
+
+
 def test_cli_circuits_add_reserve_disable(db_session: Session) -> None:
     site = create_site(db_session, SiteCreate(name="POP-CIRC-CLI"), actor="cli")
     org = create_organization(
@@ -313,3 +348,19 @@ def test_cli_policy_profiles_lista(db_session: Session) -> None:
     so_import = runner.invoke(app, ["policy-profiles", "list", "--direction", "import"])
     assert so_import.exit_code == 0
     assert so_import.output.strip() == ""
+
+    invalida = runner.invoke(app, ["policy-profiles", "list", "--direction", "foo"])
+    assert invalida.exit_code == 1
+    assert "Erro:" in invalida.output
+
+
+def test_cli_prefix_authorizations_family_invalida() -> None:
+    invalida = runner.invoke(app, ["prefix-authorizations", "list", "--family", "foo"])
+    assert invalida.exit_code == 1
+    assert "Erro:" in invalida.output
+
+
+def test_cli_sites_add_bloco_p2p_grande_da_erro() -> None:
+    invalido = runner.invoke(app, ["sites", "add", "--name", "POP-BLOCO", "--p2p-ipv4-block", "x" * 65])
+    assert invalido.exit_code == 1
+    assert "Erro:" in invalido.output

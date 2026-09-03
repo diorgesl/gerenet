@@ -40,12 +40,17 @@ def listar(
 ) -> None:
     """Lista autorizações de prefixo."""
     with get_session() as session:
-        for auth in svc.list_authorizations(
-            session,
-            organization_id=organization_id,
-            family=family,
-            include_disabled=include_disabled,
-        ):
+        try:
+            autorizacoes = svc.list_authorizations(
+                session,
+                organization_id=organization_id,
+                family=family,
+                include_disabled=include_disabled,
+            )
+        except (GerenetError, SchemaValidationError) as exc:
+            typer.echo(f"Erro: {exc}", err=True)
+            raise typer.Exit(1) from exc
+        for auth in autorizacoes:
             typer.echo(f"{auth.id:>4}  {auth.family:<4} {auth.prefix:<20} org {auth.organization_id}")
 
 

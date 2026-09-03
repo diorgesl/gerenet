@@ -1,4 +1,5 @@
 import typer
+from pydantic import ValidationError as SchemaValidationError
 
 from gerenet.cli.devices import resolver as resolver_device
 from gerenet.db import get_session
@@ -47,7 +48,7 @@ def add(
                 ),
                 actor="cli",
             )
-        except GerenetError as exc:
+        except (GerenetError, SchemaValidationError) as exc:
             typer.echo(f"Erro: {exc}", err=True)
             raise typer.Exit(1) from exc
     typer.echo(f"Site {site.id} criado: {site.name}")

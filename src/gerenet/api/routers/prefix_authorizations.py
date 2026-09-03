@@ -29,12 +29,15 @@ def listar(
     family: str | None = None,
     include_disabled: bool = False,
 ) -> list:
-    return svc.list_authorizations(
-        session,
-        organization_id=organization_id,
-        family=family,
-        include_disabled=include_disabled,
-    )
+    try:
+        return svc.list_authorizations(
+            session,
+            organization_id=organization_id,
+            family=family,
+            include_disabled=include_disabled,
+        )
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("", response_model=PrefixAuthorizationOut, status_code=201)

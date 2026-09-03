@@ -79,6 +79,12 @@ def test_cria_lista_detalha(client: TestClient, db_session: Session) -> None:
     assert client.get("/api/v1/prefix-authorizations/9999", headers=_auth()).status_code == 404
 
 
+def test_family_invalida_no_filtro_da_400(client: TestClient) -> None:
+    resp = client.get("/api/v1/prefix-authorizations?family=foo", headers=_auth())
+    assert resp.status_code == 400
+    assert "Família inválida" in resp.json()["detail"]
+
+
 def test_post_organizacao_inexistente_404(client: TestClient) -> None:
     resp = client.post(
         "/api/v1/prefix-authorizations",
