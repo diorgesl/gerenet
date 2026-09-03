@@ -348,3 +348,69 @@ def test_coleta_recurso_falho_vira_status_parcial(
     assert "bgp_peers" in snap.errors
     assert snap.resources["interfaces"]  # os demais recursos sobreviveram
     assert "bgp_peers" not in snap.resources
+
+
+def test_bgp_peers_verbose_so_sessoes_ativas_do_device(
+    db_session: Session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O comando verbose nasce do SoT: 1 por sessão ativa (afi, endereço remoto),
+    excluindo shutdown, em ordem ipv4 -> ipv6 (spec §4.1/§12)."""
+    from gerenet.domain.models import BgpSession, Circuit, DeviceSnapshot, Organization, Site
+
+    dev = _dev_com_grupo(db_session, "edge-t9", "10.0.0.99")
+    site = Site(name="site-t9")
+    org = Organization(name="org-t9", asn=64531)
+    db_session.add_all([site, org])
+    db_session.commit()
+    # Circuito mínimo: só os NOT NULL do modelo; os demais campos têm default.
+    circuito = Circuit(
+        code="C-T9", organization_id=org.id, site_id=site.id,
+        access_device_id=dev.id, access_port="GE0/0/1", edge_device_id=dev.id,
+    )
+    db_session.add(circuito)
+    db_session.commit()
+
+    def sessao(afi: str, remoto: str, shutdown: bool = False) -> BgpSession:
+        # Só os NOT NULL de BgpSession (L349-353/356); asn_local fica None e o
+        # serviço o resolveria pelo device — aqui o filtro não o consulta.
+        return BgpSession(
+            circuit_id=circuito.id, device_id=dev.id, afi=afi,
+            local_address="203.0.113.1", remote_address=remoto,
+            asn_remote=64531, shutdown=shutdown,
+        )
+
+    # 2 ativas (v4 e v6 — mesmos peers das fixtures verbose) + 1 em shutdown.
+    db_session.add_all([
+        sessao("ipv4", "198.51.100.254"),
+        sessao("ipv6", "2001:DB8:8000:0:198:51:100:254"),
+        sessao("ipv6", "2001:DB8::99", shutdown=True),
+    ])
+    db_session.commit()
+    settings = Settings(_env_file=None, backups_dir=tmp_path)
+
+    monkeypatch.setattr("gerenet.automation.runner.VaultSecretStore", VaultFake)
+    monkeypatch.setattr(
+        "gerenet.automation.runner._conectar_e_executar",
+        lambda device, username, password, commands, settings: {cmd: SAIDAS[cmd] for cmd in commands},
+    )
+    monkeypatch.setitem(SAIDAS, "display bgp peer 198.51.100.254 verbose",
+                        _texto_fixture("ne8000_display_bgp_peer_verbose.txt"))
+    monkeypatch.setitem(SAIDAS, "display bgp ipv6 peer 2001:DB8:8000:0:198:51:100:254 verbose",
+                        _texto_fixture("ne8000_display_bgp_ipv6_peer_verbose.txt"))
+
+    resultado = run_collection(dev.id, settings=settings, session_override=db_session)
+    assert resultado["status"] == "success"
+
+    snap = db_session.query(DeviceSnapshot).filter_by(device_id=dev.id).first()
+    # Chave do recurso = nome do coletor no catálogo (regra de todos os recursos);
+    # "bgp_peers_detalhes" é o nome do merge da T6 (contracto de shape), não a chave.
+    assert snap.resources["bgp_peers_verbose"] == [
+        {"afi": "ipv4", "peer": "198.51.100.254", "descricao": "UPSTREAM-FNA",
+         "filtro_import": "ASN64531-V4-IMPORT", "filtro_export": "XPL-UPSTREAM-AS64531-V4-EXPORT"},
+        {"afi": "ipv6", "peer": "2001:DB8:8000:0:198:51:100:254", "descricao": "UPSTREAM-v6",
+         "filtro_import": "ASN64531-V6-IMPORT", "filtro_export": "XPL-UPSTREAM-AS64531-V6-EXPORT"},
+    ]  # ordem do SoT: afi ipv4 antes de ipv6
+    assert sorted(Path(p).name for p in snap.raw_files["bgp_peers_verbose"]) == [
+        "bgp-ipv6-peer-2001-DB8-8000-0-198-51-100-254-verbose.txt",
+        "bgp-peer-198.51.100.254-verbose.txt",
+    ]
