@@ -947,6 +947,11 @@ As perguntas abaixo estavam em aberto para a implementação e foram resolvidas 
 14. **Concorrência por POP**: **lock por equipamento** (uma mudança de cada vez no mesmo device) + **limite de execuções simultâneas por POP configurável (default 2–4)**. Coleta/leitura não toma lock de escrita.
 15. **Métricas operacionais**: o sistema expõe as métricas da §20.1 em **endpoint Prometheus (`/metrics`) na API e no worker, consumido pelo Grafana**. Integração com Zabbix entra na Fase 6.
 
+Complementos registrados em 2026-09-03 (sessão de design do ciclo B):
+
+16. **Ordem dos ciclos de implementação**: depois do ciclo B (parsers + render da intenção + divergência desejado × encontrado), o **motor de mudanças (ciclo C, §12)** precede a interface web; a UI entra como "ciclo do assistente" após o C, consumindo a API existente.
+17. **Servidor MCP sobre as ferramentas do gerenet**: o operador pretende expor as ferramentas (SoT, render, divergência e, depois do ciclo C, mudanças controladas) por um **servidor MCP próprio**, no arco de integrações pós-C — começando por consultas read-only; qualquer mutação passa pelo fluxo de aprovação do §12, nunca direto no equipamento.
+
 ---
 
 ## 26. Exemplo de fluxo completo de downstream dual stack
