@@ -1,0 +1,18 @@
+interface {{ interface }}
+{% if descricao %}
+description {{ descricao }}
+{% endif %}
+{% if qinq %}
+vlan-type dot1q 0x88a8 vid {{ vid }}
+{% else %}
+vlan-type dot1q vid {{ vid }}
+{% endif %}
+{% for v4 in enderecos_v4 %}
+ip address {{ v4.endereco }} {{ v4.mascara }}
+{% endfor %}
+{% if enderecos_v6 %}
+ipv6 enable
+{% endif %}
+{% for v6 in enderecos_v6 %}
+ipv6 address {{ v6 }}
+{% endfor %}

@@ -1,0 +1,4 @@
+{% set cmd = 'ip ipv6-prefix' if afi == 'ipv6' else 'ip ip-prefix' %}
+{% for entrada in entradas %}
+{{ cmd }} {{ nome }} index {{ entrada.index }} permit {{ entrada.prefixo }}
+{% endfor %}
