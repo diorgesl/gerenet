@@ -82,12 +82,12 @@ def reconciliar_device(
     get_device(session, device_id)  # NotFoundError propaga (404 na API)
 
     if snapshot_id is None:
-        snap = (
-            session.query(models.DeviceSnapshot)
-            .filter_by(device_id=device_id)
+        snap = session.scalars(
+            select(models.DeviceSnapshot)
+            .where(models.DeviceSnapshot.device_id == device_id)
             .order_by(models.DeviceSnapshot.id.desc())
-            .first()
-        )
+            .limit(1)
+        ).first()
     recursos = snap.resources if snap is not None else {}
     render = render_desejado(session, device_id)
     items: list[ReconcileItem] = []

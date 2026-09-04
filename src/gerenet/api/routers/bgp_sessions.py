@@ -6,7 +6,6 @@ from sqlalchemy.orm import Session
 from gerenet.api.deps import require_api_key
 from gerenet.config import get_settings
 from gerenet.db import get_db
-from gerenet.domain import models
 from gerenet.domain.schemas import (
     BgpSessionCommunityIn,
     BgpSessionCreate,
@@ -100,12 +99,9 @@ def associar_community(
 ) -> dict[str, int]:
     """Associa uma community à sessão — idempotente (P2; spec §8)."""
     try:
-        svc.get_session(session, session_id)
+        svc.add_community(session, session_id, data.community_id, actor="api")
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    if session.get(models.Community, data.community_id) is None:
-        raise HTTPException(status_code=404, detail=f"Community {data.community_id} não encontrada.")
-    svc.add_community(session, session_id, data.community_id, actor="api")
     return {"session_id": session_id, "community_id": data.community_id}
 
 
@@ -113,9 +109,6 @@ def associar_community(
 def desassociar_community(session_id: int, community_id: int, session: SessionDep) -> None:
     """Desassocia uma community — idempotente (P2; spec §8)."""
     try:
-        svc.get_session(session, session_id)
+        svc.remove_community(session, session_id, community_id, actor="api")
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    if session.get(models.Community, community_id) is None:
-        raise HTTPException(status_code=404, detail=f"Community {community_id} não encontrada.")
-    svc.remove_community(session, session_id, community_id, actor="api")

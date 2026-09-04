@@ -23,7 +23,10 @@ def _resolver_community(session, comunidade: str):
             return com_svc.get_community(session, int(comunidade))
         except NotFoundError:
             return None
-    return next((c for c in com_svc.list_communities(session) if c.name == comunidade), None)
+    return next(
+        (c for c in com_svc.list_communities(session, include_disabled=True) if c.name == comunidade),
+        None,
+    )
 
 
 @community.command("add")

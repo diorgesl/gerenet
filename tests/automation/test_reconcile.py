@@ -236,6 +236,7 @@ def test_peer_estado_atencao(db_session: Session) -> None:
     assert [i.tipo for i in itens] == ["peer.estado"]
     assert itens[0].esperado == "Established"
     assert itens[0].encontrado == "Active"
+    assert itens[0].severidade == "atencao"
 
 
 def test_peer_shutdown_admin_atencao(db_session: Session) -> None:
@@ -252,7 +253,9 @@ def test_peer_shutdown_admin_atencao(db_session: Session) -> None:
     )
     itens = reconciliar_device(db_session, env["ne_id"]).items
     assert [i.tipo for i in itens] == ["peer.shutdown_admin"]
+    assert itens[0].esperado == "não Established"
     assert itens[0].encontrado == "Established"
+    assert itens[0].severidade == "atencao"
 
 
 def test_peer_asn_critico(db_session: Session) -> None:
@@ -266,6 +269,7 @@ def test_peer_asn_critico(db_session: Session) -> None:
     assert [i.tipo for i in itens] == ["peer.asn"]
     assert itens[0].esperado == "64512"
     assert itens[0].encontrado == "64599"
+    assert itens[0].severidade == "critica"
 
 
 def test_peer_filtros_critico(db_session: Session) -> None:
@@ -279,6 +283,33 @@ def test_peer_filtros_critico(db_session: Session) -> None:
     assert [i.tipo for i in itens] == ["peer.filtros"]
     assert itens[0].esperado == "RP-64512-IMPORT-V4"
     assert itens[0].encontrado == "ASN64512-V4-IMPORT"
+    assert itens[0].severidade == "critica"
+
+
+def test_produto_export_em_divida_nao_gera_filtros(db_session: Session) -> None:
+    """Produto de exportação em dívida (default_internas): o render emite bloco
+    comentário (objeto="session", objeto_id=0) que o parse de filtros ignora —
+    linha verbose divergente não vira item peer.filtros (T5-M4)."""
+    from gerenet.automation.reconcile import reconciliar_device
+
+    env = _ambiente(db_session)
+    circ_id = _circuito_completo(db_session, env)
+    _autoriza(db_session, env)  # import continua renderizável (RP-64512-IMPORT-V4)
+    perfil = _perfil_export(db_session, "default_internas")
+    _sessao(db_session, env, circ_id, afi="ipv4", export_profile_id=perfil)
+    p = _pontas(db_session, circ_id)
+    _snapshot(
+        db_session, env, sem=("interfaces",),
+        bgp_peers=[{"afi": "ipv4", "peer": p["v4_r"], "asn": 64512, "estado": "Established",
+                "pref_rcv": 1, "up_down": "1d02h"}],
+        bgp_peers_verbose=[{
+            "afi": "ipv4", "peer": p["v4_r"], "descricao": None,
+            "filtro_import": "RP-64512-IMPORT-V4", "filtro_export": "ASN64512-V4-EXPORT",
+        }],
+    )
+    itens = reconciliar_device(db_session, env["ne_id"]).items
+    assert not any(i.tipo == "peer.filtros" for i in itens)
+    assert itens == []
 
 
 def test_peer_orfao_atencao(db_session: Session) -> None:
@@ -293,7 +324,9 @@ def test_peer_orfao_atencao(db_session: Session) -> None:
     _snapshot(db_session, env, **perfeito)
     itens = reconciliar_device(db_session, env["ne_id"]).items
     assert [i.tipo for i in itens] == ["peer.orfaos"]
+    assert itens[0].esperado == "sessão no SoT"
     assert itens[0].encontrado == "203.0.113.9"
+    assert itens[0].severidade == "atencao"
 
 
 def test_subinterface_ausente_critico(db_session: Session) -> None:
@@ -306,6 +339,7 @@ def test_subinterface_ausente_critico(db_session: Session) -> None:
     itens = reconciliar_device(db_session, env["ne_id"]).items
     assert [i.tipo for i in itens] == ["subinterface.ausente"]
     assert itens[0].esperado == "Eth-Trunk127.2"
+    assert itens[0].severidade == "critica"
 
 
 def test_subinterface_estado_atencao(db_session: Session) -> None:
@@ -320,6 +354,7 @@ def test_subinterface_estado_atencao(db_session: Session) -> None:
     assert [i.tipo for i in itens] == ["subinterface.estado"]
     assert itens[0].esperado == "up"
     assert itens[0].encontrado == "*down/down"
+    assert itens[0].severidade == "atencao"
 
 
 def test_pontas_v4_e_v6_critico(db_session: Session) -> None:
@@ -332,6 +367,8 @@ def test_pontas_v4_e_v6_critico(db_session: Session) -> None:
     itens = reconciliar_device(db_session, env["ne_id"]).items
     assert [i.tipo for i in itens] == ["ponta.v4"]
     assert itens[0].esperado == p["v4_sub"]
+    assert itens[0].encontrado == "—"
+    assert itens[0].severidade == "critica"
 
     perfeito2 = _recursos_perfeitos(db_session, env)
     perfeito2["interfaces"][0]["enderecos_v6"] = []
@@ -339,6 +376,8 @@ def test_pontas_v4_e_v6_critico(db_session: Session) -> None:
     itens2 = reconciliar_device(db_session, env["ne_id"]).items
     assert [i.tipo for i in itens2] == ["ponta.v6"]
     assert itens2[0].esperado == p["v6_l"]
+    assert itens2[0].encontrado == "—"
+    assert itens2[0].severidade == "critica"
 
 
 def test_circuito_sem_trunk_vira_aviso(db_session: Session) -> None:

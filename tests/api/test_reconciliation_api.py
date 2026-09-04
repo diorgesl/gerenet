@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from gerenet.api.main import create_app
+from gerenet.automation.render import render_desejado
 from gerenet.config import Settings, set_settings
 from gerenet.domain import models
 from gerenet.domain.schemas import (
@@ -148,5 +149,7 @@ def test_desired_config(client: TestClient, db_session: Session) -> None:
     assert tipos[0:4] == ["subinterface", "prefix_list", "prefix_list", "route_policy_import"]
     assert any(b["objeto"] == "circuit" for b in corpo["blocos"])
     assert "password" not in resp.text  # regra global: senha nunca no payload
+    # texto idêntico ao render real: uma linha do meio mudando quebra o relé (T6-M3)
+    assert corpo["texto"] == render_desejado(db_session, env["ne_id"]).texto
 
     assert client.get("/api/v1/devices/9999/desired-config", headers=_auth()).status_code == 404

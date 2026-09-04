@@ -2962,7 +2962,7 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 | §5.2 entrada completa, saída ordenada (§5.2 TIPO_ORDEM) e anotada | T4 `test_render_dual_completo_ordenado` |
 | §5.2 senha nunca emitida (só comentário com path) | T3 golden do peer + T4 `test_render_senha_vira_so_comentario` |
 | §5.2 idempotência (render 2×) | T4 `test_render_idempotente` |
-| §6 divergência read-only sem tabela nova | T5 `test_reconcile.py` (13 testes; um por tipo do §6 + sem-snapshot + desativada + parcial + outro device + mais recente) |
+| §6 divergência read-only sem tabela nova | T5 `test_reconcile.py` (16 testes; um por tipo do §6 + sem-snapshot + desativada + parcial + outro device + mais recente) |
 | §6 snapshot ausente → aviso, sem erro | T5 + T6 (`test_reconciliation_200_com_aviso`) |
 | §6 itens `{tipo, severidade, esperado, encontrado, acao}` PT-BR | T5 dataclass + T6 `ReconcileItemOut` |
 | §7 migration única (edge_trunk nullable + seed import) | T2 (migration + upgrade/downgrade) |

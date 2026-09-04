@@ -376,6 +376,8 @@ class BgpSessionCommunityIn(BaseModel):
 
 
 class CommunityOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     name: str
     notes: str | None = None

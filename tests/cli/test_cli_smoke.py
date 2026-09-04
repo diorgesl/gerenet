@@ -448,6 +448,37 @@ def test_cli_bgp_sessions_community_add_remove(db_session: Session) -> None:
     ) is None
 
 
+def test_cli_bgp_sessions_community_erros(db_session: Session) -> None:
+    env = _ambiente_bgp(db_session)
+    circ = _circuito_cli(db_session, env, "CIRC-BGP-COM-ERR")
+    add = runner.invoke(
+        app,
+        [
+            "bgp-sessions", "add",
+            "--circuit-id", str(circ), "--device-id", str(env["ne_id"]),
+            "--afi", "ipv4",
+            "--local-address", "100.64.15.1", "--remote-address", "100.64.15.2",
+        ],
+    )
+    assert add.exit_code == 0, add.output
+
+    sem_sessao = runner.invoke(app, ["bgp-sessions", "community", "add", "999", "blackhole"])
+    assert sem_sessao.exit_code == 1
+    assert "não encontrada" in sem_sessao.output
+
+    sem_sessao_rem = runner.invoke(app, ["bgp-sessions", "community", "remove", "999", "blackhole"])
+    assert sem_sessao_rem.exit_code == 1
+    assert "não encontrada" in sem_sessao_rem.output
+
+    sem_community = runner.invoke(app, ["bgp-sessions", "community", "add", "1", "9999"])
+    assert sem_community.exit_code == 1
+    assert "não encontrada" in sem_community.output
+
+    sem_community_rem = runner.invoke(app, ["bgp-sessions", "community", "remove", "1", "9999"])
+    assert sem_community_rem.exit_code == 1
+    assert "não encontrada" in sem_community_rem.output
+
+
 def test_cli_render_config_e_reconcile(db_session: Session) -> None:
     env = _ambiente_bgp(db_session)
     circ = _circuito_cli(db_session, env, "CIRC-BGP-REC")
