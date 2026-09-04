@@ -4699,19 +4699,39 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 - Create: `web/src/pages/Reconcile.test.tsx`, `Snapshots.test.tsx`
 
 **Interfaces:**
-- Consumes: hooks (Task 9). Específicos `useDesiredConfig(deviceId)`, `useReconcile({device_id|snapshot_id})`, `useSnapshots(deviceId)`, `useJobPoll`, `useJobs({filtros})`.
-- Produces: as 4 telas de inspeção técnica (snapshot JSON com colapso por chave top-level; desired-config em acordeão por bloco + MonoCode + botão copiar; reconcile com filtro por severidade e aviso de snapshot ausente; jobs com filtros + detalhe com timing e snapshot).
+- Consumes: hooks (Tasks 6–9). Específicos desta task: `useDevices` (Task 7), `useJobPoll` (Task 6), e os hooks definidos no Step 1 (`useSnapshots`, `useSnapshot`, `useDesiredConfig`, `useReconcile`, `useJobs`). Contratos de backend verificados: `GET /devices/{id}/snapshots` (lista, `limit` máx. 100), `GET /snapshots/{id}`, `GET /devices/{id}/desired-config`, `GET /reconciliation?device_id|snapshot_id` (exatamente um; 400 "Informe exatamente um de device_id ou snapshot_id."), `GET /jobs?device_id|status|kind|limit|offset` e `GET /jobs/{id}`.
+- Produces: as 4 telas de inspeção técnica (snapshot JSON com colapso por chave top-level; desired-config em acordeão por bloco + MonoCode com botão copiar; reconcile com filtro por severidade e aviso de snapshot ausente; jobs com filtros + detalhe com timing e link ao reconcile do snapshot).
+- Rotas novas: `/snapshots`, `/desired-config`, `/reconcile`, `/jobs`, `/jobs/:id`. A T6 já linkava `/reconcile?device_id=` (Dashboard) e a T10/`JobDetail` linka `/reconcile?snapshot_id=` — a tela Reconcile lê os dois params.
 
-- [ ] **Step 1: hooks**
+> **Correções de defeito do rascunho (ruling da orquestração):**
+> (a) `useSnapshot` com key `["snapshots", id]` colidiria com a key da lista `["snapshots", deviceId]` (ids de snapshot e de device são ambos `int` pequenos — uma colisão serviria a lista no lugar do detalhe); a key do detalhe é `["snapshot", id]`.
+> (b) `useSnapshots(deviceId)` sem `enabled` dispararia `GET /devices/0/snapshots` quando o componente monta sem device; recebeu `enabled: deviceId > 0`.
+> (c) `Object.entries` inclui chaves com valor `undefined` — `new URLSearchParams([["snapshot_id", "undefined"]])` mandaria `snapshot_id=undefined` ao backend (422). Os dois novos hooks filtram `undefined` antes de montar a query string.
+
+- [ ] **Step 1: hooks** (append no `web/src/api/hooks.ts`; alterar a linha de import de tipos para incluir os novos: `import type { DashboardOut, DesiredConfigOut, JobRunOut, ReconcileOut, SnapshotOut, UserOut } from "./types";`)
+
 ```ts
 export function useSnapshots(deviceId: number) {
-  return useQuery({ queryKey: ["snapshots", deviceId], queryFn: () => apiFetch<SnapshotOut[]>(`/api/v1/devices/${deviceId}/snapshots`) });
+  return useQuery({
+    queryKey: ["snapshots", deviceId],
+    queryFn: () => apiFetch<SnapshotOut[]>(`/api/v1/devices/${deviceId}/snapshots`),
+    enabled: deviceId > 0,
+  });
 }
 export function useSnapshot(id: number) {
-  return useQuery({ queryKey: ["snapshots", id], queryFn: () => apiFetch<SnapshotOut>(`/api/v1/snapshots/${id}`), enabled: id > 0 });
+  return useQuery({
+    queryKey: ["snapshot", id], // distinta de ["snapshots", deviceId] (ver correção a)
+    queryFn: () => apiFetch<SnapshotOut>(`/api/v1/snapshots/${id}`),
+    enabled: id > 0,
+  });
 }
 export function useDesiredConfig(deviceId: number | null) {
-  return useQuery({ queryKey: ["desired", deviceId], queryFn: () => apiFetch<DesiredConfigOut>(`/api/v1/devices/${deviceId}/desired-config`), enabled: !!deviceId, retry: false });
+  return useQuery({
+    queryKey: ["desired", deviceId],
+    queryFn: () => apiFetch<DesiredConfigOut>(`/api/v1/devices/${deviceId}/desired-config`),
+    enabled: Boolean(deviceId),
+    retry: false,
+  });
 }
 export function useReconcile(filtro: { device_id?: number; snapshot_id?: number }) {
   return useQuery({
@@ -4719,19 +4739,686 @@ export function useReconcile(filtro: { device_id?: number; snapshot_id?: number 
     queryFn: () =>
       apiFetch<ReconcileOut>(
         `/api/v1/reconciliation?${new URLSearchParams(
-          Object.entries(filtro).map(([k, v]) => [k, String(v)]) as [string, string][],
+          Object.entries(filtro)
+            .filter(([, v]) => v !== undefined)
+            .map(([k, v]) => [k, String(v)] as [string, string]),
         ).toString()}`,
       ),
     enabled: Number(filtro.device_id ?? filtro.snapshot_id) > 0,
     retry: false,
   });
 }
+export function useJobs(filtros: {
+  device_id?: number;
+  status?: string;
+  kind?: string;
+  limit?: number;
+  offset?: number;
+}) {
+  return useQuery({
+    queryKey: ["jobs", filtros],
+    queryFn: () =>
+      apiFetch<JobRunOut[]>(
+        `/api/v1/jobs?${new URLSearchParams(
+          Object.entries(filtros)
+            .filter(([, v]) => v !== undefined)
+            .map(([k, v]) => [k, String(v)] as [string, string]),
+        ).toString()}`,
+      ),
+  });
+}
 ```
-- [ ] **Step 2: `Snapshots.tsx`** — seletor de device (select de `/devices`) → lista `/devices/{id}/snapshots` → seleciona → `GET /snapshots/{id}` e renderiza `resources` como árvore colapsável (recursion em componente `JsonTree` local: `<details>` por valor objeto/array; arrays com slice + paginação se > 60 itens).
-- [ ] **Step 3: `DesiredConfig.tsx`** — seletor de device → GET desired-config → blocos em acordeão (`<details>` por `tipo/objeto`) + `MonoCode` com o `texto`; vazio → "Nenhum bloco renderizado."
-- [ ] **Step 4: `Reconcile.tsx`** — dois modos: select de device OU input `snapshot_id`; query `useReconcile`; tabela com `SeverityBadge`, filtro client-side por severidade; `aviso` exibido quando presente; erro 400 com "Informe exatamente um de device_id ou snapshot_id." exibido.
-- [ ] **Step 5: `Jobs.tsx` + `JobDetail.tsx`** — lista com filtros (device/status/kind) e select limit/offset; detalhe do job com mesclar `started_at/finished_at/duration_ms` e link ao snapshot; polling via `useJobPoll(id)` (refetchInterval 3s encerrado em status terminal).
-- [ ] **Step 6: testes (`Reconcile.test.tsx` — itens mock, filtro por severidade, aviso; `Snapshots.test.tsx` — tree colapsável e paginação de array) + build + lint + commit.**
+
+- [ ] **Step 2: `Snapshots.tsx`**
+
+```tsx
+import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { useDevices, useSnapshot, useSnapshots } from "@/api/hooks";
+import { DataTable } from "@/components/DataTable";
+import { FormField } from "@/components/FormField";
+import { PageHeader } from "@/components/PageHeader";
+import { StatusBadge } from "@/components/StatusBadge";
+import { TimeAgo } from "@/components/TimeAgo";
+import type { SnapshotOut } from "@/api/types";
+
+const LIMITE_ARRAY = 60;
+
+function JsonValor({ valor }: { valor: unknown }) {
+  if (valor === null || typeof valor !== "object") return <>{String(valor)}</>;
+  if (Array.isArray(valor)) return <JsonArray itens={valor} />;
+  return (
+    <ul>
+      {Object.entries(valor as Record<string, unknown>).map(([k, v]) => (
+        <li key={k}>
+          {k}: <JsonValor valor={v} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function JsonArray({ itens }: { itens: unknown[] }) {
+  const [corte, setCorte] = useState(LIMITE_ARRAY);
+  const visiveis = itens.slice(0, corte);
+  const restante = itens.length - visiveis.length;
+  return (
+    <>
+      <ol>
+        {visiveis.map((item, i) => (
+          <li key={i}>
+            <JsonValor valor={item} />
+          </li>
+        ))}
+      </ol>
+      {restante > 0 && (
+        <button type="button" onClick={() => setCorte((c) => c + LIMITE_ARRAY)}>
+          Mostrar mais ({restante})
+        </button>
+      )}
+    </>
+  );
+}
+
+function JsonTree({ recursos }: { recursos: Record<string, unknown> }) {
+  return (
+    <ul>
+      {Object.entries(recursos).map(([chave, valor]) => (
+        <li key={chave}>
+          <details>
+            <summary>{chave}</summary>
+            <JsonValor valor={valor} />
+          </details>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+export default function Snapshots() {
+  const [params, setParams] = useSearchParams();
+  const { data: devices, isLoading: carregandoDevices } = useDevices();
+  const [deviceId, setDeviceId] = useState<number>(Number(params.get("device_id") ?? 0));
+  const { data: snapshots, isLoading } = useSnapshots(deviceId);
+  const [selecionado, setSelecionado] = useState<number | null>(null);
+  const detalhe = useSnapshot(selecionado ?? 0);
+
+  return (
+    <main>
+      <PageHeader titulo="Snapshots" />
+      <FormField label="Equipamento">
+        <select
+          value={deviceId}
+          onChange={(e) => {
+            const v = Number(e.target.value);
+            setDeviceId(v);
+            setSelecionado(null);
+            setParams(v > 0 ? { device_id: String(v) } : {});
+          }}
+        >
+          <option value={0}>Selecione…</option>
+          {(devices ?? []).map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.name}
+            </option>
+          ))}
+        </select>
+      </FormField>
+      {deviceId === 0 && <p>Selecione um equipamento.</p>}
+      {deviceId > 0 && (
+        <DataTable<SnapshotOut>
+          colunas={[
+            { key: "id", title: "Snapshot" },
+            { key: "started_at", title: "Início", render: (s) => <TimeAgo iso={s.started_at} /> },
+            { key: "status", title: "Status", render: (s) => <StatusBadge estado={s.status} /> },
+            { key: "duration_ms", title: "Duração (ms)" },
+          ]}
+          linhas={snapshots ?? []}
+          carregando={carregandoDevices || isLoading}
+          vazio="Nenhum snapshot deste equipamento."
+          acoes={(s) => (
+            <button type="button" onClick={() => setSelecionado(s.id)}>
+              Ver
+            </button>
+          )}
+        />
+      )}
+      {detalhe.data && (
+        <section>
+          <h2>
+            Snapshot #{detalhe.data.id} ({detalhe.data.status})
+          </h2>
+          <p>
+            Início: <TimeAgo iso={detalhe.data.started_at} /> · duração: {detalhe.data.duration_ms} ms
+          </p>
+          <h3>resources</h3>
+          <JsonTree recursos={detalhe.data.resources} />
+          {Object.keys(detalhe.data.errors).length > 0 && (
+            <>
+              <h3>errors</h3>
+              <JsonTree recursos={detalhe.data.errors} />
+            </>
+          )}
+        </section>
+      )}
+      {detalhe.isError && <p role="alert">Falha ao carregar o snapshot.</p>}
+    </main>
+  );
+}
+```
+
+- [ ] **Step 3: `DesiredConfig.tsx`**
+
+```tsx
+import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { useDesiredConfig, useDevices } from "@/api/hooks";
+import { FormField } from "@/components/FormField";
+import { MonoCode } from "@/components/MonoCode";
+import { PageHeader } from "@/components/PageHeader";
+
+export default function DesiredConfig() {
+  const [params, setParams] = useSearchParams();
+  const { data: devices } = useDevices();
+  const [deviceId, setDeviceId] = useState<number>(Number(params.get("device_id") ?? 0));
+  const { data, isLoading } = useDesiredConfig(deviceId > 0 ? deviceId : null);
+
+  return (
+    <main>
+      <PageHeader titulo="Configuração desejada" />
+      <FormField label="Equipamento">
+        <select
+          value={deviceId}
+          onChange={(e) => {
+            const v = Number(e.target.value);
+            setDeviceId(v);
+            setParams(v > 0 ? { device_id: String(v) } : {});
+          }}
+        >
+          <option value={0}>Selecione…</option>
+          {(devices ?? []).map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.name}
+            </option>
+          ))}
+        </select>
+      </FormField>
+      {deviceId === 0 && <p>Selecione um equipamento.</p>}
+      {isLoading && <p aria-busy="true">Carregando…</p>}
+      {data && (
+        <>
+          <p>Gerada em {new Date(data.gerado_em).toLocaleString("pt-BR")}</p>
+          <MonoCode texto={data.texto} />
+          <h2>Blocos</h2>
+          {data.blocos.length === 0 && <p>Nenhum bloco renderizado.</p>}
+          {data.blocos.map((b) => (
+            <details key={`${b.tipo}-${b.objeto}-${b.objeto_id}`}>
+              <summary>
+                {b.tipo} · {b.objeto} #{b.objeto_id}
+              </summary>
+              <pre>{b.comandos.join("\n")}</pre>
+            </details>
+          ))}
+        </>
+      )}
+    </main>
+  );
+}
+```
+
+- [ ] **Step 4: `Reconcile.tsx`** (lê `device_id`/`snapshot_id` da URL — a T6 já linka `/reconcile?device_id=` e o JobDetail linka `/reconcile?snapshot_id=`; os dois modos são mutuamente exclusivos, gerando sempre exatamente um filtro)
+
+```tsx
+import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { ApiError } from "@/api/client";
+import { useDevices, useReconcile } from "@/api/hooks";
+import { DataTable } from "@/components/DataTable";
+import { FormField } from "@/components/FormField";
+import { PageHeader } from "@/components/PageHeader";
+import { SeverityBadge } from "@/components/SeverityBadge";
+import type { ReconcileItemOut } from "@/api/types";
+
+const SEVERIDADES = ["todas", "critica", "atencao", "aviso"] as const;
+
+export default function Reconcile() {
+  const [params, setParams] = useSearchParams();
+  const { data: devices } = useDevices();
+  const deviceParam = Number(params.get("device_id") ?? 0);
+  const snapshotParam = Number(params.get("snapshot_id") ?? 0);
+  const [modo, setModo] = useState<"device" | "snapshot">(snapshotParam > 0 ? "snapshot" : "device");
+  const [deviceSel, setDeviceSel] = useState<number>(deviceParam);
+  const [snapInput, setSnapInput] = useState<string>(snapshotParam > 0 ? String(snapshotParam) : "");
+  const [severidade, setSeveridade] = useState<string>("todas");
+
+  const filtro =
+    modo === "device"
+      ? { device_id: deviceSel > 0 ? deviceSel : undefined, snapshot_id: undefined }
+      : { device_id: undefined, snapshot_id: Number(snapInput) > 0 ? Number(snapInput) : undefined };
+  const { data, isLoading, error } = useReconcile(filtro);
+  const items = (data?.items ?? []).filter((i) => severidade === "todas" || i.severidade === severidade);
+
+  return (
+    <main>
+      <PageHeader titulo="Reconciliação" />
+      <FormField label="Modo">
+        <select value={modo} onChange={(e) => setModo(e.target.value as "device" | "snapshot")}>
+          <option value="device">Equipamento</option>
+          <option value="snapshot">Snapshot</option>
+        </select>
+      </FormField>
+      {modo === "device" && (
+        <FormField label="Equipamento">
+          <select
+            value={deviceSel}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              setDeviceSel(v);
+              setParams(v > 0 ? { device_id: String(v) } : {});
+            }}
+          >
+            <option value={0}>Selecione…</option>
+            {(devices ?? []).map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name}
+              </option>
+            ))}
+          </select>
+        </FormField>
+      )}
+      {modo === "snapshot" && (
+        <FormField label="Snapshot (id)">
+          <input type="number" min={1} value={snapInput} onChange={(e) => setSnapInput(e.target.value)} />
+        </FormField>
+      )}
+      <FormField label="Severidade">
+        <select value={severidade} onChange={(e) => setSeveridade(e.target.value)}>
+          {SEVERIDADES.map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
+      </FormField>
+      {data?.aviso && <p role="status">{data.aviso}</p>}
+      {error && <p role="alert">{error instanceof ApiError ? error.message : "Falha ao reconciliar."}</p>}
+      {(modo === "device" ? deviceSel === 0 : snapInput === "") && (
+        <p>Selecione um equipamento ou informe um snapshot.</p>
+      )}
+      <DataTable<ReconcileItemOut>
+        colunas={[
+          { key: "tipo", title: "Tipo" },
+          { key: "severidade", title: "Severidade", render: (i) => <SeverityBadge severidade={i.severidade} /> },
+          { key: "esperado", title: "Esperado" },
+          { key: "encontrado", title: "Encontrado" },
+          { key: "acao", title: "Ação recomendada" },
+        ]}
+        linhas={items}
+        carregando={isLoading}
+        vazio="Nenhuma divergência encontrada."
+      />
+    </main>
+  );
+}
+```
+
+- [ ] **Step 5: `Jobs.tsx` + `JobDetail.tsx`**
+
+`Jobs.tsx`:
+
+```tsx
+import { useState } from "react";
+import { Link } from "react-router-dom";
+import { useDevices, useJobs } from "@/api/hooks";
+import { DataTable } from "@/components/DataTable";
+import { FormField } from "@/components/FormField";
+import { PageHeader } from "@/components/PageHeader";
+import { StatusBadge } from "@/components/StatusBadge";
+import { TimeAgo } from "@/components/TimeAgo";
+import type { JobRunOut } from "@/api/types";
+
+const STATUS = ["queued", "running", "success", "partial", "error"] as const;
+
+export default function Jobs() {
+  const { data: devices } = useDevices();
+  const [deviceId, setDeviceId] = useState(0);
+  const [status, setStatus] = useState("");
+  const [kind, setKind] = useState("");
+  const [limite, setLimite] = useState(100);
+  const [offset, setOffset] = useState(0);
+  const { data, isLoading } = useJobs({
+    device_id: deviceId > 0 ? deviceId : undefined,
+    status: status || undefined,
+    kind: kind || undefined,
+    limit: limite,
+    offset,
+  });
+
+  return (
+    <main>
+      <PageHeader titulo="Jobs" />
+      <div className="form-inline">
+        <FormField label="Equipamento">
+          <select
+            value={deviceId}
+            onChange={(e) => {
+              setDeviceId(Number(e.target.value));
+              setOffset(0);
+            }}
+          >
+            <option value={0}>Todos</option>
+            {(devices ?? []).map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name}
+              </option>
+            ))}
+          </select>
+        </FormField>
+        <FormField label="Status">
+          <select
+            value={status}
+            onChange={(e) => {
+              setStatus(e.target.value);
+              setOffset(0);
+            }}
+          >
+            <option value="">Todos</option>
+            {STATUS.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+        </FormField>
+        <FormField label="Tipo">
+          <input value={kind} onChange={(e) => { setKind(e.target.value); setOffset(0); }} />
+        </FormField>
+        <FormField label="Limite">
+          <select
+            value={limite}
+            onChange={(e) => {
+              setLimite(Number(e.target.value));
+              setOffset(0);
+            }}
+          >
+            {[10, 50, 100].map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </FormField>
+      </div>
+      <DataTable<JobRunOut>
+        colunas={[
+          {
+            key: "id",
+            title: "Job",
+            render: (j) => <Link to={`/jobs/${j.id}`}>#{j.id}</Link>,
+          },
+          { key: "device_id", title: "Device", render: (j) => j.device_id ?? "—" },
+          { key: "kind", title: "Tipo" },
+          { key: "actor", title: "Autor" },
+          { key: "status", title: "Status", render: (j) => <StatusBadge estado={j.status} /> },
+          { key: "started_at", title: "Início", render: (j) => <TimeAgo iso={j.started_at} /> },
+          { key: "duration_ms", title: "Duração (ms)" },
+        ]}
+        linhas={data ?? []}
+        carregando={isLoading}
+        vazio="Nenhum job."
+      />
+      <p>
+        <button type="button" disabled={offset === 0} onClick={() => setOffset((o) => Math.max(0, o - limite))}>
+          Anterior
+        </button>{" "}
+        <button type="button" onClick={() => setOffset((o) => o + limite)}>
+          Próximo
+        </button>
+      </p>
+    </main>
+  );
+}
+```
+
+`JobDetail.tsx`:
+
+```tsx
+import { Link, useParams } from "react-router-dom";
+import { useJobPoll } from "@/api/hooks";
+import { PageHeader } from "@/components/PageHeader";
+import { StatusBadge } from "@/components/StatusBadge";
+import { TimeAgo } from "@/components/TimeAgo";
+
+export default function JobDetail() {
+  const { id } = useParams();
+  const jobId = Number(id);
+  const { data, isLoading } = useJobPoll(jobId);
+
+  return (
+    <main>
+      <PageHeader titulo={`Job #${data ? data.id : (id ?? "")}`} acoes={<Link to="/jobs">← Voltar</Link>} />
+      {isLoading && <p aria-busy="true">Carregando…</p>}
+      {!data && !isLoading && <p>Job não encontrado.</p>}
+      {data && (
+        <>
+          <dl>
+            <dt>Equipamento</dt>
+            <dd>{data.device_id ?? "—"}</dd>
+            <dt>Origem</dt>
+            <dd>{data.origin}</dd>
+            <dt>Autor</dt>
+            <dd>{data.actor}</dd>
+            <dt>Tipo</dt>
+            <dd>{data.kind}</dd>
+            <dt>Status</dt>
+            <dd><StatusBadge estado={data.status} /></dd>
+            <dt>Início</dt>
+            <dd><TimeAgo iso={data.started_at} /></dd>
+            <dt>Fim</dt>
+            <dd>{data.finished_at ? <TimeAgo iso={data.finished_at} /> : "—"}</dd>
+            <dt>Duração</dt>
+            <dd>{data.duration_ms} ms</dd>
+          </dl>
+          {data.snapshot_id !== null && (
+            <p>
+              <Link to={`/reconcile?snapshot_id=${data.snapshot_id}`}>
+                Ver reconcile do snapshot #{data.snapshot_id}
+              </Link>
+            </p>
+          )}
+        </>
+      )}
+    </main>
+  );
+}
+```
+
+- [ ] **Step 6: testes**
+
+`web/src/pages/Reconcile.test.tsx`:
+
+```tsx
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import Reconcile from "./Reconcile";
+
+const DEVICES = [{ id: 1, name: "ne8000-01" }];
+const RECONCILE = {
+  device_id: 1,
+  snapshot_id: null,
+  aviso: "Sem snapshot; comparando com o estado de produção.",
+  gerado_em: "2026-09-04T00:00:00Z",
+  items: [
+    { tipo: "bgp", severidade: "critica", esperado: "peer up", encontrado: "peer down", acao: "reconciliar" },
+    { tipo: "vlan", severidade: "atencao", esperado: "vlan 10", encontrado: "ausente", acao: "criar" },
+  ],
+};
+
+function mockFetch() {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url === "/api/v1/devices") {
+        return new Response(JSON.stringify(DEVICES), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.startsWith("/api/v1/reconciliation?")) {
+        return new Response(JSON.stringify(RECONCILE), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ detail: "Não encontrado." }), { status: 404, headers: { "Content-Type": "application/json" } });
+    }),
+  );
+}
+
+function renderReconcile(initialEntry: string) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <Reconcile />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+describe("Reconcile", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("mostra divergências com aviso e filtra por severidade", async () => {
+    mockFetch();
+    renderReconcile("/reconcile?device_id=1");
+    expect(await screen.findByText("Sem snapshot; comparando com o estado de produção.")).toBeInTheDocument();
+    expect(screen.getByText("bgp")).toBeInTheDocument();
+    expect(screen.getByText("vlan")).toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByLabelText("Severidade"), "critica");
+    expect(screen.getByText("bgp")).toBeInTheDocument();
+    expect(screen.queryByText("vlan")).not.toBeInTheDocument();
+  });
+
+  it("snapshot_id na URL aciona o modo snapshot", async () => {
+    mockFetch();
+    renderReconcile("/reconcile?snapshot_id=7");
+    expect(await screen.findByText("bgp")).toBeInTheDocument();
+    const chamada = vi.mocked(fetch).mock.calls.some((c) => String(c[0]).includes("snapshot_id=7"));
+    expect(chamada).toBe(true);
+  });
+});
+```
+
+`web/src/pages/Snapshots.test.tsx`:
+
+```tsx
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import Snapshots from "./Snapshots";
+
+const DEVICES = [{ id: 1, name: "ne8000-01" }];
+const SNAPSHOTS = [
+  {
+    id: 10,
+    device_id: 1,
+    started_at: "2026-09-04T00:00:00Z",
+    finished_at: "2026-09-04T00:00:05Z",
+    status: "success",
+    resources: {},
+    errors: {},
+    duration_ms: 5000,
+  },
+  {
+    id: 11,
+    device_id: 1,
+    started_at: "2026-09-04T00:00:00Z",
+    finished_at: null,
+    status: "partial",
+    resources: {},
+    errors: {},
+    duration_ms: 2000,
+  },
+];
+const DETAIL = {
+  id: 11,
+  device_id: 1,
+  started_at: "2026-09-04T00:00:00Z",
+  finished_at: null,
+  status: "partial",
+  resources: {
+    interfaces: { "GE0/0/0": { up: true } },
+    bd: Array.from({ length: 70 }, (_, i) => i),
+  },
+  errors: { coleta_v4: "timeout" },
+  duration_ms: 2000,
+};
+
+function mockFetch() {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url === "/api/v1/devices") {
+        return new Response(JSON.stringify(DEVICES), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url === "/api/v1/devices/1/snapshots") {
+        return new Response(JSON.stringify(SNAPSHOTS), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url === "/api/v1/snapshots/11") {
+        return new Response(JSON.stringify(DETAIL), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ detail: "Não encontrado." }), { status: 404, headers: { "Content-Type": "application/json" } });
+    }),
+  );
+}
+
+function renderSnapshots() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={["/snapshots"]}>
+        <Snapshots />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+describe("Snapshots", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("lista snapshots, seleciona e mostra a árvore colapsável com paginação", async () => {
+    mockFetch();
+    renderSnapshots();
+    await userEvent.selectOptions(screen.getByLabelText("Equipamento"), "1");
+    expect(await screen.findByText("11")).toBeInTheDocument();
+    await userEvent.click(screen.getAllByRole("button", { name: "Ver" })[1]);
+    expect(await screen.findByText("interfaces")).toBeInTheDocument();
+    expect(screen.getByText("Mostrar mais (10)")).toBeInTheDocument();
+    await userEvent.click(screen.getByText("Mostrar mais (10)"));
+    await waitFor(() => {
+      expect(screen.queryByText("Mostrar mais (10)")).not.toBeInTheDocument();
+    });
+  });
+});
+```
+
+Run: `cd web && npx vitest run src/pages/Reconcile.test.tsx src/pages/Snapshots.test.tsx` — Expected: 3 PASS. Depois a suíte completa de web e `npm run build` + `npx eslint src`.
+
+Rotas em `App.tsx` (adicionar às existentes; com os imports `Snapshots`, `DesiredConfig`, `Reconcile`, `Jobs`, `JobDetail` de `@/pages/*`):
+
+```tsx
+<Route path="/snapshots" element={<RequireAuth><Snapshots /></RequireAuth>} />
+<Route path="/desired-config" element={<RequireAuth><DesiredConfig /></RequireAuth>} />
+<Route path="/reconcile" element={<RequireAuth><Reconcile /></RequireAuth>} />
+<Route path="/jobs" element={<RequireAuth><Jobs /></RequireAuth>} />
+<Route path="/jobs/:id" element={<RequireAuth><JobDetail /></RequireAuth>} />
+```
+
+- [ ] **Step 7: commit**
 
 ```bash
 git add web/src/pages web/src/App.tsx web/src/api/hooks.ts
@@ -4745,20 +5432,433 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 ### Task 11: DeviceDetail + navegação entre telas + layout completo (nav lateral)
 
 **Files:**
-- Create: `web/src/pages/DeviceDetail.tsx`
-- Modify: `web/src/App.tsx` (rota `/devices/:id` + layout com nav), `web/src/components/Layout.tsx` (nav com links + logout)
-- Modify: `web/src/styles/global.css` (nav)
+- Create: `web/src/pages/DeviceDetail.tsx`, `web/src/pages/DeviceDetail.test.tsx`, `web/src/components/Layout.tsx`, `web/src/components/Layout.test.tsx`
+- Modify: `web/src/App.tsx` (rota `/devices/:id` + rotas protegidas sob o `<Layout>`), `web/src/api/hooks.ts` (hook `useDevice`), `web/src/styles/global.css` (nav)
 
-**Interfaces:** Consuma `useDevices/{id}` (Task 7), `useSnapshot`/`useSnapshots` (Task 10). Botões: "Coletar agora" (POST collect → retorna `job_id` → navega para `/jobs/{id}` e faz poll), abrir snapshots/desired-config/reconcile.
+**Interfaces:**
+- Consumes: `useAuth` (Task 4: `usuario`, `ehAdmin`, `logout` — POST `/api/v1/auth/logout` → 204, limpa `usuario`), `useDeviceColetar` (Task 7 — POST collect → `{queued, message, job_id}`), `useSnapshots(deviceId)` (Task 10), `useSites` (Task 7), tipos `DeviceOut`/`SiteOut` (Task 3).
+- Produces: `useDevice(id)` (novo hook, Step 1); `Layout` com nav lateral + logout; rota `/devices/:id`; links de inspeção com `?device_id=`.
 
-- [ ] **Step 1: `Layout.tsx`** — header com título + nav (Dashboard, Devices, Sites, Organizations, Contacts, Circuits, BGP Sessions, Prefix Auths, Policy Profiles, Communities, Snapshots, Desired Config, Reconcile, Jobs, Audit, Users (admin)) + botão logout (useAuth). Opcional: quebra por seções usando `<details>`? Não no v1 — nav direta.
-- [ ] **Step 2: `App.tsx`** — envolver todas as rotas protegidas no `<Layout>`; rota `/devices/:id` → `DeviceDetail`.
-- [ ] **Step 3: `DeviceDetail.tsx`** — GET `/devices/{id}`; cartões (com status, site, coleta, asn, vrp), último snapshot resumo (via `/devices/{id}/snapshots` → primeiro), links para detalhe (desired-config/reconcile/snapshots), botão coleta + poll de job.
-- [ ] **Step 4: test + build + lint + commit.**
+> **Correção de defeito do rascunho (ruling da orquestração, compatível com o ruling da T3 e a implementação da T7):** o texto original dizia "POST collect → retorna `job_id` → navega para `/jobs/{id}` e faz poll". **Errado**: o `job_id` do `/collect` é o **uuid da fila RQ**, NÃO o `JobRun.id` (int) — a rota `/jobs/{id}` só aceita int; `Number(uuid)` = NaN → `useJobPoll` desabilitado → "Job não encontrado." A navegação correta (idêntica à da T7/Devices, e ao teste da T7) é para **`/jobs?device_id=<id>`** — a lista filtrida. Polling individual do JobRun não é possível no pós-coleta (JobRun só nasce na execução do runner) — wart de backend parkado como follow-up pós-ciclo (ver ledger T3).
+> Também: a T7 define `useDevices` (lista) mas **nenhum** `useDevice` (detalhe) — o Step 1 cria o hook.
+
+- [ ] **Step 1: `useDevice` em `web/src/api/hooks.ts`** (append; acrescentar `DeviceOut` à linha de import de tipos)
+
+```ts
+export function useDevice(id: number) {
+  return useQuery({
+    queryKey: ["device", id],
+    queryFn: () => apiFetch<DeviceOut>(`/api/v1/devices/${id}`),
+    enabled: id > 0,
+  });
+}
+```
+
+- [ ] **Step 2: `Layout.tsx`**
+
+`web/src/components/Layout.tsx` (usa `<Outlet />` — o App o define como rota-pai):
+
+```tsx
+import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
+import { useAuth } from "@/auth/auth-context";
+
+const ITENS_NAV: { para: string; rotulo: string; admin?: boolean }[] = [
+  { para: "/", rotulo: "Dashboard" },
+  { para: "/devices", rotulo: "Equipamentos" },
+  { para: "/sites", rotulo: "Sites" },
+  { para: "/organizations", rotulo: "Organizações" },
+  { para: "/contacts", rotulo: "Contatos" },
+  { para: "/circuits", rotulo: "Circuitos" },
+  { para: "/bgp-sessions", rotulo: "Sessões BGP" },
+  { para: "/prefix-authorizations", rotulo: "Prefixos autorizados" },
+  { para: "/policy-profiles", rotulo: "Perfis de política" },
+  { para: "/communities", rotulo: "Communities" },
+  { para: "/snapshots", rotulo: "Snapshots" },
+  { para: "/desired-config", rotulo: "Config desejada" },
+  { para: "/reconcile", rotulo: "Reconciliação" },
+  { para: "/jobs", rotulo: "Jobs" },
+  { para: "/audit-events", rotulo: "Auditoria" },
+  { para: "/users", rotulo: "Usuários", admin: true },
+];
+
+export function Layout() {
+  const { usuario, ehAdmin, logout } = useAuth();
+  const navigate = useNavigate();
+  return (
+    <div className="app-shell">
+      <header className="app-header">
+        <Link to="/" className="app-titulo">
+          Gerenet
+        </Link>
+        <span className="app-usuario">{usuario?.username}</span>
+        <button type="button" onClick={() => void logout().then(() => navigate("/login"))}>
+          Sair
+        </button>
+      </header>
+      <div className="app-corpo">
+        <nav className="app-nav" aria-label="Navegação principal">
+          {ITENS_NAV.filter((i) => !i.admin || ehAdmin).map((i) => (
+            <NavLink key={i.para} to={i.para} end={i.para === "/"}>
+              {i.rotulo}
+            </NavLink>
+          ))}
+        </nav>
+        <div className="app-conteudo">
+          <Outlet />
+        </div>
+      </div>
+    </div>
+  );
+}
+```
+
+CSS a appendar em `global.css` (as páginas mantêm `<main>` interno; o conteúdo do layout é `<div>` para não aninhar mains):
+
+```css
+.app-shell { display: flex; flex-direction: column; min-height: 100vh; }
+.app-header { display: flex; align-items: center; gap: 1rem; padding: 0.6rem 1rem; border-bottom: 1px solid var(--border); background: var(--bg-elevated); }
+.app-header .app-titulo { font-weight: 700; text-decoration: none; color: inherit; }
+.app-header .app-usuario { margin-left: auto; font-size: 0.85rem; opacity: 0.8; }
+.app-corpo { display: flex; flex: 1; }
+.app-nav { display: flex; flex-direction: column; gap: 0.1rem; min-width: 190px; padding: 0.8rem; border-right: 1px solid var(--border); }
+.app-nav a { padding: 0.3rem 0.5rem; color: inherit; text-decoration: none; border-radius: 6px; font-size: 0.9rem; }
+.app-nav a.active { background: var(--accent); color: var(--text-on-accent); }
+.app-conteudo { flex: 1; padding: 1rem; overflow-x: auto; }
+```
+
+- [ ] **Step 3: `App.tsx`** — rotas protegidas aninhadas sob o `Layout` (rota pai sem path + `<Outlet />`), nova rota `/devices/:id`, `/login` fora do layout
+
+```tsx
+import { Route, Routes } from "react-router-dom";
+import Login from "@/auth/Login";
+import { RequireAdmin, RequireAuth } from "@/auth/auth-context";
+import { Layout } from "@/components/Layout";
+import Dashboard from "@/pages/Dashboard";
+import Users from "@/pages/Users";
+import Devices from "@/pages/Devices";
+import DeviceDetail from "@/pages/DeviceDetail";
+import Sites from "@/pages/Sites";
+import Organizations from "@/pages/Organizations";
+import Contacts from "@/pages/Contacts";
+import Circuits from "@/pages/Circuits";
+import CircuitDetail from "@/pages/CircuitDetail";
+import BgpSessions from "@/pages/BgpSessions";
+import BgpSessionDetail from "@/pages/BgpSessionDetail";
+import PolicyProfiles from "@/pages/PolicyProfiles";
+import Communities from "@/pages/Communities";
+import PrefixAuthorizations from "@/pages/PrefixAuthorizations";
+import AuditEvents from "@/pages/AuditEvents";
+import Snapshots from "@/pages/Snapshots";
+import DesiredConfig from "@/pages/DesiredConfig";
+import Reconcile from "@/pages/Reconcile";
+import Jobs from "@/pages/Jobs";
+import JobDetail from "@/pages/JobDetail";
+
+export default function App() {
+  return (
+    <Routes>
+      <Route path="/login" element={<Login />} />
+      <Route
+        element={
+          <RequireAuth>
+            <Layout />
+          </RequireAuth>
+        }
+      >
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/devices" element={<Devices />} />
+        <Route path="/devices/:id" element={<DeviceDetail />} />
+        <Route path="/sites" element={<Sites />} />
+        <Route path="/organizations" element={<Organizations />} />
+        <Route path="/contacts" element={<Contacts />} />
+        <Route path="/circuits" element={<Circuits />} />
+        <Route path="/circuits/:id" element={<CircuitDetail />} />
+        <Route path="/bgp-sessions" element={<BgpSessions />} />
+        <Route path="/bgp-sessions/:id" element={<BgpSessionDetail />} />
+        <Route path="/policy-profiles" element={<PolicyProfiles />} />
+        <Route path="/communities" element={<Communities />} />
+        <Route path="/prefix-authorizations" element={<PrefixAuthorizations />} />
+        <Route path="/audit-events" element={<AuditEvents />} />
+        <Route path="/snapshots" element={<Snapshots />} />
+        <Route path="/desired-config" element={<DesiredConfig />} />
+        <Route path="/reconcile" element={<Reconcile />} />
+        <Route path="/jobs" element={<Jobs />} />
+        <Route path="/jobs/:id" element={<JobDetail />} />
+        <Route
+          path="/users"
+          element={
+            <RequireAdmin>
+              <Users />
+            </RequireAdmin>
+          }
+        />
+      </Route>
+    </Routes>
+  );
+}
+```
+
+(Se um nome de default export de alguma página divergir do que está acima, ajustar o import ao nome real — o `tsc -b` do build acusa.)
+
+- [ ] **Step 4: `DeviceDetail.tsx`**
+
+```tsx
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { useDevice, useDeviceColetar, useSites, useSnapshots } from "@/api/hooks";
+import { PageHeader } from "@/components/PageHeader";
+import { StatusBadge } from "@/components/StatusBadge";
+import { TimeAgo } from "@/components/TimeAgo";
+
+export default function DeviceDetail() {
+  const { id } = useParams();
+  const deviceId = Number(id);
+  const navigate = useNavigate();
+  const { data: device, isLoading } = useDevice(deviceId);
+  const { data: sites } = useSites();
+  const { data: snapshots } = useSnapshots(deviceId);
+  const coletar = useDeviceColetar();
+  const siteNome = sites?.find((s) => s.id === device?.site_id)?.name ?? null;
+  const ultimoSnapshot = snapshots && snapshots.length > 0 ? snapshots[0] : null;
+
+  if (isLoading) return <main><p aria-busy="true">Carregando…</p></main>;
+  if (!device) return <main><p>Equipamento não encontrado.</p></main>;
+
+  return (
+    <main>
+      <PageHeader titulo={device.name} acoes={<Link to="/devices">← Voltar</Link>} />
+      <ul>
+        <li>Endereço de gestão: {device.management_address}</li>
+        <li>Site: {siteNome ?? "—"}</li>
+        <li>Função: {device.role ?? "—"}</li>
+        <li>Modelo: {device.model ?? "—"} · Família: {device.family ?? "—"}</li>
+        <li>Versão VRP: {device.vrp_version ?? "—"}</li>
+        <li>ASN: {device.asn ?? "—"}</li>
+        <li>Comunicação: <StatusBadge estado={device.comm_status} /></li>
+        <li>Situação: <StatusBadge estado={device.admin_status ? "ativo" : "inativo"} /></li>
+        <li>Última coleta: <TimeAgo iso={device.last_collected_at} /></li>
+      </ul>
+      <p>
+        <button
+          className="primary"
+          disabled={coletar.isPending}
+          onClick={() => void coletar.mutateAsync(device.id).then(() => navigate(`/jobs?device_id=${device.id}`))}
+        >
+          Coletar agora
+        </button>
+        {coletar.error && (
+          <span role="alert"> {String(coletar.error.message ?? "Falha ao coletar.")}</span>
+        )}
+      </p>
+      <h2>Último snapshot</h2>
+      <p>
+        {ultimoSnapshot ? (
+          <>
+            #{ultimoSnapshot.id} · <StatusBadge estado={ultimoSnapshot.status} /> ·{" "}
+            <TimeAgo iso={ultimoSnapshot.started_at} />
+          </>
+        ) : (
+          "Nenhum snapshot."
+        )}
+      </p>
+      <h2>Inspeção</h2>
+      <p>
+        <Link to={`/snapshots?device_id=${device.id}`}>Snapshots</Link>{" "}
+        <Link to={`/desired-config?device_id=${device.id}`}>Config desejada</Link>{" "}
+        <Link to={`/reconcile?device_id=${device.id}`}>Reconciliar</Link>
+      </p>
+    </main>
+  );
+}
+```
+
+- [ ] **Step 5: testes**
+
+`web/src/components/Layout.test.tsx`:
+
+```tsx
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { Layout } from "./Layout";
+import { AuthProvider } from "@/auth/auth-context";
+
+const ME_ADMIN = {
+  id: 1,
+  username: "boss",
+  role: "administrador",
+  is_active: true,
+  last_login_at: null,
+  created_at: "2026-09-04T00:00:00Z",
+};
+
+function mockFetch() {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/v1/auth/me") {
+        return new Response(JSON.stringify(ME_ADMIN), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url === "/api/v1/auth/logout" && init?.method === "POST") {
+        return new Response(null, { status: 204 });
+      }
+      return new Response(JSON.stringify({ detail: "Não encontrado." }), { status: 404, headers: { "Content-Type": "application/json" } });
+    }),
+  );
+}
+
+function renderLayout() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <AuthProvider>
+        <MemoryRouter initialEntries={["/devices"]}>
+          <Routes>
+            <Route path="/login" element={<div>login-page</div>} />
+            <Route element={<Layout />}>
+              <Route path="/devices" element={<div>devices-page</div>} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </AuthProvider>
+    </QueryClientProvider>,
+  );
+}
+
+describe("Layout", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("renderiza a nav com item admin e faz logout", async () => {
+    mockFetch();
+    renderLayout();
+    expect(await screen.findByText("Equipamentos")).toBeInTheDocument();
+    expect(screen.getByText("Usuários")).toBeInTheDocument();
+    expect(screen.getByText("devices-page")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Sair" }));
+    expect(await screen.findByText("login-page")).toBeInTheDocument();
+    const chamada = vi.mocked(fetch).mock.calls.find(
+      (c) => String(c[0]) === "/api/v1/auth/logout" && String(c[1]?.method) === "POST",
+    );
+    expect(chamada).toBeTruthy();
+  });
+});
+```
+
+`web/src/pages/DeviceDetail.test.tsx`:
+
+```tsx
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import DeviceDetail from "./DeviceDetail";
+
+const DEVICE = {
+  id: 1,
+  name: "ne8000-01",
+  management_address: "10.0.0.1",
+  ssh_port: null,
+  vendor: "huawei",
+  model: "NE8000",
+  family: "NE8000",
+  role: "edge",
+  site_id: 1,
+  asn: 65001,
+  vrp_version: "V800R021",
+  comm_status: "ok",
+  admin_status: true,
+  last_collected_at: null,
+  tags: [],
+};
+const SITES = [
+  { id: 1, name: "POP-SP", city: null, uf: "SP", p2p_ipv4_block: null, p2p_ipv6_base: null, admin_status: true },
+];
+const SNAPSHOTS = [
+  {
+    id: 10,
+    device_id: 1,
+    started_at: "2026-09-04T00:00:00Z",
+    finished_at: null,
+    status: "success",
+    resources: {},
+    errors: {},
+    duration_ms: 1000,
+  },
+];
+
+function mockFetch() {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/v1/devices/1" && (init?.method === undefined || init.method === "GET")) {
+        return new Response(JSON.stringify(DEVICE), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url === "/api/v1/sites") {
+        return new Response(JSON.stringify(SITES), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url === "/api/v1/devices/1/snapshots") {
+        return new Response(JSON.stringify(SNAPSHOTS), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url === "/api/v1/devices/1/collect" && init?.method === "POST") {
+        return new Response(JSON.stringify({ queued: true, message: "ok", job_id: "uuid-do-job" }), { status: 202, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ detail: "Não encontrado." }), { status: 404, headers: { "Content-Type": "application/json" } });
+    }),
+  );
+}
+
+function renderDetail() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={["/devices/1"]}>
+        <Routes>
+          <Route path="/devices/:id" element={<DeviceDetail />} />
+          <Route path="/jobs" element={<div>jobs-page</div>} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+describe("DeviceDetail", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("renderiza dados do equipamento, snapshot e links de inspeção", async () => {
+    mockFetch();
+    renderDetail();
+    expect(await screen.findByText("ne8000-01")).toBeInTheDocument();
+    expect(screen.getByText("65001")).toBeInTheDocument();
+    expect(screen.getByText("POP-SP")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Reconciliar" })).toBeInTheDocument();
+  });
+
+  it("Coletar agora envia POST e navega para /jobs?device_id=1", async () => {
+    mockFetch();
+    renderDetail();
+    await userEvent.click(await screen.findByRole("button", { name: "Coletar agora" }));
+    expect(await screen.findByText("jobs-page")).toBeInTheDocument();
+    const chamada = vi.mocked(fetch).mock.calls.find(
+      (c) => String(c[0]) === "/api/v1/devices/1/collect" && String(c[1]?.method) === "POST",
+    );
+    expect(chamada).toBeTruthy();
+  });
+});
+```
+
+Run: `cd web && npx vitest run src/components/Layout.test.tsx src/pages/DeviceDetail.test.tsx` — Expected: 3 PASS. Depois `cd web && npx vitest run` (suíte completa), `npm run build` e `npx eslint src`.
+
+- [ ] **Step 6: commit**
 
 ```bash
-git add web/src/pages/DeviceDetail.tsx web/src/components/Layout.tsx web/src/App.tsx web/src/styles/global.css
-git commit -m "feat(web): detalhe de device com coleta/poll de job e layout de navegacao
+git add web/src/pages/DeviceDetail.tsx web/src/pages/DeviceDetail.test.tsx web/src/components/Layout.tsx web/src/components/Layout.test.tsx web/src/App.tsx web/src/api/hooks.ts web/src/styles/global.css
+git commit -m "feat(web): detalhe de device com coleta e layout de navegacao com logout
 
 Co-Authored-By: Claude Code <noreply@anthropic.com>"
 ```
