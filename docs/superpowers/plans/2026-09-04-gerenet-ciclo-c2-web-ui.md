@@ -3137,12 +3137,1108 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 - Consumes: Task 7 (padrão CRUD), schemas `CircuitOut/CircuitDetailOut/BgpSessionOut` (Task 3).
 - Produces: circuito com "Reservar recursos" (POST `/circuits/{id}/reserve`) e detalhe (VLANs/prefixos, sessões); sessão BGP com associação de communities (POST/DELETE) e "Definir senha" (POST `/bgp-sessions/{id}/password` — nunca exibe a senha; mostra `has_password`).
 
-- [ ] **Step 1: hooks** — padrão da Task 7 + `useCircuitoReservar(id)` (POST `/circuits/${id}/reserve`), `useSessionCommunity` (POST/DELETE `/bgp-sessions/${id}/communities`), `useSessionSenha` (POST `/bgp-sessions/${id}/password`).
-- [ ] **Step 2: `Circuits.tsx`** — tabela: code, org, site, devices, stack, bfd, admin; form com todos os campos do `CircuitCreate` (code, organization_id, site_id, access_device_id, access_port, edge_device_id, backup_edge_device_id, stack, vlan_mode, qinq, vrf, mtu, bandwidth, bfd, p2p_v4_len, description, notes, edge_trunk).
-- [ ] **Step 3: `CircuitDetail.tsx`** — `GET /circuits/{id}` → `CircuitDetailOut`: pontas V4/V6; botão "Reservar recursos" (POST reserve → atualiza o detail); sessões BGP do circuito (GET `/bgp-sessions?circuit_id=`).
-- [ ] **Step 4: `BgpSessions.tsx`** — tabela: circuit, device, afi, addresses, ASNs, shutdown; form com campos do `BgpSessionCreate`.
-- [ ] **Step 5: `BgpSessionDetail.tsx`** — communities associadas (GET `/bgp-sessions/{id}` + lista de `/communities` + POST/DELETE); "Definir senha" (campo e POST; mostra `has_password`).
-- [ ] **Step 6: testes (mock fetch dos fluxos principais) + `npm run build` + lint + commit** (uma por arquivo de tela, padrão C1: testes de fluxo feliz e erro exibido).
+> **Ruling (lacuna de contrato):** `BgpSessionOut` NÃO carrega as communities associadas (schemas.py:323 só `has_password`); a API só tinha POST/DELETE de associação. A UI precisa de leitura — o Step 0 abaixo adiciona `GET /api/v1/bgp-sessions/{session_id}/communities` (idempotente e auditável, igual ao padrão do router).
+
+- [ ] **Step 0 (backend): `GET /api/v1/bgp-sessions/{session_id}/communities`**
+
+Em `src/gerenet/domain/services/bgp_sessions.py` (após `get_session`, ~linha 172):
+
+```python
+def list_communities(session: Session, session_id: int) -> list[models.Community]:
+    """Communities associadas à sessão, na ordem de associação."""
+    get_session(session, session_id)
+    return list(
+        session.scalars(
+            select(models.Community)
+            .join(
+                models.BgpSessionCommunity,
+                models.BgpSessionCommunity.community_id == models.Community.id,
+            )
+            .where(models.BgpSessionCommunity.session_id == session_id)
+            .order_by(models.BgpSessionCommunity.id)
+        )
+    )
+```
+
+Em `src/gerenet/api/routers/bgp_sessions.py`: adicionar `CommunityOut` ao import de `gerenet.domain.schemas`, e a rota para `listar_communities` (após `definir_senha`):
+
+```python
+@router.get("/{session_id}/communities", response_model=list[CommunityOut])
+def listar_communities(session_id: int, session: SessionDep) -> object:
+    """Communities associadas à sessão, na ordem de associação."""
+    try:
+        return svc.list_communities(session, session_id)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+```
+
+Em `tests/api/test_communities_api.py` (após `test_associacao_inexistente_da_404`):
+
+```python
+def test_lista_communities_da_sessao(client: TestClient, db_session: Session) -> None:
+    sessao_id = _sessao(db_session)
+    comunidade = client.get("/api/v1/communities", headers=_auth()).json()[0]  # blackhole
+    associada = client.post(
+        f"/api/v1/bgp-sessions/{sessao_id}/communities",
+        json={"community_id": comunidade["id"]}, headers=_auth(),
+    )
+    assert associada.status_code == 200
+
+    lista = client.get(f"/api/v1/bgp-sessions/{sessao_id}/communities", headers=_auth())
+    assert lista.status_code == 200, lista.text
+    assert [c["name"] for c in lista.json()] == ["blackhole"]
+
+    assert client.get("/api/v1/bgp-sessions/9999/communities", headers=_auth()).status_code == 404
+```
+
+Run: `uv run pytest -q tests/api/test_communities_api.py`
+Expected: 4 passed.
+
+- [ ] **Step 1: hooks de circuits/bgp-sessions no `hooks.ts`** (append após os hooks da Task 6/7)
+
+```ts
+export const useCircuits = () => useLista<CircuitOut>("circuits", "/api/v1/circuits");
+export const useCircuitDetail = (id: number) =>
+  useQuery({ queryKey: ["circuit", id], queryFn: () => apiFetch<CircuitDetailOut>(`/api/v1/circuits/${id}`) });
+
+export type CircuitCreateIn = {
+  code: string;
+  organization_id: number;
+  site_id: number;
+  access_device_id: number;
+  access_port: string;
+  edge_device_id: number;
+  backup_edge_device_id?: number | null;
+  stack: "ipv4" | "ipv6" | "dual";
+  vlan_mode: "unica" | "separada";
+  qinq?: boolean;
+  vrf?: string | null;
+  mtu?: number | null;
+  bandwidth?: string | null;
+  bfd?: boolean;
+  p2p_v4_len?: 30 | 31;
+  description?: string | null;
+  notes?: string | null;
+  edge_trunk?: string | null;
+};
+export const useCircuitCriar = () => useCriar<CircuitCreateIn, CircuitOut>("circuits", "/api/v1/circuits");
+export const useCircuitAtualizar = () =>
+  useAtualizar<Partial<CircuitCreateIn> & { admin_status?: boolean }, CircuitOut>("circuits", "/api/v1/circuits");
+export function useCircuitoReservar() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => apiFetch<CircuitDetailOut>(`/api/v1/circuits/${id}/reserve`, { method: "POST" }),
+    onSuccess: (_d, id) => {
+      void qc.invalidateQueries({ queryKey: ["circuit", id] });
+      void qc.invalidateQueries({ queryKey: ["circuits"] });
+      void qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+}
+
+export const useBgpSessions = (filtros?: { circuit_id?: number; device_id?: number }) =>
+  useQuery({
+    queryKey: ["bgp-sessions", filtros],
+    queryFn: () => {
+      const qs = new URLSearchParams();
+      if (filtros?.circuit_id) qs.set("circuit_id", String(filtros.circuit_id));
+      if (filtros?.device_id) qs.set("device_id", String(filtros.device_id));
+      const suf = qs.size > 0 ? `?${qs.toString()}` : "";
+      return apiFetch<BgpSessionOut[]>(`/api/v1/bgp-sessions${suf}`);
+    },
+  });
+export const useBgpSession = (id: number) =>
+  useQuery({ queryKey: ["bgp-session", id], queryFn: () => apiFetch<BgpSessionOut>(`/api/v1/bgp-sessions/${id}`) });
+
+export type BgpSessionCreateIn = {
+  circuit_id: number;
+  device_id: number;
+  afi: "ipv4" | "ipv6";
+  local_address: string;
+  remote_address: string;
+  source_address?: string | null;
+  asn_local?: number | null;
+  asn_remote?: number | null;
+  description?: string | null;
+  import_profile_id?: number | null;
+  export_profile_id?: number | null;
+  maximum_prefix?: number | null;
+  maximum_prefix_threshold?: number | null;
+  local_preference?: number | null;
+  med?: number | null;
+  prepend?: number | null;
+  keepalive?: number | null;
+  holdtime?: number | null;
+  bfd_enabled?: boolean;
+  graceful_restart?: boolean;
+  shutdown?: boolean;
+  allow_default_route?: boolean;
+};
+export const useBgpSessionCriar = () => useCriar<BgpSessionCreateIn, BgpSessionOut>("bgp-sessions", "/api/v1/bgp-sessions");
+export const useBgpSessionAtualizar = () =>
+  useAtualizar<Partial<BgpSessionCreateIn> & { admin_status?: boolean }, BgpSessionOut>("bgp-sessions", "/api/v1/bgp-sessions");
+
+export const useSessionCommunities = (sessionId: number) =>
+  useQuery({
+    queryKey: ["bgp-session-communities", sessionId],
+    queryFn: () => apiFetch<CommunityOut[]>(`/api/v1/bgp-sessions/${sessionId}/communities`),
+  });
+export function useSessionCommunity() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ sessionId, communityId, associa }: { sessionId: number; communityId: number; associa: boolean }) =>
+      associa
+        ? apiFetch<{ session_id: number; community_id: number }>(
+            `/api/v1/bgp-sessions/${sessionId}/communities`,
+            { method: "POST", body: { community_id: communityId } },
+          )
+        : apiFetch<void>(`/api/v1/bgp-sessions/${sessionId}/communities/${communityId}`, { method: "DELETE" }),
+    onSuccess: (_d, v) => {
+      void qc.invalidateQueries({ queryKey: ["bgp-session-communities", v.sessionId] });
+      void qc.invalidateQueries({ queryKey: ["bgp-session", v.sessionId] });
+    },
+  });
+}
+export function useSessionSenha() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ sessionId, password }: { sessionId: number; password: string }) =>
+      apiFetch<BgpSessionOut>(`/api/v1/bgp-sessions/${sessionId}/password`, { method: "POST", body: { password } }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["bgp-sessions"] }),
+  });
+}
+
+export const usePolicyProfiles = (filtros?: { direction?: string }) =>
+  useQuery({
+    queryKey: ["policy-profiles", filtros],
+    queryFn: () => {
+      const qs = new URLSearchParams();
+      if (filtros?.direction) qs.set("direction", filtros.direction);
+      const suf = qs.size > 0 ? `?${qs.toString()}` : "";
+      return apiFetch<PolicyProfileOut[]>(`/api/v1/policy-profiles${suf}`);
+    },
+  });
+export const useCommunities = () => useLista<CommunityOut>("communities", "/api/v1/communities");
+```
+
+> `usePolicyProfiles`/`useCommunities` nascem aqui (usadas pelo form de sessão e pelo detail); a Task 9 só cria as telas, não os hooks de lista.
+
+- [ ] **Step 2: `Circuits.tsx`**
+
+```tsx
+import { useState } from "react";
+import type { FormEvent } from "react";
+import { Link } from "react-router-dom";
+import { useAuth } from "@/auth/auth-context";
+import { ApiError } from "@/api/client";
+import { useCircuitAtualizar, useCircuitCriar, useCircuits, useDevices, useOrganizations, useSites } from "@/api/hooks";
+import { DataTable } from "@/components/DataTable";
+import { FormField } from "@/components/FormField";
+import { StatusBadge } from "@/components/StatusBadge";
+import { PageHeader } from "@/components/PageHeader";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import type { CircuitOut } from "@/api/types";
+
+const FORM_VAZIO = {
+  code: "",
+  organization_id: "",
+  site_id: "",
+  access_device_id: "",
+  access_port: "",
+  edge_device_id: "",
+  backup_edge_device_id: "",
+  stack: "dual" as "ipv4" | "ipv6" | "dual",
+  vlan_mode: "unica" as "unica" | "separada",
+  qinq: false,
+  vrf: "",
+  mtu: "",
+  bandwidth: "",
+  bfd: false,
+  p2p_v4_len: "31" as "30" | "31",
+  description: "",
+  notes: "",
+  edge_trunk: "",
+};
+
+export default function Circuits() {
+  const { podeEscrever } = useAuth();
+  const { data, isLoading } = useCircuits();
+  const { data: organizations } = useOrganizations();
+  const { data: sites } = useSites();
+  const { data: devices } = useDevices();
+  const criar = useCircuitCriar();
+  const atualizar = useCircuitAtualizar();
+  const [form, setForm] = useState(FORM_VAZIO);
+  const [desativando, setDesativando] = useState<CircuitOut | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  const num = (v: string) => (v === "" ? null : Number(v));
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    setErro(null);
+    try {
+      await criar.mutateAsync({
+        code: form.code,
+        organization_id: Number(form.organization_id),
+        site_id: Number(form.site_id),
+        access_device_id: Number(form.access_device_id),
+        access_port: form.access_port,
+        edge_device_id: Number(form.edge_device_id),
+        backup_edge_device_id: form.backup_edge_device_id === "" ? null : Number(form.backup_edge_device_id),
+        stack: form.stack,
+        vlan_mode: form.vlan_mode,
+        qinq: form.qinq,
+        vrf: form.vrf || null,
+        mtu: num(form.mtu),
+        bandwidth: form.bandwidth || null,
+        bfd: form.bfd,
+        p2p_v4_len: Number(form.p2p_v4_len) as 30 | 31,
+        description: form.description || null,
+        notes: form.notes || null,
+        edge_trunk: form.edge_trunk || null,
+      });
+      setForm(FORM_VAZIO);
+    } catch (err) {
+      setErro(err instanceof ApiError ? err.message : "Falha ao cadastrar circuito.");
+    }
+  }
+
+  return (
+    <main>
+      <PageHeader titulo="Circuitos" />
+      {podeEscrever && (
+        <form onSubmit={onSubmit} className="grid-form">
+          <FormField label="Código *">
+            <input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} required />
+          </FormField>
+          <FormField label="Organização *">
+            <select value={form.organization_id} onChange={(e) => setForm({ ...form, organization_id: e.target.value })} required>
+              <option value="">—</option>
+              {(organizations ?? []).map((o) => (
+                <option key={o.id} value={o.id}>{o.name}</option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Site *">
+            <select value={form.site_id} onChange={(e) => setForm({ ...form, site_id: e.target.value })} required>
+              <option value="">—</option>
+              {(sites ?? []).map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Equipamento de acesso *">
+            <select value={form.access_device_id} onChange={(e) => setForm({ ...form, access_device_id: e.target.value })} required>
+              <option value="">—</option>
+              {(devices ?? []).map((d) => (
+                <option key={d.id} value={d.id}>{d.name}</option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Porta de acesso *">
+            <input value={form.access_port} onChange={(e) => setForm({ ...form, access_port: e.target.value })} required />
+          </FormField>
+          <FormField label="Edge *">
+            <select value={form.edge_device_id} onChange={(e) => setForm({ ...form, edge_device_id: e.target.value })} required>
+              <option value="">—</option>
+              {(devices ?? []).map((d) => (
+                <option key={d.id} value={d.id}>{d.name}</option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Edge de contingência">
+            <select value={form.backup_edge_device_id} onChange={(e) => setForm({ ...form, backup_edge_device_id: e.target.value })}>
+              <option value="">—</option>
+              {(devices ?? []).map((d) => (
+                <option key={d.id} value={d.id}>{d.name}</option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Stack">
+            <select value={form.stack} onChange={(e) => setForm({ ...form, stack: e.target.value as "ipv4" | "ipv6" | "dual" })}>
+              <option value="ipv4">ipv4</option>
+              <option value="ipv6">ipv6</option>
+              <option value="dual">dual</option>
+            </select>
+          </FormField>
+          <FormField label="VLAN">
+            <select value={form.vlan_mode} onChange={(e) => setForm({ ...form, vlan_mode: e.target.value as "unica" | "separada" })}>
+              <option value="unica">única</option>
+              <option value="separada">separada</option>
+            </select>
+          </FormField>
+          <FormField label="QinQ">
+            <input type="checkbox" checked={form.qinq} onChange={(e) => setForm({ ...form, qinq: e.target.checked })} />
+          </FormField>
+          <FormField label="VRF">
+            <input value={form.vrf} onChange={(e) => setForm({ ...form, vrf: e.target.value })} />
+          </FormField>
+          <FormField label="MTU">
+            <input type="number" value={form.mtu} onChange={(e) => setForm({ ...form, mtu: e.target.value })} />
+          </FormField>
+          <FormField label="Banda">
+            <input value={form.bandwidth} onChange={(e) => setForm({ ...form, bandwidth: e.target.value })} />
+          </FormField>
+          <FormField label="BFD">
+            <input type="checkbox" checked={form.bfd} onChange={(e) => setForm({ ...form, bfd: e.target.checked })} />
+          </FormField>
+          <FormField label="Len /30 ou /31">
+            <select value={form.p2p_v4_len} onChange={(e) => setForm({ ...form, p2p_v4_len: e.target.value as "30" | "31" })}>
+              <option value="31">/31</option>
+              <option value="30">/30</option>
+            </select>
+          </FormField>
+          <FormField label="Descrição">
+            <input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+          </FormField>
+          <FormField label="Observações">
+            <input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+          </FormField>
+          <FormField label="Eth-Trunk do edge">
+            <input value={form.edge_trunk} onChange={(e) => setForm({ ...form, edge_trunk: e.target.value })} />
+          </FormField>
+          <button className="primary" type="submit" disabled={criar.isPending}>
+            Cadastrar
+          </button>
+        </form>
+      )}
+      {erro && <p role="alert">{erro}</p>}
+      <DataTable<CircuitOut>
+        colunas={[
+          { key: "code", title: "Código", render: (c) => <Link to={`/circuits/${c.id}`}>{c.code}</Link> },
+          { key: "organization", title: "Organização", render: (c) => organizations?.find((o) => o.id === c.organization_id)?.name ?? "—" },
+          { key: "site", title: "Site", render: (c) => sites?.find((s) => s.id === c.site_id)?.name ?? "—" },
+          {
+            key: "devices",
+            title: "Access → Edge",
+            render: (c) => `${devices?.find((d) => d.id === c.access_device_id)?.name ?? "—"} → ${devices?.find((d) => d.id === c.edge_device_id)?.name ?? "—"}`,
+          },
+          { key: "stack", title: "Stack", render: (c) => <StatusBadge estado={c.stack} /> },
+          { key: "bfd", title: "BFD", render: (c) => (c.bfd ? "Sim" : "—") },
+          { key: "admin_status", title: "Situação", render: (c) => <StatusBadge estado={c.admin_status ? "ativo" : "inativo"} /> },
+        ]}
+        linhas={data ?? []}
+        carregando={isLoading}
+        acoes={(c) =>
+          podeEscrever && c.admin_status ? (
+            <button type="button" onClick={() => setDesativando(c)}>
+              Desativar
+            </button>
+          ) : null
+        }
+      />
+      <ConfirmDialog
+        aberto={desativando !== null}
+        titulo={`Desativar ${desativando?.code ?? ""}?`}
+        mensagem="O circuito não recebe novas sessões; o registro permanece."
+        onConfirmar={() => {
+          if (desativando) void atualizar.mutateAsync({ id: desativando.id, admin_status: false }).then(() => setDesativando(null));
+        }}
+        onCancelar={() => setDesativando(null)}
+        confirmando={atualizar.isPending}
+      />
+    </main>
+  );
+}
+```
+
+- [ ] **Step 3: `CircuitDetail.tsx`**
+
+```tsx
+import { useState } from "react";
+import { Link, useParams } from "react-router-dom";
+import { ApiError } from "@/api/client";
+import { useBgpSessions, useCircuitDetail, useCircuitoReservar, useDevices, useOrganizations, useSites } from "@/api/hooks";
+import { StatusBadge } from "@/components/StatusBadge";
+import { PageHeader } from "@/components/PageHeader";
+
+export default function CircuitDetail() {
+  const { id } = useParams();
+  const circuitId = Number(id);
+  const { data, isLoading } = useCircuitDetail(circuitId);
+  const { data: sessions } = useBgpSessions({ circuit_id: circuitId });
+  const { data: devices } = useDevices();
+  const { data: sites } = useSites();
+  const { data: organizations } = useOrganizations();
+  const reservar = useCircuitoReservar();
+  const [erro, setErro] = useState<string | null>(null);
+
+  if (isLoading) return <p aria-busy="true">Carregando…</p>;
+  if (!data) return <p role="alert">Circuito não encontrado.</p>;
+
+  return (
+    <main>
+      <PageHeader
+        titulo={`Circuito ${data.code}`}
+        acoes={<Link to="/circuits">← Voltar</Link>}
+      />
+      <table>
+        <tbody>
+          <tr><th>Organização</th><td>{organizations?.find((o) => o.id === data.organization_id)?.name ?? "—"}</td></tr>
+          <tr><th>Site</th><td>{sites?.find((s) => s.id === data.site_id)?.name ?? "—"}</td></tr>
+          <tr><th>Access → Edge</th><td>{devices?.find((d) => d.id === data.access_device_id)?.name ?? "—"} → {devices?.find((d) => d.id === data.edge_device_id)?.name ?? "—"}</td></tr>
+          <tr><th>Stack</th><td><StatusBadge estado={data.stack} /></td></tr>
+          <tr><th>VLAN</th><td>{data.vlan_mode}</td></tr>
+          <tr><th>MTU</th><td>{data.mtu ?? "—"}</td></tr>
+          <tr><th>BFD</th><td>{data.bfd ? "Sim" : "—"}</td></tr>
+          {(data.stack === "ipv4" || data.stack === "dual") && (
+            <>
+              <tr><th>Pontas IPv4</th><td>{data.ipv4_local ?? "—"} ↔ {data.ipv4_remote ?? "—"}</td></tr>
+            </>
+          )}
+          {(data.stack === "ipv6" || data.stack === "dual") && (
+            <tr><th>Pontas IPv6</th><td>{data.ipv6_local ?? "—"} ↔ {data.ipv6_remote ?? "—"}</td></tr>
+          )}
+          <tr><th>Descrição</th><td>{data.description ?? "—"}</td></tr>
+        </tbody>
+      </table>
+      <button
+        className="primary"
+        type="button"
+        disabled={reservar.isPending}
+        onClick={() => {
+          setErro(null);
+          void reservar.mutateAsync(circuitId).catch((err) => setErro(err instanceof ApiError ? err.message : "Falha ao reservar recursos."));
+        }}
+      >
+        {reservar.isPending ? "Reservando…" : "Reservar recursos"}
+      </button>
+      {reservar.error && <p role="alert">{String(reservar.error.message ?? "Falha ao reservar recursos.")}</p>}
+      {erro && <p role="alert">{erro}</p>}
+      <h2>Sessões BGP</h2>
+      {sessions && sessions.length === 0 && <p>Nenhuma sessão vinculada.</p>}
+      {sessions?.map((s) => (
+        <p key={s.id}>
+          <Link to={`/bgp-sessions/${s.id}`}>{s.afi}</Link> {s.local_address} ↔ {s.remote_address}
+        </p>
+      ))}
+    </main>
+  );
+}
+```
+
+- [ ] **Step 4: `BgpSessions.tsx`**
+
+```tsx
+import { useState } from "react";
+import type { FormEvent } from "react";
+import { Link } from "react-router-dom";
+import { useAuth } from "@/auth/auth-context";
+import { ApiError } from "@/api/client";
+import {
+  useBgpSessionAtualizar,
+  useBgpSessionCriar,
+  useBgpSessions,
+  useCircuits,
+  useDevices,
+  usePolicyProfiles,
+} from "@/api/hooks";
+import { DataTable } from "@/components/DataTable";
+import { FormField } from "@/components/FormField";
+import { StatusBadge } from "@/components/StatusBadge";
+import { PageHeader } from "@/components/PageHeader";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import type { BgpSessionOut } from "@/api/types";
+
+const FORM_VAZIO = {
+  circuit_id: "",
+  device_id: "",
+  afi: "ipv4" as "ipv4" | "ipv6",
+  local_address: "",
+  remote_address: "",
+  source_address: "",
+  asn_local: "",
+  asn_remote: "",
+  description: "",
+  import_profile_id: "",
+  export_profile_id: "",
+  maximum_prefix: "",
+  maximum_prefix_threshold: "",
+  local_preference: "",
+  med: "",
+  prepend: "",
+  keepalive: "",
+  holdtime: "",
+  bfd_enabled: false,
+  graceful_restart: false,
+  shutdown: false,
+  allow_default_route: false,
+};
+
+export default function BgpSessions() {
+  const { podeEscrever } = useAuth();
+  const { data, isLoading } = useBgpSessions();
+  const { data: circuits } = useCircuits();
+  const { data: devices } = useDevices();
+  const { data: profiles } = usePolicyProfiles();
+  const criar = useBgpSessionCriar();
+  const atualizar = useBgpSessionAtualizar();
+  const [form, setForm] = useState(FORM_VAZIO);
+  const [desativando, setDesativando] = useState<BgpSessionOut | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  const num = (v: string) => (v === "" ? null : Number(v));
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    setErro(null);
+    try {
+      await criar.mutateAsync({
+        circuit_id: Number(form.circuit_id),
+        device_id: Number(form.device_id),
+        afi: form.afi,
+        local_address: form.local_address,
+        remote_address: form.remote_address,
+        source_address: form.source_address || null,
+        asn_local: num(form.asn_local),
+        asn_remote: num(form.asn_remote),
+        description: form.description || null,
+        import_profile_id: form.import_profile_id === "" ? null : Number(form.import_profile_id),
+        export_profile_id: form.export_profile_id === "" ? null : Number(form.export_profile_id),
+        maximum_prefix: num(form.maximum_prefix),
+        maximum_prefix_threshold: num(form.maximum_prefix_threshold),
+        local_preference: num(form.local_preference),
+        med: num(form.med),
+        prepend: num(form.prepend),
+        keepalive: num(form.keepalive),
+        holdtime: num(form.holdtime),
+        bfd_enabled: form.bfd_enabled,
+        graceful_restart: form.graceful_restart,
+        shutdown: form.shutdown,
+        allow_default_route: form.allow_default_route,
+      });
+      setForm(FORM_VAZIO);
+    } catch (err) {
+      setErro(err instanceof ApiError ? err.message : "Falha ao cadastrar sessão BGP.");
+    }
+  }
+
+  return (
+    <main>
+      <PageHeader titulo="Sessões BGP" />
+      {podeEscrever && (
+        <form onSubmit={onSubmit} className="grid-form">
+          <FormField label="Circuito *">
+            <select value={form.circuit_id} onChange={(e) => setForm({ ...form, circuit_id: e.target.value })} required>
+              <option value="">—</option>
+              {(circuits ?? []).map((c) => (
+                <option key={c.id} value={c.id}>{c.code}</option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Equipamento *">
+            <select value={form.device_id} onChange={(e) => setForm({ ...form, device_id: e.target.value })} required>
+              <option value="">—</option>
+              {(devices ?? []).map((d) => (
+                <option key={d.id} value={d.id}>{d.name}</option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Família">
+            <select value={form.afi} onChange={(e) => setForm({ ...form, afi: e.target.value as "ipv4" | "ipv6" })}>
+              <option value="ipv4">ipv4</option>
+              <option value="ipv6">ipv6</option>
+            </select>
+          </FormField>
+          <FormField label="Endereço local *">
+            <input value={form.local_address} onChange={(e) => setForm({ ...form, local_address: e.target.value })} required />
+          </FormField>
+          <FormField label="Endereço remoto *">
+            <input value={form.remote_address} onChange={(e) => setForm({ ...form, remote_address: e.target.value })} required />
+          </FormField>
+          <FormField label="Source address">
+            <input value={form.source_address} onChange={(e) => setForm({ ...form, source_address: e.target.value })} />
+          </FormField>
+          <FormField label="ASN local">
+            <input type="number" value={form.asn_local} onChange={(e) => setForm({ ...form, asn_local: e.target.value })} />
+          </FormField>
+          <FormField label="ASN remoto">
+            <input type="number" value={form.asn_remote} onChange={(e) => setForm({ ...form, asn_remote: e.target.value })} />
+          </FormField>
+          <FormField label="Descrição">
+            <input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+          </FormField>
+          <FormField label="Perfil de importação">
+            <select value={form.import_profile_id} onChange={(e) => setForm({ ...form, import_profile_id: e.target.value })}>
+              <option value="">—</option>
+              {(profiles ?? []).map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Perfil de exportação">
+            <select value={form.export_profile_id} onChange={(e) => setForm({ ...form, export_profile_id: e.target.value })}>
+              <option value="">—</option>
+              {(profiles ?? []).map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Maximum-prefix">
+            <input type="number" value={form.maximum_prefix} onChange={(e) => setForm({ ...form, maximum_prefix: e.target.value })} />
+          </FormField>
+          <FormField label="Limiar (%)">
+            <input type="number" value={form.maximum_prefix_threshold} onChange={(e) => setForm({ ...form, maximum_prefix_threshold: e.target.value })} />
+          </FormField>
+          <FormField label="Local-preference">
+            <input type="number" value={form.local_preference} onChange={(e) => setForm({ ...form, local_preference: e.target.value })} />
+          </FormField>
+          <FormField label="MED">
+            <input type="number" value={form.med} onChange={(e) => setForm({ ...form, med: e.target.value })} />
+          </FormField>
+          <FormField label="Prepend">
+            <input type="number" value={form.prepend} onChange={(e) => setForm({ ...form, prepend: e.target.value })} />
+          </FormField>
+          <FormField label="Keepalive">
+            <input type="number" value={form.keepalive} onChange={(e) => setForm({ ...form, keepalive: e.target.value })} />
+          </FormField>
+          <FormField label="Holdtime">
+            <input type="number" value={form.holdtime} onChange={(e) => setForm({ ...form, holdtime: e.target.value })} />
+          </FormField>
+          <FormField label="BFD">
+            <input type="checkbox" checked={form.bfd_enabled} onChange={(e) => setForm({ ...form, bfd_enabled: e.target.checked })} />
+          </FormField>
+          <FormField label="Graceful restart">
+            <input type="checkbox" checked={form.graceful_restart} onChange={(e) => setForm({ ...form, graceful_restart: e.target.checked })} />
+          </FormField>
+          <FormField label="Shutdown">
+            <input type="checkbox" checked={form.shutdown} onChange={(e) => setForm({ ...form, shutdown: e.target.checked })} />
+          </FormField>
+          <FormField label="Default route">
+            <input type="checkbox" checked={form.allow_default_route} onChange={(e) => setForm({ ...form, allow_default_route: e.target.checked })} />
+          </FormField>
+          <button className="primary" type="submit" disabled={criar.isPending}>
+            Cadastrar
+          </button>
+        </form>
+      )}
+      {erro && <p role="alert">{erro}</p>}
+      <DataTable<BgpSessionOut>
+        colunas={[
+          { key: "circuit", title: "Circuito", render: (s) => circuits?.find((c) => c.id === s.circuit_id)?.code ?? "—" },
+          { key: "device", title: "Equipamento", render: (s) => devices?.find((d) => d.id === s.device_id)?.name ?? "—" },
+          { key: "afi", title: "Família", render: (s) => <StatusBadge estado={s.afi} /> },
+          { key: "addresses", title: "Endereços", render: (s) => `${s.local_address} ↔ ${s.remote_address}` },
+          { key: "asns", title: "ASNs", render: (s) => `${s.asn_local ?? "—"} ↔ ${s.asn_remote ?? "—"}` },
+          { key: "shutdown", title: "Situação", render: (s) => <StatusBadge estado={s.shutdown ? "inativo" : "ativo"} /> },
+        ]}
+        linhas={data ?? []}
+        carregando={isLoading}
+        acoes={(s) => (
+          <>
+            <Link to={`/bgp-sessions/${s.id}`}>Detalhe</Link>{" "}
+            {podeEscrever && s.admin_status && (
+              <button type="button" onClick={() => setDesativando(s)}>
+                Desativar
+              </button>
+            )}
+          </>
+        )}
+      />
+      <ConfirmDialog
+        aberto={desativando !== null}
+        titulo={`Desativar sessão ${desativando?.id ?? ""}?`}
+        mensagem="A sessão fica indisponível para novas configurações; o registro permanece."
+        onConfirmar={() => {
+          if (desativando) void atualizar.mutateAsync({ id: desativando.id, admin_status: false }).then(() => setDesativando(null));
+        }}
+        onCancelar={() => setDesativando(null)}
+        confirmando={atualizar.isPending}
+      />
+    </main>
+  );
+}
+```
+
+- [ ] **Step 5: `BgpSessionDetail.tsx`**
+
+```tsx
+import { useState } from "react";
+import { useParams } from "react-router-dom";
+import { ApiError } from "@/api/client";
+import { useBgpSession, useCommunities, useSessionCommunities, useSessionCommunity, useSessionSenha } from "@/api/hooks";
+import { StatusBadge } from "@/components/StatusBadge";
+import { FormField } from "@/components/FormField";
+import { PageHeader } from "@/components/PageHeader";
+
+export default function BgpSessionDetail() {
+  const { id } = useParams();
+  const sessionId = Number(id);
+  const { data, isLoading } = useBgpSession(sessionId);
+  const { data: comunidades } = useSessionCommunities(sessionId);
+  const { data: catalogo } = useCommunities();
+  const assoc = useSessionCommunity();
+  const senha = useSessionSenha();
+  const [communityId, setCommunityId] = useState("");
+  const [senhaNova, setSenhaNova] = useState("");
+  const [erro, setErro] = useState<string | null>(null);
+
+  if (isLoading) return <p aria-busy="true">Carregando…</p>;
+  if (!data) return <p role="alert">Sessão não encontrada.</p>;
+
+  return (
+    <main>
+      <PageHeader titulo={`Sessão BGP #${data.id}`} />
+      <table>
+        <tbody>
+          <tr><th>Família</th><td><StatusBadge estado={data.afi} /></td></tr>
+          <tr><th>Endereços</th><td>{data.local_address} ↔ {data.remote_address}</td></tr>
+          <tr><th>ASNs</th><td>{data.asn_local ?? "—"} ↔ {data.asn_remote ?? "—"}</td></tr>
+          <tr><th>Maximum-prefix</th><td>{data.maximum_prefix ?? "—"} ({data.maximum_prefix_threshold ?? "—"}%)</td></tr>
+          <tr><th>BFD</th><td>{data.bfd_enabled ? "Sim" : "—"}</td></tr>
+          <tr><th>Descrição</th><td>{data.description ?? "—"}</td></tr>
+          <tr><th>Shutdown</th><td>{data.shutdown ? "Sim" : "Não"}</td></tr>
+        </tbody>
+      </table>
+      <h2>Communities</h2>
+      {comunidades?.map((c) => (
+        <p key={c.id}>
+          {c.name}{" "}
+          <button type="button" onClick={() => void assoc.mutate({ sessionId, communityId: c.id, associa: false })}>
+            Remover
+          </button>
+        </p>
+      ))}
+      <form
+        className="form-inline"
+        onSubmit={(e) => {
+          e.preventDefault();
+          setErro(null);
+          if (communityId === "") return;
+          void assoc
+            .mutateAsync({ sessionId, communityId: Number(communityId), associa: true })
+            .then(() => setCommunityId(""))
+            .catch((err) => setErro(err instanceof ApiError ? err.message : "Falha ao associar community."));
+        }}
+      >
+        <FormField label="Community">
+          <select value={communityId} onChange={(e) => setCommunityId(e.target.value)}>
+            <option value="">—</option>
+            {(catalogo ?? []).map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        </FormField>
+        <button className="primary" type="submit" disabled={assoc.isPending}>
+          Associar
+        </button>
+      </form>
+      {erro && <p role="alert">{erro}</p>}
+      {assoc.error && <p role="alert">{String(assoc.error.message ?? "Falha ao associar community.")}</p>}
+      <h2>Senha MD5</h2>
+      <p>Situação: {data.has_password ? "Sim" : "Não"}</p>
+      <form
+        className="form-inline"
+        onSubmit={(e) => {
+          e.preventDefault();
+          setErro(null);
+          void senha.mutateAsync({ sessionId, password: senhaNova }).then(() => setSenhaNova("")).catch((err) => setErro(err instanceof ApiError ? err.message : "Falha ao definir senha."));
+        }}
+      >
+        <FormField label="Senha MD5">
+          <input
+            type="password"
+            value={senhaNova}
+            onChange={(e) => setSenhaNova(e.target.value)}
+            autoComplete="new-password"
+            required
+          />
+        </FormField>
+        <button className="primary" type="submit" disabled={senha.isPending}>
+          Definir senha
+        </button>
+      </form>
+    </main>
+  );
+}
+```
+
+- [ ] **Step 6: testes `Circuits.test.tsx` e `BgpSessions.test.tsx`**
+
+`web/src/pages/Circuits.test.tsx`:
+
+```tsx
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import Circuits from "./Circuits";
+import { AuthProvider } from "@/auth/auth-context";
+
+const ME = { id: 1, username: "boss", role: "administrador", is_active: true, last_login_at: null, created_at: "" };
+const org = { id: 1, name: "Cliente A", legal_name: null, kind: "downstream", asn: 64512, irr_as_set: null, notes: null, admin_status: true };
+const site = { id: 1, name: "SPO", city: "São Paulo", uf: "SP", p2p_ipv4_block: null, p2p_ipv6_base: null, admin_status: true };
+const dev1 = { id: 1, name: "sw-01", management_address: "10.9.0.1", site_id: 1, model: null, family: "S6730", role: "acesso", asn: null, tags: [], ssh_port: 22, vendor: "Huawei", vrp_version: null, comm_status: "ok", admin_status: true, last_collected_at: null };
+const dev2 = { id: 1, name: "ne-01", management_address: "10.9.0.2", site_id: 1, model: null, family: "NE8000", role: "edge", asn: 64600, tags: [], ssh_port: 22, vendor: "Huawei", vrp_version: null, comm_status: "ok", admin_status: true, last_collected_at: null };
+const circ = { id: 1, code: "CIRC-01", organization_id: 1, site_id: 1, access_device_id: 1, access_port: "GE0/0/1", edge_device_id: 2, backup_edge_device_id: null, stack: "dual", vlan_mode: "unica", qinq: false, vrf: null, mtu: 1500, bandwidth: "1G", bfd: true, p2p_v4_len: 31, description: null, notes: null, edge_trunk: null, admin_status: true };
+
+beforeAll(() => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        const body = JSON.parse(String(init.body));
+        return new Response(JSON.stringify({ id: 2, ...body, admin_status: true }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url === "/api/v1/circuits") return new Response(JSON.stringify([circ]), { status: 200, headers: { "Content-Type": "application/json" } });
+      if (url === "/api/v1/organizations") return new Response(JSON.stringify([org]), { status: 200, headers: { "Content-Type": "application/json" } });
+      if (url === "/api/v1/sites") return new Response(JSON.stringify([site]), { status: 200, headers: { "Content-Type": "application/json" } });
+      if (url === "/api/v1/devices") return new Response(JSON.stringify([dev1, dev2]), { status: 200, headers: { "Content-Type": "application/json" } });
+      if (url === "/api/v1/auth/me") return new Response(JSON.stringify(ME), { status: 200, headers: { "Content-Type": "application/json" } });
+      return new Response("null", { status: 404 });
+    }),
+  );
+});
+
+function renderCircuits() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={["/circuits"]}>
+        <AuthProvider>
+          <Routes>
+            <Route path="/circuits" element={<Circuits />} />
+            <Route path="/circuits/:id" element={<div>detail-page</div>} />
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+describe("Circuits", () => {
+  it("lista circuitos e cria novo pela API", async () => {
+    renderCircuits();
+    expect(await screen.findByText("CIRC-01")).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Código *"), "CIRC-02");
+    await userEvent.selectOptions(screen.getByLabelText("Organização *"), "1");
+    await userEvent.selectOptions(screen.getByLabelText("Site *"), "1");
+    await userEvent.selectOptions(screen.getByLabelText("Equipamento de acesso *"), "1");
+    await userEvent.type(screen.getByLabelText("Porta de acesso *"), "GE0/0/2");
+    await userEvent.selectOptions(screen.getByLabelText("Edge *"), "2");
+    await userEvent.click(screen.getByRole("button", { name: "Cadastrar" }));
+    await waitFor(() => {
+      const chamadas = vi.mocked(fetch).mock.calls as unknown as [string, RequestInit][];
+      expect(chamadas.some((c) => c[1]?.method === "POST" && String(c[1]?.body).includes("CIRC-02"))).toBe(true);
+    });
+  });
+
+  it("permite navegar para o detalhe pelo código", async () => {
+    renderCircuits();
+    await userEvent.click(await screen.findByRole("link", { name: "CIRC-01" }));
+    expect(await screen.findByText("detail-page")).toBeInTheDocument();
+  });
+});
+```
+
+`web/src/pages/BgpSessions.test.tsx`:
+
+```tsx
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import BgpSessions from "./BgpSessions";
+import BgpSessionDetail from "./BgpSessionDetail";
+import { AuthProvider } from "@/auth/auth-context";
+
+const ME = { id: 1, username: "boss", role: "administrador", is_active: true, last_login_at: null, created_at: "" };
+const circ = { id: 1, code: "CIRC-01", organization_id: 1, site_id: 1, access_device_id: 1, access_port: "GE0/0/1", edge_device_id: 2, backup_edge_device_id: null, stack: "dual", vlan_mode: "unica", qinq: false, vrf: null, mtu: 1500, bandwidth: "1G", bfd: true, p2p_v4_len: 31, description: null, notes: null, edge_trunk: null, admin_status: true };
+const dev = { id: 2, name: "ne-01", management_address: "10.9.0.2", site_id: 1, model: null, family: "NE8000", role: "edge", asn: 64600, tags: [], ssh_port: 22, vendor: "Huawei", vrp_version: null, comm_status: "ok", admin_status: true, last_collected_at: null };
+const catalogo = [{ id: 1, name: "blackhole", notes: null }];
+let sessao: Record<string, unknown>;
+let associadas: { id: number; name: string; notes: null }[];
+let hasPassword: boolean;
+
+function opcoes() {
+  return {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  };
+}
+
+beforeAll(() => {
+  sessao = {
+    id: 1, circuit_id: 1, device_id: 2, afi: "ipv4", local_address: "100.64.40.1", remote_address: "100.64.40.2",
+    source_address: null, asn_local: 64600, asn_remote: 64512, description: null, import_profile_id: null,
+    export_profile_id: null, maximum_prefix: 100, maximum_prefix_threshold: 80, local_preference: 100,
+    med: null, prepend: null, keepalive: 30, holdtime: 90, bfd_enabled: true, graceful_restart: false,
+    shutdown: false, allow_default_route: false, has_password: false, admin_status: true,
+  };
+  associadas = [];
+  hasPassword = false;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "POST" && url === "/api/v1/bgp-sessions/1/communities") {
+        const body = JSON.parse(String(init?.body));
+        const com = catalogo.find((c) => c.id === body.community_id);
+        if (com) associadas.push({ ...com });
+        return new Response(JSON.stringify({ session_id: 1, community_id: body.community_id }), opcoes());
+      }
+      if (method === "DELETE" && url === "/api/v1/bgp-sessions/1/communities/1") {
+        associadas = [];
+        return new Response(null, { status: 204 });
+      }
+      if (method === "POST" && url === "/api/v1/bgp-sessions/1/password") {
+        hasPassword = true;
+        return new Response(JSON.stringify({ ...sessao, has_password: true }), opcoes());
+      }
+      if (method === "POST" && url === "/api/v1/bgp-sessions") {
+        const body = JSON.parse(String(init?.body));
+        return new Response(JSON.stringify({ id: 2, ...body, has_password: false, admin_status: true }), { status: 201, headers: { "Content-Type": "application/json" } });
+      }
+      if (url === "/api/v1/bgp-sessions/1/communities") return new Response(JSON.stringify(associadas), opcoes());
+      if (url === "/api/v1/bgp-sessions/1" && method === "GET") return new Response(JSON.stringify({ ...sessao, has_password: hasPassword }), opcoes());
+      if (url === "/api/v1/bgp-sessions") return new Response(JSON.stringify([{ ...sessao, has_password: hasPassword }]), opcoes());
+      if (url === "/api/v1/circuits") return new Response(JSON.stringify([circ]), opcoes());
+      if (url === "/api/v1/devices") return new Response(JSON.stringify([dev]), opcoes());
+      if (url === "/api/v1/policy-profiles") return new Response(JSON.stringify([]), opcoes());
+      if (url === "/api/v1/communities") return new Response(JSON.stringify(catalogo), opcoes());
+      if (url === "/api/v1/auth/me") return new Response(JSON.stringify(ME), opcoes());
+      return new Response("null", { status: 404 });
+    }),
+  );
+});
+
+function renderList() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={["/bgp-sessions"]}>
+        <AuthProvider>
+          <Routes>
+            <Route path="/bgp-sessions" element={<BgpSessions />} />
+            <Route path="/bgp-sessions/:id" element={<BgpSessionDetail />} />
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+function renderDetail() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={["/bgp-sessions/1"]}>
+        <AuthProvider>
+          <Routes>
+            <Route path="/bgp-sessions/:id" element={<BgpSessionDetail />} />
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+describe("BgpSessions", () => {
+  it("lista sessões e cria nova pela API", async () => {
+    renderList();
+    expect(await screen.findByText("100.64.40.1 ↔ 100.64.40.2")).toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByLabelText("Circuito *"), "1");
+    await userEvent.selectOptions(screen.getByLabelText("Equipamento *"), "2");
+    await userEvent.type(screen.getByLabelText("Endereço local *"), "100.64.42.1");
+    await userEvent.type(screen.getByLabelText("Endereço remoto *"), "100.64.42.2");
+    await userEvent.click(screen.getByRole("button", { name: "Cadastrar" }));
+    await waitFor(() => {
+      const chamadas = vi.mocked(fetch).mock.calls as unknown as [string, RequestInit][];
+      expect(chamadas.some((c) => c[1]?.method === "POST" && String(c[1]?.body).includes("100.64.42.1"))).toBe(true);
+    });
+  });
+
+  it("detalhe associa e remove community", async () => {
+    renderDetail();
+    await screen.findByText(/Sessão BGP #1/);
+    await userEvent.selectOptions(screen.getByLabelText("Community"), "1");
+    await userEvent.click(screen.getByRole("button", { name: "Associar" }));
+    expect(await screen.findByText("blackhole")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Remover" }));
+    await waitFor(() => expect(screen.queryByText("blackhole")).not.toBeInTheDocument());
+  });
+
+  it("define senha MD5 e mostra que há senha", async () => {
+    renderDetail();
+    await screen.findByText(/Sessão BGP #1/);
+    await userEvent.type(screen.getByLabelText("Senha MD5"), "segredo");
+    await userEvent.click(screen.getByRole("button", { name: "Definir senha" }));
+    await waitFor(() => {
+      const chamadas = vi.mocked(fetch).mock.calls as unknown as [string, RequestInit][];
+      expect(chamadas.some((c) => c[0] === "/api/v1/bgp-sessions/1/password" && c[1]?.method === "POST")).toBe(true);
+    });
+  });
+});
+```
+
+Run (na raiz do repositório):
+
+```bash
+cd web && npx vitest run src/pages/Circuits.test.tsx src/pages/BgpSessions.test.tsx
+cd web && npm run build
+cd web && npx eslint src
+```
+
+Expected: 5 testes PASS, build sem erro, lint limpo.
+
+- [ ] **Step 7: rotas em `App.tsx`** — adicionar, junto às existentes:
+
+```tsx
+import CircuitDetail from "@/pages/CircuitDetail";
+import Circuits from "@/pages/Circuits";
+import BgpSessionDetail from "@/pages/BgpSessionDetail";
+import BgpSessions from "@/pages/BgpSessions";
+```
+
+```tsx
+<Route
+  path="/circuits"
+  element={
+    <RequireAuth>
+      <Circuits />
+    </RequireAuth>
+  }
+/>
+<Route
+  path="/circuits/:id"
+  element={
+    <RequireAuth>
+      <CircuitDetail />
+    </RequireAuth>
+  }
+/>
+<Route
+  path="/bgp-sessions"
+  element={
+    <RequireAuth>
+      <BgpSessions />
+    </RequireAuth>
+  }
+/>
+<Route
+  path="/bgp-sessions/:id"
+  element={
+    <RequireAuth>
+      <BgpSessionDetail />
+    </RequireAuth>
+  }
+/>
+```
+
+- [ ] **Step 8: commit** (backend e web em commits separados)
+
+```bash
+git add src/gerenet/domain/services/bgp_sessions.py src/gerenet/api/routers/bgp_sessions.py tests/api/test_communities_api.py
+git commit -m "feat(api): GET /bgp-sessions/{id}/communities para leitura das associacoes
+
+Co-Authored-By: Claude Code <noreply@anthropic.com>"
+```
 
 ```bash
 git add web/src/pages web/src/App.tsx web/src/api/hooks.ts
@@ -3159,13 +4255,432 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 - Create: `web/src/pages/PolicyProfiles.tsx`, `Communities.tsx`, `PrefixAuthorizations.tsx`, `AuditEvents.tsx`
 - Modify: `web/src/App.tsx`, `web/src/api/hooks.ts`
 
-**Interfaces:** Predecessores: Task 7 (padrão). Prefix-auth tem POST/PATCH; policy/communities/audit são GET-only (read-only — frente `podeEscrever` desabilita botões quando visualizador).
+**Interfaces:** Predecessores: Task 7 (padrão) e Task 8 (`usePolicyProfiles`/`useCommunities` já existem — NÃO duplicar). Prefix-auth tem POST/PATCH `{"admin_status": false}` (Literal False — sem reativação pela API; desativar + criar para mudar, ruling 2 do backend); policy/communities/audit são GET-only. Filtro de audit-events: `tipo`, `objeto`, `objeto_id` (não existe filtro por ator — o ator é coluna própria).
 
-- [ ] **Step 1: hooks** de `prefix-authorizations` (lista + criar + ativar/desativar) e `audit-events` (com filtros `tipo`, `objeto`, `objeto_id`) e `policy-profiles`, `communities` (listas).
-- [ ] **Step 2: `PolicyProfiles.tsx` e `Communities.tsx`** — tabela read-only com filtro direction (policy-profiles) / janela de detalhe (communities: name, notes).
-- [ ] **Step 3: `PrefixAuthorizations.tsx`** — form: `organization_id`, `family` (select v4/v6), `prefix`, `notes`; desativar com ConfirmDialog; `origin` mostrado (manual).
-- [ ] **Step 4: `AuditEvents.tsx`** — filtros (tipo/ator/objeto) e tabela `details` expansível (colapsável `<details>`).
-- [ ] **Step 5: testes + build + lint + commit.**
+- [ ] **Step 1: hooks no `hooks.ts`** (append; os de lista de policy/communities vieram da Task 8)
+
+```ts
+export const usePrefixAuthorizations = (filtros?: { organization_id?: number; family?: string; include_disabled?: boolean }) =>
+  useQuery({
+    queryKey: ["prefix-authorizations", filtros],
+    queryFn: () => {
+      const qs = new URLSearchParams();
+      if (filtros?.organization_id) qs.set("organization_id", String(filtros.organization_id));
+      if (filtros?.family) qs.set("family", filtros.family);
+      if (filtros?.include_disabled) qs.set("include_disabled", "true");
+      const suf = qs.size > 0 ? `?${qs.toString()}` : "";
+      return apiFetch<PrefixAuthorizationOut[]>(`/api/v1/prefix-authorizations${suf}`);
+    },
+  });
+export type PrefixAuthorizationCreateIn = {
+  organization_id: number;
+  family: "ipv4" | "ipv6";
+  prefix: string;
+  notes?: string | null;
+};
+export const usePrefixAuthorizationCriar = () =>
+  useCriar<PrefixAuthorizationCreateIn, PrefixAuthorizationOut>("prefix-authorizations", "/api/v1/prefix-authorizations");
+export const usePrefixAuthorizationDesativar = () =>
+  useAtualizar<{ admin_status?: boolean }, PrefixAuthorizationOut>("prefix-authorizations", "/api/v1/prefix-authorizations");
+
+export const useAuditEvents = (filtros?: { tipo?: string; objeto?: string; objeto_id?: number }) =>
+  useQuery({
+    queryKey: ["audit-events", filtros],
+    queryFn: () => {
+      const qs = new URLSearchParams();
+      if (filtros?.tipo) qs.set("tipo", filtros.tipo);
+      if (filtros?.objeto) qs.set("objeto", filtros.objeto);
+      if (filtros?.objeto_id) qs.set("objeto_id", String(filtros.objeto_id));
+      const suf = qs.size > 0 ? `?${qs.toString()}` : "";
+      return apiFetch<AuditEventOut[]>(`/api/v1/audit-events${suf}`);
+    },
+  });
+```
+
+- [ ] **Step 2: `PolicyProfiles.tsx`** — read-only, com filtro de direção:
+
+```tsx
+import { useState } from "react";
+import { usePolicyProfiles } from "@/api/hooks";
+import { DataTable } from "@/components/DataTable";
+import { StatusBadge } from "@/components/StatusBadge";
+import { PageHeader } from "@/components/PageHeader";
+import { MonoCode } from "@/components/MonoCode";
+import type { PolicyProfileOut } from "@/api/types";
+
+export default function PolicyProfiles() {
+  const [direcao, setDirecao] = useState("");
+  const { data, isLoading } = usePolicyProfiles(direcao ? { direction: direcao } : {});
+  return (
+    <main>
+      <PageHeader
+        titulo="Perfis de política"
+        acoes={
+          <select value={direcao} onChange={(e) => setDirecao(e.target.value)} aria-label="Direção">
+            <option value="">todas</option>
+            <option value="import">import</option>
+            <option value="export">export</option>
+          </select>
+        }
+      />
+      <DataTable<PolicyProfileOut>
+        colunas={[
+          { key: "name", title: "Nome" },
+          { key: "label", title: "Produto" },
+          { key: "direction", title: "Direção", render: (p) => <StatusBadge estado={p.direction} /> },
+          { key: "kind", title: "Tipo" },
+          { key: "prefixes", title: "Prefixos", render: (p) => (p.prefixes && p.prefixes.length > 0 ? <MonoCode texto={p.prefixes.join("\n")} /> : "—") },
+          { key: "notes", title: "Observações", render: (p) => p.notes ?? "—" },
+        ]}
+        linhas={data ?? []}
+        carregando={isLoading}
+      />
+    </main>
+  );
+}
+```
+
+- [ ] **Step 3: `Communities.tsx`** — read-only, com janela de detalhe (name, notes):
+
+```tsx
+import { useState } from "react";
+import { useCommunities } from "@/api/hooks";
+import { DataTable } from "@/components/DataTable";
+import { PageHeader } from "@/components/PageHeader";
+import type { CommunityOut } from "@/api/types";
+
+export default function Communities() {
+  const { data, isLoading } = useCommunities();
+  const [detalhe, setDetalhe] = useState<CommunityOut | null>(null);
+  return (
+    <main>
+      <PageHeader titulo="Communities" />
+      <DataTable<CommunityOut>
+        colunas={[
+          { key: "name", title: "Nome" },
+          { key: "notes", title: "Observações", render: (c) => c.notes ?? "—" },
+        ]}
+        linhas={data ?? []}
+        carregando={isLoading}
+        acoes={(c) => (
+          <button type="button" onClick={() => setDetalhe(c)}>
+            Detalhar
+          </button>
+        )}
+      />
+      {detalhe && (
+        <div role="dialog" aria-modal="true" aria-label={`Dados de ${detalhe.name}`}>
+          <h2>{detalhe.name}</h2>
+          <p>{detalhe.notes ?? "Sem observações."}</p>
+          <button onClick={() => setDetalhe(null)}>Fechar</button>
+        </div>
+      )}
+    </main>
+  );
+}
+```
+
+- [ ] **Step 4: `PrefixAuthorizations.tsx`** — form + desativar (origin exibido, só leitura):
+
+```tsx
+import { useState } from "react";
+import type { FormEvent } from "react";
+import { useAuth } from "@/auth/auth-context";
+import { ApiError } from "@/api/client";
+import {
+  useOrganizations,
+  usePrefixAuthorizationCriar,
+  usePrefixAuthorizationDesativar,
+  usePrefixAuthorizations,
+} from "@/api/hooks";
+import { DataTable } from "@/components/DataTable";
+import { FormField } from "@/components/FormField";
+import { PageHeader } from "@/components/PageHeader";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import type { PrefixAuthorizationOut } from "@/api/types";
+
+const FORM_VAZIO = { organization_id: "", family: "ipv4" as "ipv4" | "ipv6", prefix: "", notes: "" };
+
+export default function PrefixAuthorizations() {
+  const { podeEscrever } = useAuth();
+  const { data, isLoading } = usePrefixAuthorizations();
+  const { data: organizations } = useOrganizations();
+  const criar = usePrefixAuthorizationCriar();
+  const desativar = usePrefixAuthorizationDesativar();
+  const [form, setForm] = useState(FORM_VAZIO);
+  const [desativando, setDesativando] = useState<PrefixAuthorizationOut | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    setErro(null);
+    try {
+      await criar.mutateAsync({
+        organization_id: Number(form.organization_id),
+        family: form.family,
+        prefix: form.prefix,
+        notes: form.notes || null,
+      });
+      setForm(FORM_VAZIO);
+    } catch (err) {
+      setErro(err instanceof ApiError ? err.message : "Falha ao cadastrar autorização.");
+    }
+  }
+
+  return (
+    <main>
+      <PageHeader titulo="Prefixos autorizados" />
+      {podeEscrever && (
+        <form onSubmit={onSubmit} className="grid-form">
+          <FormField label="Organização *">
+            <select value={form.organization_id} onChange={(e) => setForm({ ...form, organization_id: e.target.value })} required>
+              <option value="">—</option>
+              {(organizations ?? []).map((o) => (
+                <option key={o.id} value={o.id}>{o.name}</option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Família">
+            <select value={form.family} onChange={(e) => setForm({ ...form, family: e.target.value as "ipv4" | "ipv6" })}>
+              <option value="ipv4">ipv4</option>
+              <option value="ipv6">ipv6</option>
+            </select>
+          </FormField>
+          <FormField label="Prefixo *">
+            <input value={form.prefix} onChange={(e) => setForm({ ...form, prefix: e.target.value })} required />
+          </FormField>
+          <FormField label="Observações">
+            <input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+          </FormField>
+          <button className="primary" type="submit" disabled={criar.isPending}>
+            Cadastrar
+          </button>
+        </form>
+      )}
+      {erro && <p role="alert">{erro}</p>}
+      <DataTable<PrefixAuthorizationOut>
+        colunas={[
+          { key: "organization", title: "Organização", render: (z) => organizations?.find((o) => o.id === z.organization_id)?.name ?? "—" },
+          { key: "family", title: "Família" },
+          { key: "prefix", title: "Prefixo" },
+          { key: "origin", title: "Origem" },
+          { key: "notes", title: "Observações", render: (z) => z.notes ?? "—" },
+          { key: "admin_status", title: "Situação", render: (z) => (z.admin_status ? "ativo" : "inativo") },
+        ]}
+        linhas={data ?? []}
+        carregando={isLoading}
+        acoes={(z) =>
+          podeEscrever && z.admin_status ? (
+            <button type="button" onClick={() => setDesativando(z)}>
+              Desativar
+            </button>
+          ) : null
+        }
+      />
+      <ConfirmDialog
+        aberto={desativando !== null}
+        titulo={`Desativar ${desativando?.prefix ?? ""}?`}
+        mensagem="Para alterar um prefixo autorizado, desative e cadastre um novo."
+        onConfirmar={() => {
+          if (desativando) void desativar.mutateAsync({ id: desativando.id, admin_status: false }).then(() => setDesativando(null));
+        }}
+        onCancelar={() => setDesativando(null)}
+        confirmando={desativar.isPending}
+      />
+    </main>
+  );
+}
+```
+
+- [ ] **Step 5: `AuditEvents.tsx`** — filtros tipo/objeto, `details` expansível:
+
+```tsx
+import { useState } from "react";
+import { useAuditEvents } from "@/api/hooks";
+import { DataTable } from "@/components/DataTable";
+import { TimeAgo } from "@/components/TimeAgo";
+import { PageHeader } from "@/components/PageHeader";
+import { MonoCode } from "@/components/MonoCode";
+import type { AuditEventOut } from "@/api/types";
+
+export default function AuditEvents() {
+  const [tipo, setTipo] = useState("");
+  const [objeto, setObjeto] = useState("");
+  const { data, isLoading } = useAuditEvents({
+    ...(tipo ? { tipo } : {}),
+    ...(objeto ? { objeto } : {}),
+  });
+  return (
+    <main>
+      <PageHeader titulo="Auditoria" />
+      <form className="form-inline">
+        <label className="field">
+          <span>Tipo</span>
+          <input value={tipo} onChange={(e) => setTipo(e.target.value)} />
+        </label>
+        <label className="field">
+          <span>Objeto</span>
+          <input value={objeto} onChange={(e) => setObjeto(e.target.value)} />
+        </label>
+      </form>
+      <DataTable<AuditEventOut>
+        colunas={[
+          { key: "created_at", title: "Quando", render: (e) => <TimeAgo iso={e.created_at} /> },
+          { key: "type", title: "Ação" },
+          { key: "actor", title: "Autor" },
+          {
+            key: "details",
+            title: "Detalhes",
+            render: (e) => (
+              <details>
+                <summary>Exibir</summary>
+                <pre>{JSON.stringify(e.details, null, 2)}</pre>
+              </details>
+            ),
+          },
+        ]}
+        linhas={data ?? []}
+        carregando={isLoading}
+      />
+    </main>
+  );
+}
+```
+
+- [ ] **Step 6: testes + rotas + build + lint**
+
+`web/src/pages/PrefixAuthorizations.test.tsx`:
+
+```tsx
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import PrefixAuthorizations from "./PrefixAuthorizations";
+import { AuthProvider } from "@/auth/auth-context";
+
+const ME = { id: 1, username: "boss", role: "administrador", is_active: true, last_login_at: null, created_at: "" };
+const org = { id: 1, name: "Cliente A", legal_name: null, kind: "downstream", asn: 64512, irr_as_set: null, notes: null, admin_status: true };
+const autorizacao = { id: 1, organization_id: 1, family: "ipv4", prefix: "200.200.1.0/24", origin: "manual", notes: null, admin_status: true };
+
+beforeAll(() => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+      if (init?.method === "POST") return json({ id: 2, ...JSON.parse(String(init.body)), origin: "manual", admin_status: true }, 201);
+      if (url === "/api/v1/prefix-authorizations/1" && init?.method === "PATCH") return json({ ...autorizacao, admin_status: false });
+      if (url === "/api/v1/prefix-authorizations") return json([autorizacao]);
+      if (url === "/api/v1/organizations") return json([org]);
+      if (url === "/api/v1/auth/me") return json(ME);
+      return new Response("null", { status: 404 });
+    }),
+  );
+});
+
+function renderPage() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <AuthProvider>
+        <PrefixAuthorizations />
+      </AuthProvider>
+    </QueryClientProvider>,
+  );
+}
+
+describe("PrefixAuthorizations", () => {
+  it("lista e cadastra autorização pela API", async () => {
+    renderPage();
+    expect(await screen.findByText("200.200.1.0/24")).toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByLabelText("Organização *"), "1");
+    await userEvent.type(screen.getByLabelText("Prefixo *"), "200.200.2.0/24");
+    await userEvent.click(screen.getByRole("button", { name: "Cadastrar" }));
+    await waitFor(() => {
+      const chamadas = vi.mocked(fetch).mock.calls as unknown as [string, RequestInit][];
+      expect(chamadas.some((c) => c[1]?.method === "POST" && String(c[1]?.body).includes("200.200.2.0/24"))).toBe(true);
+    });
+  });
+
+  it("desativa com confirmação", async () => {
+    renderPage();
+    await screen.findByText("200.200.1.0/24");
+    await userEvent.click(screen.getByRole("button", { name: "Desativar" }));
+    await userEvent.click(screen.getByRole("button", { name: "Confirmar" }));
+    await waitFor(() => {
+      const chamadas = vi.mocked(fetch).mock.calls as unknown as [string, RequestInit][];
+      const patch = chamadas.find((c) => c[0] === "/api/v1/prefix-authorizations/1" && c[1]?.method === "PATCH");
+      expect(patch).toBeTruthy();
+      expect(JSON.parse(String(patch![1].body))).toEqual({ admin_status: false });
+    });
+  });
+});
+```
+
+`web/src/pages/AuditEvents.test.tsx`:
+
+```tsx
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import AuditEvents from "./AuditEvents";
+
+const EVENTOS = [
+  { id: 1, type: "device.create", actor: "cli", details: { objeto: "device", objeto_id: 1 }, created_at: "2026-09-04T12:00:00Z" },
+];
+
+beforeAll(() => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      return new Response(JSON.stringify(EVENTOS), { status: 200, headers: { "Content-Type": "application/json" } });
+    }),
+  );
+});
+
+function renderPage() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <AuditEvents />
+    </QueryClientProvider>,
+  );
+}
+
+describe("AuditEvents", () => {
+  it("lista eventos e filtra por tipo", async () => {
+    renderPage();
+    expect(await screen.findByText("device.create")).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Tipo"), "device.");
+    await waitFor(() => {
+      const chamadas = vi.mocked(fetch).mock.calls;
+      expect(chamadas.some((c) => String(c[0]).includes("tipo=device."))).toBe(true);
+    });
+  });
+
+  it("expande os detalhes do evento", async () => {
+    renderPage();
+    await userEvent.click(await screen.findByText("Exibir"));
+    expect(screen.getByText(/"objeto": "device"/)).toBeTruthy();
+  });
+});
+```
+
+Run: `cd web && npx vitest run src/pages/PrefixAuthorizations.test.tsx src/pages/AuditEvents.test.tsx` — Expected: 4 PASS.
+
+Rotas em `App.tsx` (adicionar às existentes):
+
+```tsx
+<Route path="/policy-profiles" element={<RequireAuth><PolicyProfiles /></RequireAuth>} />
+<Route path="/communities" element={<RequireAuth><Communities /></RequireAuth>} />
+<Route path="/prefix-authorizations" element={<RequireAuth><PrefixAuthorizations /></RequireAuth>} />
+<Route path="/audit-events" element={<RequireAuth><AuditEvents /></RequireAuth>} />
+```
+
+Run: `cd web && npm run build` e `cd web && npx eslint src` — Expected: sem erros.
+
+- [ ] **Step 7: commit**
 
 ```bash
 git add web/src/pages web/src/App.tsx web/src/api/hooks.ts
