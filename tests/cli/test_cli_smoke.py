@@ -369,7 +369,6 @@ def test_cli_sites_add_bloco_p2p_grande_da_erro() -> None:
     assert "Erro:" in invalido.output
 
 
-<<<<<<< HEAD
 def test_cli_circuits_add_edge_trunk(db_session: Session) -> None:
     site = create_site(db_session, SiteCreate(name="pop-cli-trunk"), actor="cli")
     org = create_organization(
@@ -534,4 +533,3 @@ def test_cli_users_create_list_set_password() -> None:
     )
     assert role_bad.exit_code == 1
     assert "Erro:" in role_bad.output
->>>>>>> 5cf904a (feat(cli): gerenet users create|set-password|list)
