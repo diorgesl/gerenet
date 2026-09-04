@@ -359,6 +359,62 @@ class AuditEventOut(BaseModel):
     created_at: datetime
 
 
+class DevicesAggOut(BaseModel):
+    total: int
+    active: int
+    with_snapshot: int
+    by_comm_status: dict[str, int]
+
+
+class SnapshotResumoOut(BaseModel):
+    id: int
+    status: str
+    started_at: datetime
+
+
+class JobResumoOut(BaseModel):
+    id: int
+    status: str
+
+
+class PerDeviceOut(BaseModel):
+    device_id: int
+    name: str
+    site_id: int | None
+    site_name: str | None
+    comm_status: str
+    last_collected_at: datetime | None
+    snapshot_age_seconds: float | None
+    latest_snapshot: SnapshotResumoOut | None
+    active_job: JobResumoOut | None
+
+
+class BgpSessionsAggOut(BaseModel):
+    total: int
+    active: int
+    shutdown: int
+
+
+class CircuitsAggOut(BaseModel):
+    total: int
+    active: int
+
+
+class AllocAggOut(BaseModel):
+    reserved: int
+    freed: int
+
+
+class DashboardOut(BaseModel):
+    devices: DevicesAggOut
+    per_device: list[PerDeviceOut]
+    bgp_sessions: BgpSessionsAggOut
+    circuits: CircuitsAggOut
+    vlans: AllocAggOut
+    ip_prefixes: AllocAggOut
+    recent_audit: list[AuditEventOut]
+
+
 class PrefixAuthorizationDisable(BaseModel):
     """PATCH de autorização aceita só {"admin_status": false} (ruling 2)."""
 

@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from gerenet.api import auth, users
+from gerenet.api import auth, dashboard, users
 from gerenet.api.routers import (
     audit_events,
     bgp_sessions,
@@ -47,6 +47,7 @@ def create_app() -> FastAPI:
     app.include_router(audit_events.router)
     app.include_router(auth.router)
     app.include_router(users.router)
+    app.include_router(dashboard.router)
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
