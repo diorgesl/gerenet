@@ -107,3 +107,19 @@ def test_associacao_inexistente_da_404(client: TestClient, db_session: Session) 
     assert client.delete(
         f"/api/v1/bgp-sessions/{sessao_id}/communities/9999", headers=_auth()
     ).status_code == 404
+
+
+def test_lista_communities_da_sessao(client: TestClient, db_session: Session) -> None:
+    sessao_id = _sessao(db_session)
+    comunidade = client.get("/api/v1/communities", headers=_auth()).json()[0]  # blackhole
+    associada = client.post(
+        f"/api/v1/bgp-sessions/{sessao_id}/communities",
+        json={"community_id": comunidade["id"]}, headers=_auth(),
+    )
+    assert associada.status_code == 200
+
+    lista = client.get(f"/api/v1/bgp-sessions/{sessao_id}/communities", headers=_auth())
+    assert lista.status_code == 200, lista.text
+    assert [c["name"] for c in lista.json()] == ["blackhole"]
+
+    assert client.get("/api/v1/bgp-sessions/9999/communities", headers=_auth()).status_code == 404

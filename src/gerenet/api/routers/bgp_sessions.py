@@ -12,6 +12,7 @@ from gerenet.domain.schemas import (
     BgpSessionOut,
     BgpSessionPasswordIn,
     BgpSessionUpdate,
+    CommunityOut,
 )
 from gerenet.domain.services import bgp_sessions as svc
 from gerenet.domain.services.errors import ConflictError, NotFoundError, ValidationError
@@ -103,6 +104,15 @@ def definir_senha(
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=f"Vault indisponível: {exc}.") from exc
     return svc.set_password(session, sessao.id, actor=actor.nome, path=caminho)
+
+
+@router.get("/{session_id}/communities", response_model=list[CommunityOut])
+def listar_communities(session_id: int, session: SessionDep) -> object:
+    """Communities associadas à sessão, na ordem de associação."""
+    try:
+        return svc.list_communities(session, session_id)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/{session_id}/communities", status_code=200)
