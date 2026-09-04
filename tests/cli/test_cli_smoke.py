@@ -514,13 +514,16 @@ def test_cli_users_create_list_set_password() -> None:
     )
     assert r.exit_code == 0, r.output
     assert "boss" in r.output
+    assert "senha-super-8" not in r.output  # rigor: a senha nunca vaza no output
 
     lista = runner.invoke(app, ["users", "list"])
     assert lista.exit_code == 0
     assert "boss" in lista.output and "administrador" in lista.output
+    assert "senha-super-8" not in lista.output
 
     trocar = runner.invoke(app, ["users", "set-password", "boss"], input="outra-super-8\noutra-super-8\n")
     assert trocar.exit_code == 0, trocar.output
+    assert "outra-super-8" not in trocar.output
 
     sem_senha = runner.invoke(app, ["users", "create", "fraco", "--role", "operador"], input="curta\ncurta\n")
     assert sem_senha.exit_code == 1

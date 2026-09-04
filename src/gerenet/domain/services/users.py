@@ -25,6 +25,15 @@ _SCRYPT_P = 1
 _SALT_BYTES = 16
 _KEY_BYTES = 32
 _SENHA_MINIMA = 8
+_SENHA_MAXIMA = 128
+
+# Hash scrypt de uma senha fake conhecida ("dummy-timing-1") — nenhuma
+# credencial real; serve só para o scrypt rodar mesmo quando o usuário não
+# existe, uniformizando o tempo do login (sem enumeração por latência).
+_DUMMY_HASH = (
+    "scrypt$16384$8$1$480dc0f31ea1298cc9d74546c59fe76c"
+    "$7bcfd9c1b46bd714bdd98f617932b0be6f6cb1ebb81e27f957d593fa1687e62f"
+)
 
 
 def hash_password(senha: str) -> str:
@@ -35,6 +44,8 @@ def hash_password(senha: str) -> str:
 
 def verify_password(senha: str, armazenado: str) -> bool:
     """Verifica contra o formato scrypt; formato inválido → False (sem exceção)."""
+    if not isinstance(armazenado, str):
+        return False  # hash envenenado no banco: nunca estourar AttributeError (500)
     try:
         prefixo, n_s, r_s, p_s, salt_hex, chave_hex = armazenado.split("$")
         if prefixo != "scrypt":
@@ -51,6 +62,8 @@ def verify_password(senha: str, armazenado: str) -> bool:
 def _valida_senha(senha: str) -> None:
     if len(senha) < _SENHA_MINIMA:
         raise ValidationError(f"Senha deve ter pelo menos {_SENHA_MINIMA} caracteres.")
+    if len(senha) > _SENHA_MAXIMA:
+        raise ValidationError(f"Senha deve ter no máximo {_SENHA_MAXIMA} caracteres.")
 
 
 def create_user(
@@ -153,7 +166,11 @@ def reset_password(session: Session, user_id: int, *, password: str, actor: str 
 def autenticar(session: Session, username: str, password: str) -> models.User | None:
     """Valida credenciais; None para usuário inexistente, inativo ou senha errada."""
     usuario = session.scalar(select(models.User).where(models.User.username == username))
-    if usuario is None or not usuario.is_active or not verify_password(password, usuario.password_hash):
+    # Timing uniforme: o scrypt roda SEMPRE (mesmo para usuário inexistente ou
+    # inativo), evitando enumeração de usernames pela diferença de latência.
+    hash_a_testar = usuario.password_hash if usuario else _DUMMY_HASH
+    valida = verify_password(password, hash_a_testar)
+    if not usuario or not usuario.is_active or not valida:
         return None
     return usuario
 

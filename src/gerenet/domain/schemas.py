@@ -487,7 +487,7 @@ class UserOut(BaseModel):
 
 class UserCreateIn(BaseModel):
     username: str = Field(min_length=1, max_length=64)
-    password: str  # sem limite pydantic: validação de tamanho é do serviço (padrão asn do OrganizationCreate)
+    password: str = Field(max_length=128)  # mesmo limite do UserLoginIn; mínimo (8) validado no serviço
     role: str  # validação em serviço (padrão do catálogo; 422 só no formato)
 
 
@@ -498,7 +498,7 @@ class UserUpdateIn(BaseModel):
 
 
 class UserPasswordIn(BaseModel):
-    password: str
+    password: str = Field(max_length=128)  # mesmo limite do UserLoginIn; mínimo (8) validado no serviço
 
 
 class JobRunOut(BaseModel):

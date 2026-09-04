@@ -38,6 +38,11 @@ def test_lista_filtros_e_detalhe(client: TestClient, db_session) -> None:
     so_running = client.get("/api/v1/jobs?status=queued", headers=_auth()).json()
     assert [j["id"] for j in so_running] == [j1.id]
 
+    # Cobertura dos filtros declarados: kind + paginação (limit/offset) — id DESC
+    # [j2, j1]; offset=1 pula o maior id e limit=1 devolve exatamente um job.
+    paginado = client.get("/api/v1/jobs?kind=collect&limit=1&offset=1", headers=_auth()).json()
+    assert [j["id"] for j in paginado] == [j1.id]
+
     por_device = client.get(f"/api/v1/jobs?device_id={j2.device_id}", headers=_auth()).json()
     assert [j["id"] for j in por_device] == [j2.id]
 

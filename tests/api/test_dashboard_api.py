@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -73,7 +73,13 @@ def test_dashboard_agrega(client: TestClient, db_session) -> None:
 
     r1.last_collected_at = datetime.now(UTC)  # uma coleta já feita
     snap = models.DeviceSnapshot(device_id=r1.id, status="success", resources={})
+    # 2º snapshot (id e started_at maiores) para r1 e 2º job "queued" (id maior)
+    # para r2: o dashboard deve cravar o de MAIOR id, não o primeiro que achar.
+    snap_novo = models.DeviceSnapshot(
+        device_id=r1.id, status="success", resources={}, started_at=datetime.now(UTC) + timedelta(minutes=1)
+    )
     job = models.JobRun(device_id=r2.id, origin="api", actor="api", kind="collect", status="running")
+    job_novo = models.JobRun(device_id=r2.id, origin="api", actor="api", kind="collect", status="queued")
     sessao_ativa = models.BgpSession(
         circuit_id=env["circ_id"], device_id=env["ne1_id"], afi="ipv4",
         local_address="100.64.1.1", remote_address="100.64.1.2", asn_remote=64512,
@@ -83,7 +89,7 @@ def test_dashboard_agrega(client: TestClient, db_session) -> None:
         local_address="100.64.2.1", remote_address="100.64.2.2", asn_remote=64512,
         shutdown=True,
     )
-    db_session.add_all([snap, job, sessao_ativa, sessao_shutdown])
+    db_session.add_all([snap, snap_novo, job, job_novo, sessao_ativa, sessao_shutdown])
     db_session.add_all([
         models.Vlan(site_id=env["site_id"], vid=100),  # default reservada
         models.Vlan(site_id=env["site_id"], vid=200, status="liberada"),
@@ -105,11 +111,12 @@ def test_dashboard_agrega(client: TestClient, db_session) -> None:
     nomes = [p["name"] for p in dados["per_device"]]
     assert nomes == ["ne8k-dash1", "ne8k-dash2", "r1", "r2", "r3", "sw-dash"]
     p = {d["name"]: d for d in dados["per_device"]}
-    assert p["r1"]["latest_snapshot"]["id"] == snap.id
+    assert p["r1"]["latest_snapshot"]["id"] == snap_novo.id  # maior id vence
     assert p["r1"]["latest_snapshot"]["status"] == "success"
+    assert datetime.fromisoformat(p["r1"]["latest_snapshot"]["started_at"]) > snap.started_at
     assert isinstance(p["r1"]["snapshot_age_seconds"], (int, float))
     assert p["r1"]["site_name"] == "pop-dash"
-    assert p["r2"]["active_job"] == {"id": job.id, "status": "running"}
+    assert p["r2"]["active_job"] == {"id": job_novo.id, "status": "queued"}  # maior id vence
     assert p["r1"]["active_job"] is None
     assert p["r3"]["latest_snapshot"] is None and p["r3"]["active_job"] is None
 
