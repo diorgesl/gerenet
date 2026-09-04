@@ -1,4 +1,5 @@
 import { Link, useParams } from "react-router-dom";
+import { ApiError } from "@/api/client";
 import { useJobPoll } from "@/api/hooks";
 import { PageHeader } from "@/components/PageHeader";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -7,13 +8,13 @@ import { TimeAgo } from "@/components/TimeAgo";
 export default function JobDetail() {
   const { id } = useParams();
   const jobId = Number(id);
-  const { data, isLoading } = useJobPoll(jobId);
+  const { data, isLoading, error } = useJobPoll(jobId);
 
   return (
     <main>
       <PageHeader titulo={`Job #${data ? data.id : (id ?? "")}`} acoes={<Link to="/jobs">← Voltar</Link>} />
       {isLoading && <p aria-busy="true">Carregando…</p>}
-      {!data && !isLoading && <p>Job não encontrado.</p>}
+      {error && <p role="alert">{error instanceof ApiError ? error.message : "Falha ao carregar o job."}</p>}
       {data && (
         <>
           <dl>

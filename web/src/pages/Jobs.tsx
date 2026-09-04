@@ -87,7 +87,7 @@ export default function Jobs() {
             title: "Job",
             render: (j) => <Link to={`/jobs/${j.id}`}>#{j.id}</Link>,
           },
-          { key: "device_id", title: "Device", render: (j) => j.device_id ?? "—" },
+          { key: "device_id", title: "Equipamento", render: (j) => j.device_id ?? "—" },
           { key: "kind", title: "Tipo" },
           { key: "actor", title: "Autor" },
           { key: "status", title: "Status", render: (j) => <StatusBadge estado={j.status} /> },

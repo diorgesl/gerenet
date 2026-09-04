@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { ApiError } from "@/api/client";
 import { useDesiredConfig, useDevices } from "@/api/hooks";
 import { FormField } from "@/components/FormField";
 import { MonoCode } from "@/components/MonoCode";
@@ -9,7 +10,7 @@ export default function DesiredConfig() {
   const [params, setParams] = useSearchParams();
   const { data: devices } = useDevices();
   const [deviceId, setDeviceId] = useState<number>(Number(params.get("device_id") ?? 0));
-  const { data, isLoading } = useDesiredConfig(deviceId > 0 ? deviceId : null);
+  const { data, isLoading, error } = useDesiredConfig(deviceId > 0 ? deviceId : null);
 
   return (
     <main>
@@ -33,6 +34,7 @@ export default function DesiredConfig() {
       </FormField>
       {deviceId === 0 && <p>Selecione um equipamento.</p>}
       {isLoading && <p aria-busy="true">Carregando…</p>}
+      {error && <p role="alert">{error instanceof ApiError ? error.message : "Falha ao carregar a configuração desejada."}</p>}
       {data && (
         <>
           <p>Gerada em {new Date(data.gerado_em).toLocaleString("pt-BR")}</p>

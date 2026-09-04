@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { ApiError } from "@/api/client";
 import { useDevices, useSnapshot, useSnapshots } from "@/api/hooks";
 import { DataTable } from "@/components/DataTable";
 import { FormField } from "@/components/FormField";
@@ -127,7 +128,9 @@ export default function Snapshots() {
           )}
         </section>
       )}
-      {detalhe.isError && <p role="alert">Falha ao carregar o snapshot.</p>}
+      {detalhe.isError && (
+        <p role="alert">{detalhe.error instanceof ApiError ? detalhe.error.message : "Falha ao carregar o snapshot."}</p>
+      )}
     </main>
   );
 }
