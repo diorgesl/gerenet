@@ -2049,11 +2049,169 @@ export default function App() {
 }
 ```
 
+CSS a appendar em `global.css` (classes usadas por estas duas telas):
+
+```css
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem; margin-bottom: 1.2rem; }
+.card { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 8px; padding: 0.9rem; font-size: 0.9rem; }
+.card strong { display: block; font-size: 1.5rem; }
+.form-inline { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.6rem; margin-bottom: 1rem; }
+```
+
 - [ ] **Step 5: testes**
 
-`web/src/pages/Users.test.tsx`: render com `AuthProvider` + `QueryClientProvider` + mock fetch com `/api/v1/users` → lista, clicar "Desativar" → PATCH enviado (assert fetch chamado com método PATCH e body `{is_active:false}`), e conta própria sem botão.
+`web/src/pages/Users.test.tsx`:
 
-`web/src/pages/Dashboard.test.tsx`: mock fetch com `/api/v1/dashboard` → cards renderizados, links presentes.
+```tsx
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import Users from "./Users";
+import { AuthProvider } from "@/auth/auth-context";
+
+const ME_ADMIN = {
+  id: 1,
+  username: "boss",
+  role: "administrador",
+  is_active: true,
+  last_login_at: null,
+  created_at: "2026-09-04T00:00:00Z",
+};
+
+const USUARIOS = [
+  ME_ADMIN,
+  {
+    id: 2,
+    username: "operador1",
+    role: "operador",
+    is_active: true,
+    last_login_at: null,
+    created_at: "2026-09-04T00:00:00Z",
+  },
+];
+
+function mockFetch() {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/v1/auth/me") {
+        return new Response(JSON.stringify(ME_ADMIN), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url === "/api/v1/users" && (init?.method === undefined || init.method === "GET")) {
+        return new Response(JSON.stringify(USUARIOS), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url === "/api/v1/users/2" && init?.method === "PATCH") {
+        return new Response(JSON.stringify({ ...USUARIOS[1], is_active: false }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ detail: "Não encontrado." }), { status: 404, headers: { "Content-Type": "application/json" } });
+    }),
+  );
+}
+
+function renderUsers() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <AuthProvider>
+        <Users />
+      </AuthProvider>
+    </QueryClientProvider>,
+  );
+}
+
+describe("Users", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("lista usuários e a conta própria não tem botão de ativar/desativar", async () => {
+    mockFetch();
+    renderUsers();
+    expect(await screen.findByText("operador1")).toBeTruthy();
+    const botoes = screen.getAllByRole("button", { name: /desativar/i });
+    expect(botoes).toHaveLength(1);
+  });
+
+  it("desativar dispara PATCH is_active:false", async () => {
+    mockFetch();
+    renderUsers();
+    await screen.findByText("operador1");
+    await userEvent.click(screen.getAllByRole("button", { name: /desativar/i })[0]);
+    await waitFor(() => {
+      const chamadas = vi.mocked(fetch).mock.calls as unknown as [string, RequestInit][];
+      const patch = chamadas.find(([u, i]) => u === "/api/v1/users/2" && i.method === "PATCH");
+      expect(patch).toBeTruthy();
+      expect(JSON.parse(String(patch![1].body))).toEqual({ is_active: false });
+    });
+  });
+});
+```
+
+`web/src/pages/Dashboard.test.tsx`:
+
+```tsx
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import Dashboard from "./Dashboard";
+
+const DASH = {
+  devices: { total: 3, active: 2, with_snapshot: 1, by_comm_status: { unknown: 1, ok: 1, fail: 1 } },
+  per_device: [
+    {
+      device_id: 1,
+      name: "ne8000-01",
+      site_id: null,
+      site_name: null,
+      comm_status: "ok",
+      last_collected_at: null,
+      snapshot_age_seconds: null,
+      latest_snapshot: null,
+      active_job: null,
+    },
+  ],
+  bgp_sessions: { total: 4, active: 3, shutdown: 1 },
+  circuits: { total: 2, active: 1 },
+  vlans: { reserved: 5, freed: 0 },
+  ip_prefixes: { reserved: 7, freed: 0 },
+  recent_audit: [{ id: 1, type: "coleta", actor: "boss", details: {}, created_at: "2026-09-04T00:00:00Z" }],
+};
+
+describe("Dashboard", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("renderiza cards, per_device e auditoria recente", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url === "/api/v1/dashboard") {
+          return new Response(JSON.stringify(DASH), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        return new Response(null, { status: 404 });
+      }),
+    );
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <Dashboard />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText("ne8000-01")).toBeTruthy();
+    expect(screen.getByText(/^3 equipamentos$/)).toBeTruthy();
+    expect(screen.getByText("coleta")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Reconciliar" })).toBeTruthy();
+  });
+});
+```
 
 Run: `cd web && npx vitest run`.
 Expected: PASS.
