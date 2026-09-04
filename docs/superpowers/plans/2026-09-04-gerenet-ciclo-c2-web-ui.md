@@ -1234,24 +1234,121 @@ describe("Login", () => {
 ```
 (ajustar o mock do fetch conforme o client — retorno `Promise<Response>`; o `Response` do jsdom é o do Node 20+, ok.)
 
+`web/src/auth/auth-context.test.tsx` (testes do RequireAuth/RequireAdmin — só matchers base, sem jest-dom; o mock retorna 401 quando role é `null`):
+
+```tsx
+import { render, screen } from "@testing-library/react";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { AuthProvider, RequireAdmin, RequireAuth } from "./auth-context";
+
+const ME_BASE = {
+  id: 1,
+  username: "boss",
+  is_active: true,
+  last_login_at: null,
+  created_at: "2026-09-04T00:00:00Z",
+};
+
+function mockMe(role: string | null) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url !== "/api/v1/auth/me") return new Response(null, { status: 404 });
+      if (role === null) return new Response(null, { status: 401 });
+      return new Response(JSON.stringify({ ...ME_BASE, role }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }),
+  );
+}
+
+describe("RequireAuth/RequireAdmin", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("sem sessão, RequireAuth redireciona para /login", async () => {
+    mockMe(null);
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AuthProvider>
+          <Routes>
+            <Route path="/" element={<RequireAuth><div>seguro</div></RequireAuth>} />
+            <Route path="/login" element={<div>pagina-login</div>} />
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("pagina-login")).toBeTruthy();
+    expect(screen.queryByText("seguro")).toBeNull();
+  });
+
+  it("RequireAdmin bloqueia perfil não administrador", async () => {
+    mockMe("operador");
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <RequireAdmin><div>conteudo-admin</div></RequireAdmin>
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("Somente administradores.")).toBeTruthy();
+    expect(screen.queryByText("conteudo-admin")).toBeNull();
+  });
+
+  it("RequireAdmin libera administrador", async () => {
+    mockMe("administrador");
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <RequireAdmin><div>conteudo-admin</div></RequireAdmin>
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("conteudo-admin")).toBeTruthy();
+  });
+});
+```
+
 - [ ] **Step 3: `App.tsx` com rotas + setOnUnauthorized em `main.tsx`**
 
-`web/src/main.tsx` — adicionar após `const queryClient = ...`:
+`web/src/main.tsx` — arquivo completo (o scaffold da T2 tem `queryClient` + `BrowserRouter` + `App` em `react-dom.createRoot`; o `setOnUnauthorized` precisa do `navigate`, então vive em componente dentro do Router e o `AuthProvider` envolve tudo):
+
 ```tsx
-import { setOnUnauthorized } from "./api/client";
+import React from "react";
+import ReactDOM from "react-dom/client";
+import { useEffect } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { BrowserRouter, useNavigate } from "react-router-dom";
 import { AuthProvider } from "./auth/auth-context";
-import { useNavigate } from "react-router-dom";
+import { setOnUnauthorized } from "./api/client";
 import App from "./App";
-...
-export default function Root() {
+import "./styles/global.css";
+
+const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 1 } } });
+
+function Raiz() {
   const navigate = useNavigate();
   useEffect(() => {
     setOnUnauthorized(() => navigate("/login", { replace: true }));
   }, [navigate]);
   return <App />;
 }
+
+ReactDOM.createRoot(document.getElementById("root")!).render(
+  <React.StrictMode>
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <AuthProvider>
+          <Raiz />
+        </AuthProvider>
+      </BrowserRouter>
+    </QueryClientProvider>
+  </React.StrictMode>,
+);
 ```
-(mover o provider de contexto de navegação: `setOnUnauthorized` precisa do `navigate` — fica em componente dentro do Router.)
 
 `web/src/App.tsx`:
 ```tsx
@@ -1297,7 +1394,7 @@ export default function Dashboard() {
 ```bash
 cd web && npx vitest run
 ```
-Expected: PASS (client.test + Login.test).
+Expected: PASS (client.test + Login.test + auth-context.test).
 
 ```bash
 git add web/src
