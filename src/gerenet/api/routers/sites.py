@@ -3,13 +3,13 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from gerenet.api.deps import require_api_key
+from gerenet.api.deps import Actor, require_actor
 from gerenet.db import get_db
 from gerenet.domain.schemas import SiteCreate, SiteOut, SiteUpdate
 from gerenet.domain.services import sites as svc
 from gerenet.domain.services.errors import ConflictError, NotFoundError, ValidationError
 
-router = APIRouter(prefix="/api/v1/sites", tags=["sites"], dependencies=[Depends(require_api_key)])
+router = APIRouter(prefix="/api/v1/sites", tags=["sites"], dependencies=[Depends(require_actor)])
 
 SessionDep = Annotated[Session, Depends(get_db)]
 
@@ -20,9 +20,11 @@ def listar(session: SessionDep, include_disabled: bool = False) -> list:
 
 
 @router.post("", response_model=SiteOut, status_code=201)
-def criar(data: SiteCreate, session: SessionDep) -> object:
+def criar(
+    data: SiteCreate, session: SessionDep, actor: Annotated[Actor, Depends(require_actor)]
+) -> object:
     try:
-        return svc.create_site(session, data, actor="api")
+        return svc.create_site(session, data, actor=actor.nome)
     except ConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValidationError as exc:
@@ -38,15 +40,20 @@ def detalhar(site_id: int, session: SessionDep) -> object:
 
 
 @router.patch("/{site_id}", response_model=SiteOut)
-def atualizar(site_id: int, data: SiteUpdate, session: SessionDep) -> object:
+def atualizar(
+    site_id: int,
+    data: SiteUpdate,
+    session: SessionDep,
+    actor: Annotated[Actor, Depends(require_actor)],
+) -> object:
     """PATCH único (ruling 1): desativação pura vira site.disable; o resto vira update."""
     mudancas = data.model_dump(exclude_unset=True)
     if "admin_status" in mudancas and mudancas["admin_status"] is None:
         raise HTTPException(status_code=400, detail="admin_status não aceita null.")
     try:
         if mudancas == {"admin_status": False}:
-            return svc.disable_site(session, site_id, actor="api")
-        return svc.update_site(session, site_id, data, actor="api")
+            return svc.disable_site(session, site_id, actor=actor.nome)
+        return svc.update_site(session, site_id, data, actor=actor.nome)
     except ConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except NotFoundError as exc:

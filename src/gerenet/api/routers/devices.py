@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from gerenet.api.deps import require_api_key
+from gerenet.api.deps import Actor, require_actor
 from gerenet.db import get_db
 from gerenet.domain import models
 from gerenet.domain.audit import registrar
@@ -14,9 +14,9 @@ from gerenet.domain.services.errors import ConflictError, NotFoundError, Validat
 from gerenet.domain.validators import asn_valido
 from gerenet.worker.tasks import enqueue_collect
 
-router = APIRouter(prefix="/api/v1/devices", tags=["devices"], dependencies=[Depends(require_api_key)])
+router = APIRouter(prefix="/api/v1/devices", tags=["devices"], dependencies=[Depends(require_actor)])
 
-snap_router = APIRouter(prefix="/api/v1/snapshots", tags=["snapshots"], dependencies=[Depends(require_api_key)])
+snap_router = APIRouter(prefix="/api/v1/snapshots", tags=["snapshots"], dependencies=[Depends(require_actor)])
 
 SessionDep = Annotated[Session, Depends(get_db)]
 
@@ -27,9 +27,11 @@ def listar(session: SessionDep, include_disabled: bool = False) -> list:
 
 
 @router.post("", response_model=DeviceOut, status_code=201)
-def criar(data: DeviceCreate, session: SessionDep) -> object:
+def criar(
+    data: DeviceCreate, session: SessionDep, actor: Annotated[Actor, Depends(require_actor)]
+) -> object:
     try:
-        return svc.create_device(session, data, actor="api")
+        return svc.create_device(session, data, actor=actor.nome)
     except ConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValidationError as exc:
@@ -45,7 +47,12 @@ def detalhar(device_id: int, session: SessionDep) -> object:
 
 
 @router.patch("/{device_id}", response_model=DeviceOut)
-def atualizar(device_id: int, data: DeviceUpdate, session: SessionDep) -> object:
+def atualizar(
+    device_id: int,
+    data: DeviceUpdate,
+    session: SessionDep,
+    actor: Annotated[Actor, Depends(require_actor)],
+) -> object:
     try:
         dev = svc.get_device(session, device_id)
     except NotFoundError as exc:
@@ -65,7 +72,7 @@ def atualizar(device_id: int, data: DeviceUpdate, session: SessionDep) -> object
         registrar(
             session,
             tipo="device.disable" if desativando else "device.update",
-            ator="api",
+            ator=actor.nome,
             objeto="device",
             objeto_id=dev.id,
             antes=antes,
@@ -84,12 +91,14 @@ def atualizar(device_id: int, data: DeviceUpdate, session: SessionDep) -> object
 
 
 @router.post("/{device_id}/collect", status_code=202)
-def coletar(device_id: int, session: SessionDep) -> dict:
+def coletar(
+    device_id: int, session: SessionDep, actor: Annotated[Actor, Depends(require_actor)]
+) -> dict:
     try:
         svc.get_device(session, device_id)
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    resultado = enqueue_collect(device_id, actor="api", origin="api")
+    resultado = enqueue_collect(device_id, actor=actor.nome, origin="api")
     if not resultado["queued"]:
         raise HTTPException(status_code=409, detail=resultado["message"])
     return resultado

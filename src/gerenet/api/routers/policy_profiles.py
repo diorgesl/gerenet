@@ -3,7 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from gerenet.api.deps import require_api_key
+from gerenet.api.deps import require_actor
 from gerenet.db import get_db
 from gerenet.domain.schemas import PolicyProfileOut
 from gerenet.domain.services import policy_profiles as svc
@@ -12,7 +12,7 @@ from gerenet.domain.services.errors import ValidationError
 router = APIRouter(
     prefix="/api/v1/policy-profiles",
     tags=["policy-profiles"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_actor)],
 )
 
 SessionDep = Annotated[Session, Depends(get_db)]

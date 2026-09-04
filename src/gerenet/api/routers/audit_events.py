@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from gerenet.api.deps import require_api_key
+from gerenet.api.deps import require_actor
 from gerenet.db import get_db
 from gerenet.domain import models
 from gerenet.domain.schemas import AuditEventOut
@@ -12,7 +12,7 @@ from gerenet.domain.schemas import AuditEventOut
 router = APIRouter(
     prefix="/api/v1/audit-events",
     tags=["audit-events"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_actor)],
 )
 
 SessionDep = Annotated[Session, Depends(get_db)]
