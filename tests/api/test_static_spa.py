@@ -6,8 +6,6 @@ from fastapi.testclient import TestClient
 from gerenet.api.main import create_app
 from gerenet.config import Settings, set_settings
 
-DIST = Path("/tmp/gerenet-spa-fake")
-
 
 @pytest.fixture()
 def client(tmp_path: Path) -> TestClient:
@@ -82,13 +80,12 @@ def test_rota_real_vence_para_get(client: TestClient) -> None:
     assert resp.status_code == 401
 
 
-def test_sem_build_nao_registra(tmp_path: Path) -> None:
+def test_sem_build_nao_registra(static_dir_inexistente: Path) -> None:
     # O app só é criado depois de set_settings: o fallback é registrado em
     # create_app(), então mudar settings depois do TestClient não tem efeito.
     # Subdiretório NUNCA criado — sem build, nada é montado.
-    dist_inexistente = tmp_path / "dist-inexistente"
     set_settings(
-        Settings(api_key="teste-key", static_dir=dist_inexistente, _env_file=None)
+        Settings(api_key="teste-key", static_dir=static_dir_inexistente, _env_file=None)
     )
     resp = TestClient(create_app()).get("/")
     assert resp.status_code == 404

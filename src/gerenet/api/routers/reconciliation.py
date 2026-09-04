@@ -5,7 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from gerenet.api.deps import require_api_key
+from gerenet.api.deps import require_actor
 from gerenet.automation.reconcile import reconciliar_device
 from gerenet.automation.render import render_desejado
 from gerenet.db import get_db
@@ -14,11 +14,11 @@ from gerenet.domain.services.errors import NotFoundError, ValidationError
 
 router = APIRouter(
     prefix="/api/v1/reconciliation", tags=["reconciliation"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_actor)],
 )
 config_router = APIRouter(
     prefix="/api/v1/devices", tags=["devices"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_actor)],
 )
 
 SessionDep = Annotated[Session, Depends(get_db)]
