@@ -2037,7 +2037,6 @@ def listar(include_disabled: bool = typer.Option(False, "--all", help="Inclui de
 from gerenet.cli import users as cli_users
 ...
 app.add_typer(cli_users.app, name="users", help="Usuários e perfis.")
-```"
 ```
 
 - [ ] **Step 5: Rodar os testes**
