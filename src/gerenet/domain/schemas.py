@@ -427,3 +427,19 @@ class UserOut(BaseModel):
     is_active: bool
     last_login_at: datetime | None
     created_at: datetime
+
+
+class UserCreateIn(BaseModel):
+    username: str = Field(min_length=1, max_length=64)
+    password: str  # sem limite pydantic: validação de tamanho é do serviço (padrão asn do OrganizationCreate)
+    role: str  # validação em serviço (padrão do catálogo; 422 só no formato)
+
+
+class UserUpdateIn(BaseModel):
+    username: str | None = Field(default=None, min_length=1, max_length=64)
+    role: str | None = None
+    is_active: bool | None = None
+
+
+class UserPasswordIn(BaseModel):
+    password: str
