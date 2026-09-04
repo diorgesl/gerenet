@@ -2601,15 +2601,249 @@ export default function Sites() {
 }
 ```
 
-- [ ] **Step 4: `Organizations.tsx` e `Contacts.tsx`**
+- [ ] **Step 4: `Organizations.tsx` e `Contacts.tsx`** (mesmo padrão de `Sites.tsx`)
 
-Mesmo padrão exato de `Sites.tsx`, com os campos:
+`web/src/pages/Organizations.tsx`:
 
-- **Organizations** — form: `name` (obrigatório), `legal_name`, `kind` (select `downstream`/`parceiro`, default `downstream`), `asn` (number), `irr_as_set`, `notes`; tabela: name, legal_name, kind (badge), asn, irr_as_set, notes.
-- **Contacts** — form: `organization_id` (select: name das organizações — `useOrganizations()`), `name` (obrigatório), `email`, `phone`, `kind` (select `tecnico`/`noc`/`admin`); tabela: name, email, phone, kind, organização.
-- A tela de Organizations usa `useOrganizationCriar`/`useOrganizationAtualizar`; a de Contacts usa `useContactCriar`/`useContactAtualizar`.
+```tsx
+import { useState } from "react";
+import type { FormEvent } from "react";
+import { useAuth } from "@/auth/auth-context";
+import { ApiError } from "@/api/client";
+import { useOrganizationAtualizar, useOrganizationCriar, useOrganizations } from "@/api/hooks";
+import { DataTable } from "@/components/DataTable";
+import { FormField } from "@/components/FormField";
+import { StatusBadge } from "@/components/StatusBadge";
+import { PageHeader } from "@/components/PageHeader";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import type { OrganizationOut } from "@/api/types";
 
-Teste de referência (`web/src/pages/Sites.test.tsx` — os demais seguem igual):
+const FORM_VAZIO = { name: "", legal_name: "", kind: "downstream" as "downstream" | "parceiro", asn: "", irr_as_set: "", notes: "" };
+
+export default function Organizations() {
+  const { podeEscrever } = useAuth();
+  const { data, isLoading } = useOrganizations();
+  const criar = useOrganizationCriar();
+  const atualizar = useOrganizationAtualizar();
+  const [form, setForm] = useState(FORM_VAZIO);
+  const [desativando, setDesativando] = useState<OrganizationOut | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    setErro(null);
+    try {
+      await criar.mutateAsync({
+        name: form.name,
+        legal_name: form.legal_name || null,
+        kind: form.kind,
+        asn: form.asn === "" ? null : Number(form.asn),
+        irr_as_set: form.irr_as_set || null,
+        notes: form.notes || null,
+      });
+      setForm({ ...FORM_VAZIO });
+    } catch (err) {
+      setErro(err instanceof ApiError ? err.message : "Falha ao cadastrar organização.");
+    }
+  }
+
+  return (
+    <main>
+      <PageHeader titulo="Organizações" />
+      {podeEscrever && (
+        <form onSubmit={onSubmit} className="grid-form">
+          <FormField label="Nome *">
+            <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+          </FormField>
+          <FormField label="Razão social">
+            <input value={form.legal_name} onChange={(e) => setForm({ ...form, legal_name: e.target.value })} />
+          </FormField>
+          <FormField label="Tipo">
+            <select
+              value={form.kind}
+              onChange={(e) => setForm({ ...form, kind: e.target.value as "downstream" | "parceiro" })}
+            >
+              <option value="downstream">downstream</option>
+              <option value="parceiro">parceiro</option>
+            </select>
+          </FormField>
+          <FormField label="ASN">
+            <input type="number" value={form.asn} onChange={(e) => setForm({ ...form, asn: e.target.value })} />
+          </FormField>
+          <FormField label="IRR AS-SET">
+            <input value={form.irr_as_set} onChange={(e) => setForm({ ...form, irr_as_set: e.target.value })} />
+          </FormField>
+          <FormField label="Observações">
+            <input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+          </FormField>
+          <button className="primary" type="submit" disabled={criar.isPending}>
+            Cadastrar
+          </button>
+        </form>
+      )}
+      {erro && <p role="alert">{erro}</p>}
+      <DataTable<OrganizationOut>
+        colunas={[
+          { key: "name", title: "Nome" },
+          { key: "legal_name", title: "Razão social", render: (o) => o.legal_name ?? "—" },
+          { key: "kind", title: "Tipo", render: (o) => <StatusBadge estado={o.kind} /> },
+          { key: "asn", title: "ASN", render: (o) => o.asn ?? "—" },
+          { key: "irr_as_set", title: "IRR AS-SET", render: (o) => o.irr_as_set ?? "—" },
+          { key: "notes", title: "Observações", render: (o) => o.notes ?? "—" },
+        ]}
+        linhas={data ?? []}
+        carregando={isLoading}
+        acoes={(o) =>
+          podeEscrever && o.admin_status ? (
+            <button type="button" onClick={() => setDesativando(o)}>
+              Desativar
+            </button>
+          ) : null
+        }
+      />
+      <ConfirmDialog
+        aberto={desativando !== null}
+        titulo={`Desativar ${desativando?.name ?? ""}?`}
+        mensagem="A organização fica indisponível para novos cadastros; o registro permanece."
+        onConfirmar={() => {
+          if (desativando)
+            void atualizar.mutateAsync({ id: desativando.id, admin_status: false }).then(() => setDesativando(null));
+        }}
+        onCancelar={() => setDesativando(null)}
+        confirmando={atualizar.isPending}
+      />
+    </main>
+  );
+}
+```
+
+`web/src/pages/Contacts.tsx`:
+
+```tsx
+import { useState } from "react";
+import type { FormEvent } from "react";
+import { useAuth } from "@/auth/auth-context";
+import { ApiError } from "@/api/client";
+import { useContactAtualizar, useContactCriar, useContacts, useOrganizations } from "@/api/hooks";
+import { DataTable } from "@/components/DataTable";
+import { FormField } from "@/components/FormField";
+import { PageHeader } from "@/components/PageHeader";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import type { ContactOut } from "@/api/types";
+
+const FORM_VAZIO = { organization_id: "", name: "", email: "", phone: "", kind: "tecnico" as "tecnico" | "noc" | "admin" };
+
+export default function Contacts() {
+  const { podeEscrever } = useAuth();
+  const { data, isLoading } = useContacts();
+  const { data: organizations } = useOrganizations();
+  const criar = useContactCriar();
+  const atualizar = useContactAtualizar();
+  const [form, setForm] = useState(FORM_VAZIO);
+  const [desativando, setDesativando] = useState<ContactOut | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    setErro(null);
+    if (form.organization_id === "") return;
+    try {
+      await criar.mutateAsync({
+        organization_id: Number(form.organization_id),
+        name: form.name,
+        email: form.email || null,
+        phone: form.phone || null,
+        kind: form.kind,
+      });
+      setForm({ ...FORM_VAZIO });
+    } catch (err) {
+      setErro(err instanceof ApiError ? err.message : "Falha ao cadastrar contato.");
+    }
+  }
+
+  return (
+    <main>
+      <PageHeader titulo="Contatos" />
+      {podeEscrever && (
+        <form onSubmit={onSubmit} className="grid-form">
+          <FormField label="Organização *">
+            <select
+              value={form.organization_id}
+              onChange={(e) => setForm({ ...form, organization_id: e.target.value })}
+              required
+            >
+              <option value="">—</option>
+              {(organizations ?? []).map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.name}
+                </option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Nome *">
+            <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+          </FormField>
+          <FormField label="E-mail">
+            <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+          </FormField>
+          <FormField label="Telefone">
+            <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+          </FormField>
+          <FormField label="Tipo">
+            <select
+              value={form.kind}
+              onChange={(e) => setForm({ ...form, kind: e.target.value as "tecnico" | "noc" | "admin" })}
+            >
+              <option value="tecnico">tecnico</option>
+              <option value="noc">noc</option>
+              <option value="admin">admin</option>
+            </select>
+          </FormField>
+          <button className="primary" type="submit" disabled={criar.isPending}>
+            Cadastrar
+          </button>
+        </form>
+      )}
+      {erro && <p role="alert">{erro}</p>}
+      <DataTable<ContactOut>
+        colunas={[
+          { key: "name", title: "Nome" },
+          { key: "email", title: "E-mail", render: (c) => c.email ?? "—" },
+          { key: "phone", title: "Telefone", render: (c) => c.phone ?? "—" },
+          { key: "kind", title: "Tipo" },
+          {
+            key: "organization",
+            title: "Organização",
+            render: (c) => organizations?.find((o) => o.id === c.organization_id)?.name ?? "—",
+          },
+        ]}
+        linhas={data ?? []}
+        carregando={isLoading}
+        acoes={(c) =>
+          podeEscrever && c.admin_status ? (
+            <button type="button" onClick={() => setDesativando(c)}>
+              Desativar
+            </button>
+          ) : null
+        }
+      />
+      <ConfirmDialog
+        aberto={desativando !== null}
+        titulo={`Desativar ${desativando?.name ?? ""}?`}
+        mensagem="O contato fica indisponível para novos cadastros; o registro permanece."
+        onConfirmar={() => {
+          if (desativando)
+            void atualizar.mutateAsync({ id: desativando.id, admin_status: false }).then(() => setDesativando(null));
+        }}
+        onCancelar={() => setDesativando(null)}
+        confirmando={atualizar.isPending}
+      />
+    </main>
+  );
+}
+```
+
+Teste de referência (`web/src/pages/Sites.test.tsx`; o de `Devices.test.tsx` está no Step 6 — inclui o fluxo coletar→`/jobs`):
 
 ```tsx
 import { render, screen, waitFor } from "@testing-library/react";
@@ -2676,9 +2910,212 @@ describe("Sites", () => {
 
 > `getByLabelText` depende do `FormField` transformar o label child de modo que o `htmlFor`/wrapper associe ao input. Se o ajuste for necessário, usar `screen.getByPlaceholderText`? Não — preferir `FormField` com `<label>` envolvendo o campo (associação implícita, como no Login.tsx).
 
-- [ ] **Step 5: rotas em `App.tsx`** (padrão `/devices`, `/sites`, `/organizations`, `/contacts` todas sob `RequireAuth`).
+- [ ] **Step 5: rotas em `App.tsx`** (substituir o arquivo inteiro):
 
-- [ ] **Step 6: testes + `npm run build` + lint** e commit.
+```tsx
+import { Route, Routes } from "react-router-dom";
+import Login from "@/auth/Login";
+import { RequireAdmin, RequireAuth } from "@/auth/auth-context";
+import Contacts from "@/pages/Contacts";
+import Dashboard from "@/pages/Dashboard";
+import Devices from "@/pages/Devices";
+import Organizations from "@/pages/Organizations";
+import Sites from "@/pages/Sites";
+import Users from "@/pages/Users";
+
+export default function App() {
+  return (
+    <Routes>
+      <Route path="/login" element={<Login />} />
+      <Route
+        path="/"
+        element={
+          <RequireAuth>
+            <Dashboard />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/users"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <Users />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/devices"
+        element={
+          <RequireAuth>
+            <Devices />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/sites"
+        element={
+          <RequireAuth>
+            <Sites />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/organizations"
+        element={
+          <RequireAuth>
+            <Organizations />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/contacts"
+        element={
+          <RequireAuth>
+            <Contacts />
+          </RequireAuth>
+        }
+      />
+    </Routes>
+  );
+}
+```
+
+- [ ] **Step 6: `Devices.test.tsx` + testes + build + lint + commit**
+
+`web/src/pages/Devices.test.tsx`:
+
+```tsx
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import Devices from "./Devices";
+import { AuthProvider } from "@/auth/auth-context";
+
+const equipamentos = [
+  {
+    id: 1,
+    name: "ne8000-01",
+    management_address: "10.99.0.1",
+    site_id: 1,
+    role: "core",
+    comm_status: "ok",
+    last_collected_at: null,
+    admin_status: true,
+  },
+];
+const sites = [{ id: 1, name: "SPO", city: null, uf: "SP", p2p_ipv4_block: null, p2p_ipv6_base: null, admin_status: true }];
+
+beforeAll(() => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        if (url === "/api/v1/devices/1/collect") {
+          return new Response(JSON.stringify({ queued: true, message: "Coleta enfileirada.", job_id: "rq-abc" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        const body = JSON.parse(String(init.body));
+        return new Response(
+          JSON.stringify({ id: 2, ...body, site_id: null, comm_status: "unknown", last_collected_at: null, admin_status: true }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url === "/api/v1/devices/1" && init?.method === "PATCH") {
+        return new Response(JSON.stringify({ ...equipamentos[0], admin_status: false }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url === "/api/v1/devices") {
+        return new Response(JSON.stringify(equipamentos), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url === "/api/v1/sites") {
+        return new Response(JSON.stringify(sites), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url === "/api/v1/auth/me") {
+        return new Response(
+          JSON.stringify({ id: 1, username: "boss", role: "administrador", is_active: true, last_login_at: null, created_at: "" }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return new Response("null", { status: 404 });
+    }),
+  );
+});
+
+function renderDevices() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={["/devices"]}>
+        <AuthProvider>
+          <Routes>
+            <Route path="/devices" element={<Devices />} />
+            <Route path="/jobs" element={<div>jobs-page</div>} />
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+describe("Devices", () => {
+  it("lista equipamentos e cadastra novo pela API", async () => {
+    renderDevices();
+    expect(await screen.findByText("ne8000-01")).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Nome *"), "ne8000-02");
+    await userEvent.type(screen.getByLabelText("IP de gestão *"), "10.99.0.2");
+    await userEvent.click(screen.getByRole("button", { name: "Cadastrar" }));
+    await waitFor(() => {
+      const chamadas = vi.mocked(fetch).mock.calls;
+      expect(chamadas.some((c) => c[1]?.method === "POST" && String(c[1]?.body).includes("ne8000-02"))).toBe(true);
+    });
+  });
+
+  it("Coletar agora dispara a coleta e navega para /jobs com o device", async () => {
+    renderDevices();
+    await screen.findByText("ne8000-01");
+    await userEvent.click(screen.getByRole("button", { name: "Coletar agora" }));
+    expect(await screen.findByText("jobs-page")).toBeInTheDocument();
+    await waitFor(() => {
+      const chamadas = vi.mocked(fetch).mock.calls;
+      expect(chamadas.some((c) => c[0] === "/api/v1/devices/1/collect" && c[1]?.method === "POST")).toBe(true);
+    });
+  });
+
+  it("Desativar pede confirmação e envia PATCH admin_status:false", async () => {
+    renderDevices();
+    await screen.findByText("ne8000-01");
+    await userEvent.click(screen.getByRole("button", { name: "Desativar" }));
+    expect(screen.getByRole("dialog", { name: "Desativar ne8000-01?" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Confirmar" }));
+    await waitFor(() => {
+      const chamadas = vi.mocked(fetch).mock.calls;
+      const patch = chamadas.find((c) => c[0] === "/api/v1/devices/1" && c[1]?.method === "PATCH");
+      expect(patch).toBeTruthy();
+      expect(JSON.parse(String(patch![1].body))).toEqual({ admin_status: false });
+    });
+  });
+});
+```
+
+Run (na raiz do repositório):
+
+```bash
+cd web && npx vitest run src/pages/Devices.test.tsx src/pages/Sites.test.tsx
+cd web && npm run build
+cd web && npx eslint src
+```
+
+Expected: 5 testes PASS, build sem erro, lint limpo.
+
+- [ ] **Step 7: commit**
 
 ```bash
 git add web/src/pages web/src/App.tsx web/src/api/hooks.ts
