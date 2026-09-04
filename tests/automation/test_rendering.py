@@ -289,6 +289,10 @@ def test_render_duas_sessoes_mesmo_asn_afi_deduplica_definicoes(db_session: Sess
     assert resultado.texto.count("ip ip-prefix IP-PFX-DEFAULT-V4 index 10 permit 0.0.0.0/0") == 1
     assert resultado.texto.count("route-policy RP-64512-IMPORT-V4 permit node 10") == 1
     assert resultado.texto.count("route-policy RP-64512-EXPORT-V4 permit node 10") == 1
+    # Ruling R5: as referências dos 2 peers não somem com o dedup — cada
+    # sessão (mesmo ASN+AFI) referencia a RP dela, uma por peer
+    assert resultado.texto.count("import route-policy RP-64512-IMPORT-V4") == 2
+    assert resultado.texto.count("export route-policy RP-64512-EXPORT-V4") == 2
     # a definição fica anotada com a 1ª sessão que a gerou
     import_bloco = next(b for b in resultado.blocos if b.tipo == "route_policy_import")
     assert import_bloco.objeto == "session"

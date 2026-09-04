@@ -167,43 +167,47 @@ def _bloco_sub(session: Session, circuito: models.Circuit, device_id: int) -> li
 
 def _apensa_definicao(
     blocos: list[BlocoRender],
-    definidas: dict[tuple[str, str], BlocoRender],
+    definidas: dict[tuple[str, str], set[str]],
     bloco: BlocoRender,
     chave: tuple[str, str],
 ) -> None:
     """Dedup de blocos de DEFINIÇÃO (prefix-list / route-policy) por (tipo, nome).
 
-    Texto idêntico para o mesmo nome ⇒ emite 1× (fica o bloco da 1ª sessão,
-    com o objeto_id dela). O mesmo nome com texto DIVERGENTE não colapsa —
-    os blocos convivem no render (dívida de design §25.4/§25.5, ciclo C) e a
-    comparação de conteúdo da T5 acusa a maioria. Sem "definidas", duas
-    sessões do mesmo ASN+AFI no mesmo device duplicariam as definições.
+    Registra os TEXTOS já apensados por chave: texto já visto para a chave ⇒
+    emite 1× (fica o 1º bloco, com o objeto_id da 1ª sessão); texto NOVO para
+    a chave ⇒ apensa — mesmo nome com textos divergentes convive no render
+    (dívida §25.4/§25.5, ciclo C) e a comparação de conteúdo da T5 acusa a
+    maioria. Comparar com TODOS os textos (set) evita emitir o mesmo texto
+    2× quando três sessões produzem A, B, B: o B apensa uma vez e a segunda
+    ocorrência é reconhecida. O dedup poupa só a DEFINICAO — a referência no
+    peer vem do critério de definição de _bloco_import/_bloco_export (R5).
     """
-    existente = definidas.get(chave)
-    if existente is not None:
-        if existente.texto == bloco.texto:
-            return
-        blocos.append(bloco)
+    textos = definidas.setdefault(chave, set())
+    if bloco.texto in textos:
         return
-    definidas[chave] = bloco
+    textos.add(bloco.texto)
     blocos.append(bloco)
 
 
 def _bloco_import(
     session: Session, circuito: models.Circuit, sessao: models.BgpSession,
-    definidas: dict[tuple[str, str], BlocoRender],
-) -> list[BlocoRender]:
+    definidas: dict[tuple[str, str], set[str]],
+) -> tuple[list[BlocoRender], str | None]:
     """Prefix-list + RP de importação a partir das autorizações da org (§6.4).
 
     Só quando há autorização ativa da família; sem autorização, a sessão não
-    tem filtro de importação para renderizar (ruling 4).
+    tem filtro de importação para renderizar (ruling 4). Devolve também o
+    nome da RP (§25.4 — sempre estável para ASN+AFI) quando a definição
+    EXISTE para a sessão, mesmo que o bloco não seja apensado (dedup): o
+    peer referencia a RP pela existência da definição, não pelo estado do
+    dedup (ruling R5).
     """
     autorizadas = [
         a for a in list_authorizations(session, organization_id=circuito.organization_id)
         if a.family == sessao.afi
     ]
     if not autorizadas:
-        return []
+        return [], None
     afi = sessao.afi
     asn_par = sessao.asn_remote
     nome_pfx = naming.pfx_in(asn_par, afi)
@@ -232,7 +236,7 @@ def _bloco_import(
         BlocoRender("route_policy_import", "session", sessao.id, comandos),
         ("route_policy_import", nome_rp),
     )
-    return blocos
+    return blocos, nome_rp
 
 
 def _bloco_rp_export(sessao: models.BgpSession, nome_rp: str, afi: str, lista: str | None) -> BlocoRender:
@@ -254,15 +258,19 @@ def _bloco_divida(texto: str) -> BlocoRender:
 
 def _bloco_export(
     session: Session, sessao: models.BgpSession,
-    definidas: dict[tuple[str, str], BlocoRender],
-) -> list[BlocoRender]:
+    definidas: dict[tuple[str, str], set[str]],
+) -> tuple[list[BlocoRender], str | None]:
     """RP de exportação pelo produto §6.5/§25.5 (ruling 5); dívidas viram comentário.
 
-    Prefix-list/RP de exportação passam pelo dedup de definições (texto
-    idêntico ⇒ 1 bloco; divergente ⇒ convivem, dívida §25.4/§25.5 ciclo C).
+    Prefix-list/RP de exportação passam pelo dedup de definições (texto já
+    visto ⇒ 1 bloco; divergente ⇒ convivem, dívida §25.4/§25.5 ciclo C).
+    Devolve também o nome da RP (§25.4) quando a definição EXISTE para a
+    sessão (produto renderizável: full / default / cdn|personalizado com
+    prefixos) — o peer referencia pelo critério de definição, independente
+    do dedup (ruling R5); dívida (comentário) não gera referência.
     """
     if sessao.export_profile_id is None:
-        return []
+        return [], None
     perfil = get_policy_profile(session, sessao.export_profile_id)
     afi = sessao.afi
     nome_rp = naming.rp_export(sessao.asn_remote, afi)
@@ -273,7 +281,7 @@ def _bloco_export(
             blocos, definidas, _bloco_rp_export(sessao, nome_rp, afi, None),
             ("route_policy_export", nome_rp),
         )
-        return blocos
+        return blocos, nome_rp
     if produto == "default":
         lista = naming.pfx_produto("default", afi)
         prefixo = "0.0.0.0/0" if afi == "ipv4" else "::/0"
@@ -290,12 +298,12 @@ def _bloco_export(
             blocos, definidas, _bloco_rp_export(sessao, nome_rp, afi, lista),
             ("route_policy_export", nome_rp),
         )
-        return blocos
+        return blocos, nome_rp
     if produto in ("cdn", "personalizado"):
         if not perfil.prefixes:
             return [_bloco_divida(
                 f"produto '{produto}': sem prefixos cadastrados para montar a lista de anúncio."
-            )]
+            )], None
         lista = naming.pfx_produto(produto, afi)
         entradas = [
             {"index": 10 * (i + 1), "prefixo": p} for i, p in enumerate(perfil.prefixes)
@@ -313,11 +321,11 @@ def _bloco_export(
             blocos, definidas, _bloco_rp_export(sessao, nome_rp, afi, lista),
             ("route_policy_export", nome_rp),
         )
-        return blocos
-    # default_internas / parcial
+        return blocos, nome_rp
+    # default_internas / parcial — dívida documentada (sem definição de RP)
     return [_bloco_divida(
         f"produto '{produto}': rotas internas ainda não renderizáveis (ciclo C/F5)."
-    )]
+    )], None
 
 
 def _bloco_peer(sessao: models.BgpSession, rp_import: str | None, rp_export: str | None) -> BlocoRender:
@@ -356,7 +364,7 @@ def render_desejado(session: Session, device_id: int) -> RenderResult:
                 circuitos[sessao.circuit_id] = circ
 
     blocos: list[BlocoRender] = []
-    definidas: dict[tuple[str, str], BlocoRender] = {}
+    definidas: dict[tuple[str, str], set[str]] = {}
     for circ_id in sorted(circuitos):
         circuito = circuitos[circ_id]
         blocos.extend(_bloco_sub(session, circuito, device_id))
@@ -364,20 +372,13 @@ def render_desejado(session: Session, device_id: int) -> RenderResult:
             list_sessions(session, circuit_id=circ_id, device_id=device_id),
             key=lambda s: (s.afi, s.remote_address),
         ):
-            import_blocos = _bloco_import(session, circuito, sessao, definidas)
-            export_blocos = _bloco_export(session, sessao, definidas)
+            # As referências do peer vêm do critério de definição (nome §25.4),
+            # NUNCA do que sobrou dos blocos: com dedup, a 2ª sessão da mesma
+            # definição não apensa bloco, mas a referência continua (Ruling R5).
+            import_blocos, rp_import = _bloco_import(session, circuito, sessao, definidas)
+            export_blocos, rp_export = _bloco_export(session, sessao, definidas)
             blocos.extend(import_blocos)
             blocos.extend(export_blocos)
-            rp_import = next(
-                (b.comandos[0].removeprefix("route-policy ").split()[0] for b in import_blocos
-                 if b.tipo == "route_policy_import"),
-                None,
-            )
-            rp_export = next(
-                (b.comandos[0].removeprefix("route-policy ").split()[0] for b in export_blocos
-                 if b.tipo == "route_policy_export"),
-                None,
-            )
             blocos.append(_bloco_peer(sessao, rp_import, rp_export))
     blocos.sort(key=lambda b: TIPO_ORDEM[b.tipo])  # estável: preserva ordem intra-tipo
     texto = "\n".join(b.texto for b in blocos)
