@@ -4731,7 +4731,7 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 > (b) `useSnapshots(deviceId)` sem `enabled` dispararia `GET /devices/0/snapshots` quando o componente monta sem device; recebeu `enabled: deviceId > 0`.
 > (c) `Object.entries` inclui chaves com valor `undefined` — `new URLSearchParams([["snapshot_id", "undefined"]])` mandaria `snapshot_id=undefined` ao backend (422). Os dois novos hooks filtram `undefined` antes de montar a query string.
 
-- [ ] **Step 1: hooks** (append no `web/src/api/hooks.ts`; alterar a linha de import de tipos para incluir os novos: `import type { DashboardOut, DesiredConfigOut, JobRunOut, ReconcileOut, SnapshotOut, UserOut } from "./types";`)
+- [ ] **Step 1: hooks** (append no `web/src/api/hooks.ts`; adicionar `DesiredConfigOut`, `ReconcileOut` e `SnapshotOut` ao bloco de import de tipos ordenado existente — não substituir; ele já lista outros tipos em uso)
 
 ```ts
 export function useSnapshots(deviceId: number) {
@@ -5416,6 +5416,9 @@ describe("Snapshots", () => {
   it("lista snapshots, seleciona e mostra a árvore colapsável com paginação", async () => {
     mockFetch();
     renderSnapshots();
+    // espera o useDevices resolver antes do selectOptions (a opção não existe
+    // enquanto a lista está carregando — `Value "1" not found` de forma determinística)
+    await screen.findByRole("option", { name: "ne8000-01" });
     await userEvent.selectOptions(screen.getByLabelText("Equipamento"), "1");
     expect(await screen.findByText("11")).toBeInTheDocument();
     await userEvent.click(screen.getAllByRole("button", { name: "Ver" })[1]);
@@ -5465,7 +5468,7 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 > **Correção de defeito do rascunho (ruling da orquestração, compatível com o ruling da T3 e a implementação da T7):** o texto original dizia "POST collect → retorna `job_id` → navega para `/jobs/{id}` e faz poll". **Errado**: o `job_id` do `/collect` é o **uuid da fila RQ**, NÃO o `JobRun.id` (int) — a rota `/jobs/{id}` só aceita int; `Number(uuid)` = NaN → `useJobPoll` desabilitado → "Job não encontrado." A navegação correta (idêntica à da T7/Devices, e ao teste da T7) é para **`/jobs?device_id=<id>`** — a lista filtrida. Polling individual do JobRun não é possível no pós-coleta (JobRun só nasce na execução do runner) — wart de backend parkado como follow-up pós-ciclo (ver ledger T3).
 > Também: a T7 define `useDevices` (lista) mas **nenhum** `useDevice` (detalhe) — o Step 1 cria o hook.
 
-- [ ] **Step 1: `useDevice` em `web/src/api/hooks.ts`** (append; acrescentar `DeviceOut` à linha de import de tipos)
+- [ ] **Step 1: `useDevice` em `web/src/api/hooks.ts`** (append; adicionar `DeviceOut` ao bloco de import de tipos ordenado existente — não substituir)
 
 ```ts
 export function useDevice(id: number) {
