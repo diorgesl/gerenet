@@ -1445,13 +1445,27 @@ export function SeverityBadge({ severidade }: { severidade: string }) {
 }
 ```
 
-CSS (em `global.css`):
+CSS (appendar em `global.css`): além das classes abaixo, ajuste de tokens (fecha os minors de design da T2 — o `#fff` hardcoded e o contraste do accent no light): (a) em `:root`, adicionar `--text-on-accent: #fff;`; (b) em `button.primary`, trocar `color: #fff` por `color: var(--text-on-accent);`; (c) no bloco `@media (prefers-color-scheme: light)`, adicionar `--accent: #1f6feb;` (branco sobre `#1f6feb` ≈ 4.6:1 — AA).
+
 ```css
 .badge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 999px; font-size: 0.75rem; border: 1px solid var(--border); }
 .badge-ok { color: var(--ok); }
 .badge-fail, .badge-danger { color: var(--danger); }
 .badge-warn { color: var(--warn); }
 .badge-unknown { color: var(--unknown); }
+.field { display: flex; flex-direction: column; gap: 0.25rem; margin-bottom: 0.8rem; font-size: 0.9rem; }
+.field em { color: var(--danger); font-style: normal; font-size: 0.8rem; }
+.dialog-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); display: flex; align-items: center; justify-content: center; }
+.dialog { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 8px; padding: 1.2rem; max-width: 420px; width: 90%; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem; }
+.mono-block { position: relative; }
+.mono-block pre { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem; overflow-x: auto; white-space: pre-wrap; }
+.mono-block button { position: absolute; top: 0.5rem; right: 0.5rem; }
+.page-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+.page-header h1 { margin: 0; font-size: 1.3rem; }
+.login { max-width: 360px; margin: 15vh auto; padding: 1.5rem; }
+.login h1 { margin-top: 0; }
+.login form { display: flex; flex-direction: column; gap: 0.8rem; }
 ```
 
 - [ ] **Step 2: `DataTable`**
@@ -1631,6 +1645,8 @@ import { SeverityBadge } from "./SeverityBadge";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { TimeAgo } from "./TimeAgo";
 import { MonoCode } from "./MonoCode";
+import { FormField } from "./FormField";
+import { PageHeader } from "./PageHeader";
 
 describe("kit", () => {
   it("StatusBadge mapeia ok/success/ativo → badge-ok", () => {
@@ -1689,6 +1705,22 @@ describe("kit", () => {
     await userEvent.click(screen.getByRole("button", { name: "Copiar" }));
     expect(writeText).toHaveBeenCalledWith("display version");
     expect(screen.getByText("Copiado ✓")).toBeInTheDocument();
+  });
+
+  it("FormField mostra erro com role alert", () => {
+    render(
+      <FormField label="Nome" erro="Obrigatório.">
+        <input />
+      </FormField>,
+    );
+    expect(screen.getByText("Obrigatório.")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toBeTruthy();
+  });
+
+  it("PageHeader mostra título e ações", () => {
+    render(<PageHeader titulo="Devices" acoes={<button>Novo</button>} />);
+    expect(screen.getByRole("heading", { name: "Devices" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Novo" })).toBeTruthy();
   });
 });
 ```
