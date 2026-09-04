@@ -114,6 +114,9 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
 
 ## Estado do repositório
 
-- Nenhum código ainda; não há comandos de build/lint/test para executar — não inventá-los.
+- Já há código (ciclo A/C1): SoT + API FastAPI `/api/v1` + CLI Typer + worker RQ + pytest/ruff.
+  Comandos: `uv run pytest -q`, `uv run ruff check`, `uv run alembic upgrade head`,
+  `uv run uvicorn gerenet.api.main:create_app --factory` (dev). A interface web (ciclo C)
+  nasce no `web/` (C2) e é servida pelo próprio FastAPI.
 - Convenções previstas no `.gitignore`: Python com venv e pytest (`.venv/`, `.pytest_cache/`), deploy via Docker Compose em `deploy/` com `.env` ignorado, `config.yaml` local com segredos **fora do repositório**, logs em `logs/` ignorados.
 - `.claude/settings.local.json` contém token e aponta o harness para uma API externa: é arquivo local — não versionar nem alterar.
