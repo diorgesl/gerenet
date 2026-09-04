@@ -16,7 +16,7 @@
 - **Mensagens de erro idênticas às da API** (não re-escrever): 401 login → "Usuário ou senha inválidos."; 401 geral → "Chave de API ausente ou inválida." (o front redireciona e **não** exibe essa); 403 "Usuário desativado."; 403 "Perfil Visualizador permite apenas leitura."; 403 "Somente administradores."; 403 "Não é possível alterar a própria conta."; falha de rede → "Servidor indisponível. Tente novamente."; 404 "Job não encontrado."; 422 → erros por campo (mensagens do `detail` da validação, em PT-BR).
 - **Nenhum segredo no browser**: senha nunca persiste em `localStorage`/`sessionStorage` nem em log; token só no cookie HttpOnly; payload de login nunca é logado. O front **nunca** recebe a API key.
 - **Sem framework de UI de terceiros**: componentes próprios (DataTable, FormField, StatusBadge, SeverityBadge, ConfirmDialog), CSS vars tokenizadas, dark-first com light por `prefers-color-scheme`.
-- **Dependências node pinadas** (exatas, sem `^` em versão congelada usada nos testes): `react@18`, `react-dom@18`, `react-router-dom@7`, `@tanstack/react-query@5`; dev: `vite@5`, `typescript@5`, `vitest@2`, `jsdom@2x`, `@testing-library/react@16`, `@testing-library/jest-dom@6`, `@testing-library/user-event@14`, `@playwright/test@1`, `eslint@9`, `typescript-eslint@8`, `prettier@3`.
+- **Dependências node** (resolvidas na T2 — se divergirem do brief, a T2 é a autoridade e o desvio fica documentado): `react@18`, `react-dom@18`, `react-router-dom@7`, `@tanstack/react-query@5`; dev: `vite@6` (resolvido 6.4.x), `typescript@5` (5.9.x), **`vitest@3`** (o brief pedia 2.1.x, mas vitest 2 peer-depende de vite 5 e quebra a augmentação de config sob TS 5.9 — bump aprovado no review da T2), `jsdom@25`, `@testing-library/react@16`, `@testing-library/jest-dom@6`, `@testing-library/user-event@14`, `@playwright/test@1`, `eslint@9`, `@eslint/js`, `typescript-eslint@8`, `prettier@3`, `@types/node`.
 - **`.gitignore`**: adicionar `web/node_modules/`, `web/dist/`, `web/playwright-report/`, `web/test-results/`. O `.claude/settings.local.json` e `config.yaml` permanecem fora do git (já ignorados) — **nunca** alterar/comitar.
 - **Testes backend**: pytest verde sem editar testes existentes (a troca `require_api_key` → `require_actor` nos routers do B2 deve manter API key funcionando — os testes atuais usam a chave).
 - **Commits**: mensagem em PT-BR, escopo (feat/fix/chore/docs), trailer `Co-Authored-By: Claude Code <noreply@anthropic.com>`.
@@ -280,11 +280,12 @@ Expected: PASS.
 
 - [ ] **Step 7: Suíte completa + commit**
 
+> **NÃO rodar `alembic upgrade head`** — a cadeia já está aplicada no `gerenet_test_c2` (baseline) e o alembic lê `GERENET_DATABASE_URL` (default = banco dev `gerenet`; ver memória `gerenet-alembic-env-url`). Só pytest roda nesta task.
+
 ```bash
-GERENET_TEST_DATABASE_URL=postgresql+psycopg://gerenet:gerenet@localhost:5432/gerenet_test_c2 uv run alembic upgrade head
 GERENET_TEST_DATABASE_URL=postgresql+psycopg://gerenet:gerenet@localhost:5432/gerenet_test_c2 uv run pytest -q
 ```
-Expected: 349+ passed (nenhum existente quebrado — a troca preserva X-Api-Key).
+Expected: 355 passed (349 baseline + 6 novos; nenhum existente quebrado — a troca preserva X-Api-Key).
 
 ```bash
 git add -A
