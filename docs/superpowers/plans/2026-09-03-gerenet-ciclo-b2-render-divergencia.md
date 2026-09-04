@@ -665,8 +665,8 @@ Criar `tests/automation/test_templates.py`:
 from gerenet.automation.render import _render_template
 
 
-def _render(nome: str, **ctx: object) -> str:
-    return _render_template(nome, ctx)
+def _render(template: str, **ctx: object) -> str:
+    return _render_template(template, ctx)
 
 
 def test_subinterface_dual() -> None:
