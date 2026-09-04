@@ -411,3 +411,19 @@ class ReconcileOut(BaseModel):
     aviso: str | None
     gerado_em: datetime
     items: list[ReconcileItemOut]
+
+
+class UserLoginIn(BaseModel):
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=128)
+
+
+class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    username: str
+    role: str
+    is_active: bool
+    last_login_at: datetime | None
+    created_at: datetime
