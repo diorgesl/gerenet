@@ -9,12 +9,15 @@ import type {
   CommunityOut,
   ContactOut,
   DashboardOut,
+  DesiredConfigOut,
   DeviceOut,
   JobRunOut,
   OrganizationOut,
   PolicyProfileOut,
   PrefixAuthorizationOut,
+  ReconcileOut,
   SiteOut,
+  SnapshotOut,
   UserOut,
 } from "./types";
 
@@ -324,3 +327,60 @@ export const useAuditEvents = (filtros?: { tipo?: string; objeto?: string; objet
       return apiFetch<AuditEventOut[]>(`/api/v1/audit-events${suf}`);
     },
   });
+
+export function useSnapshots(deviceId: number) {
+  return useQuery({
+    queryKey: ["snapshots", deviceId],
+    queryFn: () => apiFetch<SnapshotOut[]>(`/api/v1/devices/${deviceId}/snapshots`),
+    enabled: deviceId > 0,
+  });
+}
+export function useSnapshot(id: number) {
+  return useQuery({
+    queryKey: ["snapshot", id], // distinta de ["snapshots", deviceId] (ver correção a)
+    queryFn: () => apiFetch<SnapshotOut>(`/api/v1/snapshots/${id}`),
+    enabled: id > 0,
+  });
+}
+export function useDesiredConfig(deviceId: number | null) {
+  return useQuery({
+    queryKey: ["desired", deviceId],
+    queryFn: () => apiFetch<DesiredConfigOut>(`/api/v1/devices/${deviceId}/desired-config`),
+    enabled: Boolean(deviceId),
+    retry: false,
+  });
+}
+export function useReconcile(filtro: { device_id?: number; snapshot_id?: number }) {
+  return useQuery({
+    queryKey: ["reconcile", filtro],
+    queryFn: () =>
+      apiFetch<ReconcileOut>(
+        `/api/v1/reconciliation?${new URLSearchParams(
+          Object.entries(filtro)
+            .filter(([, v]) => v !== undefined)
+            .map(([k, v]) => [k, String(v)] as [string, string]),
+        ).toString()}`,
+      ),
+    enabled: Number(filtro.device_id ?? filtro.snapshot_id) > 0,
+    retry: false,
+  });
+}
+export function useJobs(filtros: {
+  device_id?: number;
+  status?: string;
+  kind?: string;
+  limit?: number;
+  offset?: number;
+}) {
+  return useQuery({
+    queryKey: ["jobs", filtros],
+    queryFn: () =>
+      apiFetch<JobRunOut[]>(
+        `/api/v1/jobs?${new URLSearchParams(
+          Object.entries(filtros)
+            .filter(([, v]) => v !== undefined)
+            .map(([k, v]) => [k, String(v)] as [string, string]),
+        ).toString()}`,
+      ),
+  });
+}

@@ -9,11 +9,16 @@ import Circuits from "@/pages/Circuits";
 import Communities from "@/pages/Communities";
 import Contacts from "@/pages/Contacts";
 import Dashboard from "@/pages/Dashboard";
+import DesiredConfig from "@/pages/DesiredConfig";
 import Devices from "@/pages/Devices";
+import JobDetail from "@/pages/JobDetail";
+import Jobs from "@/pages/Jobs";
 import Organizations from "@/pages/Organizations";
 import PolicyProfiles from "@/pages/PolicyProfiles";
 import PrefixAuthorizations from "@/pages/PrefixAuthorizations";
+import Reconcile from "@/pages/Reconcile";
 import Sites from "@/pages/Sites";
+import Snapshots from "@/pages/Snapshots";
 import Users from "@/pages/Users";
 
 export default function App() {
@@ -106,6 +111,11 @@ export default function App() {
       <Route path="/communities" element={<RequireAuth><Communities /></RequireAuth>} />
       <Route path="/prefix-authorizations" element={<RequireAuth><PrefixAuthorizations /></RequireAuth>} />
       <Route path="/audit-events" element={<RequireAuth><AuditEvents /></RequireAuth>} />
+      <Route path="/snapshots" element={<RequireAuth><Snapshots /></RequireAuth>} />
+      <Route path="/desired-config" element={<RequireAuth><DesiredConfig /></RequireAuth>} />
+      <Route path="/reconcile" element={<RequireAuth><Reconcile /></RequireAuth>} />
+      <Route path="/jobs" element={<RequireAuth><Jobs /></RequireAuth>} />
+      <Route path="/jobs/:id" element={<RequireAuth><JobDetail /></RequireAuth>} />
     </Routes>
   );
 }
