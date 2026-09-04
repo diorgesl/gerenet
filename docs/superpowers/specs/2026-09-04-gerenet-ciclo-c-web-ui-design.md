@@ -85,7 +85,7 @@ avançados; servidor MCP das ferramentas (arco de integrações).
 | coluna | tipo | regra |
 |---|---|---|
 | id | Integer PK | — |
-| username | String(64), unique, NOT NULL | criado em lowercase; sem normalização silenciosa |
+| username | String(64), unique, NOT NULL | case-sensitive, como digitado — sem normalização no create nem no login |
 | password_hash | String(255), NOT NULL | `scrypt$N$r$p$salt_hex$key_hex` (constantes N=16384, r=8, p=1) |
 | role | Enum `user_role` (visualizador/operador/aprovador/executor/administrador), NOT NULL | exigido em todo create |
 | is_active | Boolean, default true | desativação nunca é exclusão (§14.1) |
