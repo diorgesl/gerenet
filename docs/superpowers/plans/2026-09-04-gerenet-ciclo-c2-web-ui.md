@@ -5653,12 +5653,12 @@ export default function DeviceDetail() {
     <main>
       <PageHeader titulo={device.name} acoes={<Link to="/devices">← Voltar</Link>} />
       <ul>
-        <li>Endereço de gestão: {device.management_address}</li>
-        <li>Site: {siteNome ?? "—"}</li>
-        <li>Função: {device.role ?? "—"}</li>
-        <li>Modelo: {device.model ?? "—"} · Família: {device.family ?? "—"}</li>
-        <li>Versão VRP: {device.vrp_version ?? "—"}</li>
-        <li>ASN: {device.asn ?? "—"}</li>
+        <li>Endereço de gestão: <span>{device.management_address}</span></li>
+        <li>Site: <span>{siteNome ?? "—"}</span></li>
+        <li>Função: <span>{device.role ?? "—"}</span></li>
+        <li>Modelo: <span>{device.model ?? "—"}</span> · Família: <span>{device.family ?? "—"}</span></li>
+        <li>Versão VRP: <span>{device.vrp_version ?? "—"}</span></li>
+        <li>ASN: <span>{device.asn ?? "—"}</span></li>
         <li>Comunicação: <StatusBadge estado={device.comm_status} /></li>
         <li>Situação: <StatusBadge estado={device.admin_status ? "ativo" : "inativo"} /></li>
         <li>Última coleta: <TimeAgo iso={device.last_collected_at} /></li>
@@ -5696,6 +5696,8 @@ export default function DeviceDetail() {
   );
 }
 ```
+
+> **Correção de defeito do rascunho (ruling da orquestração):** os valores deste `<ul>` são envolvidos em `<span>` (uniforme). Motivo: `getByText` da @testing-library compara `getNodeText` — a concatenação dos filhos diretos que são text nodes; `<li>ASN: {device.asn ?? "—"}</li>` vira `"ASN: 65001"` e a asserção `getByText("65001")` do teste (Step 5) falha de forma determinística (`Unable to find an element with the text: 65001`). Com `<span>` o valor é nó textual direto do próprio elemento e casa default `exact: true` — o mesmo vale para todos os valores do `ul` (estrutura uniforme para o que estiver no teste). Não mexer nos `StatusBadge`/`TimeAgo` (elementos filhos, ignorados pelo getNodeText — não afetam).
 
 - [ ] **Step 5: testes**
 
