@@ -369,6 +369,7 @@ def test_cli_sites_add_bloco_p2p_grande_da_erro() -> None:
     assert "Erro:" in invalido.output
 
 
+<<<<<<< HEAD
 def test_cli_circuits_add_edge_trunk(db_session: Session) -> None:
     site = create_site(db_session, SiteCreate(name="pop-cli-trunk"), actor="cli")
     org = create_organization(
@@ -505,3 +506,29 @@ def test_cli_render_config_e_reconcile(db_session: Session) -> None:
     faltante = runner.invoke(app, ["render-config", "nao-existe"])
     assert faltante.exit_code == 1
     assert "não encontrado" in faltante.output
+def test_cli_users_create_list_set_password() -> None:
+    r = runner.invoke(
+        app,
+        ["users", "create", "boss", "--role", "administrador"],
+        input="senha-super-8\nsenha-super-8\n",
+    )
+    assert r.exit_code == 0, r.output
+    assert "boss" in r.output
+
+    lista = runner.invoke(app, ["users", "list"])
+    assert lista.exit_code == 0
+    assert "boss" in lista.output and "administrador" in lista.output
+
+    trocar = runner.invoke(app, ["users", "set-password", "boss"], input="outra-super-8\noutra-super-8\n")
+    assert trocar.exit_code == 0, trocar.output
+
+    sem_senha = runner.invoke(app, ["users", "create", "fraco", "--role", "operador"], input="curta\ncurta\n")
+    assert sem_senha.exit_code == 1
+    assert "Erro:" in sem_senha.output
+
+    role_bad = runner.invoke(
+        app, ["users", "create", "nao", "--role", "root"], input="senha-super-8\nsenha-super-8\n"
+    )
+    assert role_bad.exit_code == 1
+    assert "Erro:" in role_bad.output
+>>>>>>> 5cf904a (feat(cli): gerenet users create|set-password|list)
