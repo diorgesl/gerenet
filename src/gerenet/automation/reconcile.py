@@ -44,7 +44,7 @@ def _item(tipo: str, severidade: str, esperado: str, encontrado: str, acao: str)
 
 
 def _estado_efetivo(valor: str | None) -> bool:
-    """True quando o valor NÃO indica down (up, up(s), administratively down, etc.)."""
+    """True quando o valor NÃO indica down (up, up(s); valores como down/*down/administratively down dão False)."""
     return valor is not None and "down" not in str(valor).lower()
 
 
