@@ -1,0 +1,10 @@
+Value Required nome (\S+)
+Value endereco (\S+)
+Value phy (\S+)
+Value protocolo (\S+)
+Value vpn (\S+)
+
+Start
+  ^\s*The number of interface .*$$
+  ^\s*Interface\s+IP Address\/Mask\s+Physical\s+Protocol\s+VPN\s*$$
+  ^\s*${nome}\s+${endereco}\s+${phy}\s+${protocolo}\s+${vpn}\s*$$ -> Record

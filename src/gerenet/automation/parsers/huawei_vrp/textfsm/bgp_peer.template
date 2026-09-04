@@ -1,0 +1,14 @@
+Value Required peer (\S+)
+Value asn (\d+)
+Value estado (\S+)
+Value pref_rcv (\d+)
+Value up_down (\S+)
+
+Start
+  ^\s*BGP local router ID .*$$
+  ^\s*Local AS number .*$$
+  ^\s*Total number of peers .*$$
+  ^\s*Peer\s+V\s+AS\s+MsgRcvd\s+MsgSent\s+OutQ\s+Up\/Down\s+State\s+PrefRcv\s*$$ -> Tabela
+
+Tabela
+  ^\s+${peer}\s+\d+\s+${asn}\s+\d+\s+\d+\s+\d+\s+${up_down}\s+${estado}\s+${pref_rcv}\s*$$ -> Record

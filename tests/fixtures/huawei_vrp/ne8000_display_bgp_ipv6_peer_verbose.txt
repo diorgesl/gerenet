@@ -1,0 +1,67 @@
+         BGP Peer is 2001:DB8:8000:0:198:51:100:254,  remote AS 64531
+         Type: EBGP link
+         Peer's description: "UPSTREAM-v6"
+         BGP version 4, Remote router ID 198.51.100.247
+         Update-group ID: 7
+         BGP current state: Established, Up for 14d20h45m57s
+         BGP current event: RecvUpdate
+         BGP last state: OpenConfirm
+         BGP Peer Up count: 3
+         Received total routes: 252993
+         Received active routes total: 23
+         Advertised total routes: 32
+         Port: Local - 56337        Remote - 179
+         Configured: Connect-retry Time: 32 sec
+         Configured: Min Hold Time: 0 sec
+         Configured: Active Hold Time: 60 sec   Keepalive Time:20 sec
+         Received  : Active Hold Time: 240 sec
+         Negotiated: Active Hold Time: 60 sec   Keepalive Time:20 sec
+         Peer optional capabilities:
+         Peer supports bgp multi-protocol extension
+         Peer supports bgp route refresh capability
+         Peer supports bgp 4-byte-as capability
+         Graceful Restart Capability: advertised and received
+             Restart Timer Value received from Peer: 0 seconds
+             Address families preserved for peer in GR:
+         Address family IPv6 Unicast: advertised and received
+ Received: Total 23788694 messages
+                  Update messages                23715333
+                  Open messages                  1
+                  KeepAlive messages             73360
+                  Notification messages          0
+                  Refresh messages               0
+                  Capability messages            0
+ Sent: Total 74962 messages
+                  Update messages                46
+                  Open messages                  10
+                  KeepAlive messages             74906
+                  Notification messages          0
+                  Refresh messages               0
+                  Capability messages            0
+ Authentication type configured: None
+ Last keepalive received: 2026-09-03 16:01:32-04:00
+ Last keepalive sent    : 2026-09-03 16:01:41-04:00
+ Last update    received: 2026-09-03 16:01:42-04:00
+ Last update    sent    : 2026-09-01 16:28:21-04:00
+ No refresh received since peer has been configured
+ No refresh sent since peer has been configured
+ No capability received since peer has been configured
+ No capability sent since peer has been configured
+ Minimum route advertisement interval is 30 seconds
+ Optional capabilities:
+ Route refresh capability has been enabled
+ 4-byte-as capability has been enabled
+ Send community has been configured
+ Multi-hop ebgp has been enabled
+ Peer Preferred Value: 0
+ Routing policy configured:
+ No import update filter list
+ No export update filter list
+ No import prefix list
+ No export prefix list
+ No import route policy
+ No export route policy
+ No import distribute policy
+ No export distribute policy
+ Import route filter is: ASN64531-V6-IMPORT
+ Export route filter is: XPL-UPSTREAM-AS64531-V6-EXPORT(1)

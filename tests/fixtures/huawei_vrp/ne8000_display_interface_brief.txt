@@ -1,0 +1,49 @@
+PHY: Physical
+*down: administratively down
+^down: standby
+(l): loopback
+(s): spoofing
+(E): E-Trunk down
+(b): BFD down
+(B): Bit-error-detection down
+(e): ETHOAM down
+(d): Dampening Suppressed
+(p): port alarm down
+(ld): loop-detect trigger down
+(td): transceiver unmatch down
+(mf): mac-flapping blocked
+(c): CFM down
+(sd): STP instance discarding
+(D): DF backup down
+InUti/OutUti: input utility/output utility
+Interface                   PHY   Protocol  InUti OutUti   inErrors  outErrors
+100GE0/1/53(100M)           up    down      0.01%  0.01%          0          0
+40GE0/1/52                  down  down         0%     0%          0          0
+Eth-Trunk0                  down  down         0%     0%          0          0
+  GigabitEthernet0/1/2(10G) down  down         0%     0%          0          0
+  GigabitEthernet0/1/4(10G) down  down         0%     0%          0          0
+Eth-Trunk127                up    down     29.78% 29.78%          0          0
+  40GE0/1/48                up    up       29.45% 28.81%          0          0
+  40GE0/1/49                up    up       30.71% 29.79%          0          0
+  40GE0/1/50                up    up       29.26% 30.10%          0          0
+  40GE0/1/51                up    up       29.70% 30.43%          0          0
+Eth-Trunk127.400            up    up        0.16%  1.00%          0          0
+Eth-Trunk127.401            up    down      0.03%  0.33%          0          0
+Eth-Trunk127.582            *down down         0%     0%          0          0
+Eth-Trunk127.625            up    up        0.07%  0.72%          0          0
+Eth-Trunk127.642            *down down         0%     0%          0          0
+Eth-Trunk127.1500           up    up        2.99%  0.22%          0          0
+Eth-Trunk127.4024           up    up        0.02%     0%          0          0
+Eth-Trunk127.97653          up    down         0%     0%          0          0
+Eth-Trunk127.389998         up    up           0%     0%          0          0
+GigabitEthernet0/0/0        down  down         0%     0%          0          0
+GigabitEthernet0/1/0.1003(10G) down  down         0%     0%          0          0
+GigabitEthernet0/1/1.3009(10G) down  down         0%     0%          0          0
+GigabitEthernet0/1/9(10G)   *down down         0%     0%          0          0
+LoopBack0                   up    up(s)        0%     0%          0          0
+NULL0                       up    up(s)        0%     0%          0          0
+Nve1                        up    up           --     --          0          0
+Vbdif1004                   up    down         --     --          0          0
+Virtual-Ethernet0/1/100     up    down         0%     0%          0          0
+Virtual-Ethernet0/1/100.100 up    up           0%     0%          0          0
+Virtual-Template0           up    up(s)        0%     0%          0          0

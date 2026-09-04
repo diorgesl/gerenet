@@ -1,0 +1,12 @@
+Value Filldown nome (\S+)
+Value Filldown phy (\S+)
+Value Filldown protocolo (\S+)
+Value Filldown vpn (\S+)
+Value endereco_v6 (\S+)
+
+Start
+  ^\s*Interface\s+Physical\s+Protocol\s+VPN\s*$$ -> Grupo
+
+Grupo
+  ^\s*\[IPv6 Address\/Prefix Length\]\s+${endereco_v6}(\s+\[TENTATIVE\])?\s*$$ -> Record
+  ^\s*${nome}\s+${phy}\s+${protocolo}\s+${vpn}\s*$$ -> Continue

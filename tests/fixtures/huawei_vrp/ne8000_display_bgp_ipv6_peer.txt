@@ -1,0 +1,15 @@
+ BGP local router ID : 203.0.113.1
+ Local AS number : 64512
+ Total number of peers : 52                 Peers in established state : 27
+
+  Peer                             V          AS  MsgRcvd  MsgSent  OutQ  Up/Down       State  PrefRcv
+  100.110.0.110                    4       64540        0        0     0 0655h07m     Connect        0
+  2001:DB8:F247:FFF3::1            4       64515   104321   103159     0 0490h58m Established        0
+  2001:DB8:8000:0:198:51:100:254   4       64531 23787944    74957     0 0356h44m Established   253052
+  2001:DB8::3                     4       64512    46537 19612063     0 0655h06m Established       13
+  2001:DB8:1000::155:177:2        4      64525   785844  1155088     0 0655h06m Established        9
+  2001:DB8:1000::1100:73:2        4      64520   810346  1155318     0 0655h06m Established        1
+  2001:DB8:1000::1100:77:2        4      64520   810373  1154974     0 0655h06m Established        2
+  2001:DB8::250                   4       64522 10667740    46554     0 0221h45m Established   254697
+  FC00::2B6                        4      64544        0        0     0 0655h07m Idle(Admin)        0
+  FDFF::198:18:255:0               4       64528        0        0     0 0655h07m      Active        0
