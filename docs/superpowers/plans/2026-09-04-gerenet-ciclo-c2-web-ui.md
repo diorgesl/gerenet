@@ -4524,7 +4524,6 @@ import { useAuditEvents } from "@/api/hooks";
 import { DataTable } from "@/components/DataTable";
 import { TimeAgo } from "@/components/TimeAgo";
 import { PageHeader } from "@/components/PageHeader";
-import { MonoCode } from "@/components/MonoCode";
 import type { AuditEventOut } from "@/api/types";
 
 export default function AuditEvents() {
@@ -4657,7 +4656,7 @@ const EVENTOS = [
 beforeAll(() => {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (url: string) => {
+    vi.fn(async () => {
       return new Response(JSON.stringify(EVENTOS), { status: 200, headers: { "Content-Type": "application/json" } });
     }),
   );
