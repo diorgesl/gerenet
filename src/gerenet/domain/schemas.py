@@ -135,6 +135,7 @@ class CircuitCreate(BaseModel):
     p2p_v4_len: Literal[30, 31] = 31
     description: str | None = Field(default=None, max_length=255)
     notes: str | None = None
+    edge_trunk: str | None = Field(default=None, max_length=64)
 
 
 class CircuitUpdate(BaseModel):
@@ -154,6 +155,7 @@ class CircuitUpdate(BaseModel):
     p2p_v4_len: Literal[30, 31] | None = None
     description: str | None = Field(default=None, max_length=255)
     notes: str | None = None
+    edge_trunk: str | None = Field(default=None, max_length=64)
     admin_status: bool | None = None
 
 
@@ -275,6 +277,7 @@ class CircuitOut(BaseModel):
     p2p_v4_len: int
     description: str | None
     notes: str | None
+    edge_trunk: str | None
     admin_status: bool
 
 
@@ -366,3 +369,45 @@ class PrefixAuthorizationDisable(BaseModel):
 
 class BgpSessionPasswordIn(BaseModel):
     password: str = Field(min_length=1, max_length=128)
+
+
+class BgpSessionCommunityIn(BaseModel):
+    community_id: int
+
+
+class CommunityOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    notes: str | None = None
+
+
+class BlocoOut(BaseModel):
+    tipo: str
+    objeto: str
+    objeto_id: int
+    comandos: list[str]
+
+
+class DesiredConfigOut(BaseModel):
+    device_id: int
+    gerado_em: datetime
+    texto: str
+    blocos: list[BlocoOut]
+
+
+class ReconcileItemOut(BaseModel):
+    tipo: str
+    severidade: str
+    esperado: str
+    encontrado: str
+    acao: str
+
+
+class ReconcileOut(BaseModel):
+    device_id: int
+    snapshot_id: int | None
+    aviso: str | None
+    gerado_em: datetime
+    items: list[ReconcileItemOut]

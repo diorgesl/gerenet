@@ -339,15 +339,18 @@ def test_cli_autorizacoes_ciclo_de_vida(db_session: Session) -> None:
 def test_cli_policy_profiles_lista(db_session: Session) -> None:
     lista = runner.invoke(app, ["policy-profiles", "list"])
     assert lista.exit_code == 0
-    assert len(lista.output.strip().splitlines()) == 6  # seeds de exportação
+    linhas = lista.output.strip().splitlines()
+    assert len(linhas) == 7  # 6 export + somente-autorizadas (import, ciclo B)
+    assert any("somente-autorizadas" in linha for linha in linhas)
 
     so_export = runner.invoke(app, ["policy-profiles", "list", "--direction", "export"])
     assert so_export.exit_code == 0
-    assert so_export.output == lista.output
+    assert len(so_export.output.strip().splitlines()) == 6
 
     so_import = runner.invoke(app, ["policy-profiles", "list", "--direction", "import"])
     assert so_import.exit_code == 0
-    assert so_import.output.strip() == ""
+    assert "somente-autorizadas" in so_import.output
+    assert "cdn" not in so_import.output
 
     invalida = runner.invoke(app, ["policy-profiles", "list", "--direction", "foo"])
     assert invalida.exit_code == 1
@@ -364,3 +367,141 @@ def test_cli_sites_add_bloco_p2p_grande_da_erro() -> None:
     invalido = runner.invoke(app, ["sites", "add", "--name", "POP-BLOCO", "--p2p-ipv4-block", "x" * 65])
     assert invalido.exit_code == 1
     assert "Erro:" in invalido.output
+
+
+def test_cli_circuits_add_edge_trunk(db_session: Session) -> None:
+    site = create_site(db_session, SiteCreate(name="pop-cli-trunk"), actor="cli")
+    org = create_organization(
+        db_session, OrganizationCreate(name="Org Circulo Trunk", asn=64515), actor="cli"
+    )
+    sw = create_device(db_session, DeviceCreate(name="sw-trunk", management_address="10.8.3.2"), actor="cli")
+    ne = create_device(
+        db_session, DeviceCreate(name="ne-trunk", management_address="10.8.3.1", asn=64605), actor="cli"
+    )
+    for dev in (sw, ne):
+        link_device(db_session, site.id, dev.id, actor="cli")
+
+    add = runner.invoke(
+        app,
+        [
+            "circuits", "add",
+            "--code", "CIRC-TRUNK-CLI", "--organization-id", str(org.id),
+            "--site-id", str(site.id), "--access-device-id", str(sw.id),
+            "--access-port", "GE0/0/1", "--edge-device-id", str(ne.id),
+            "--edge-trunk", "Eth-Trunk127",
+        ],
+    )
+    assert add.exit_code == 0, add.output
+    circ_db = db_session.scalar(select(models.Circuit).where(models.Circuit.code == "CIRC-TRUNK-CLI"))
+    assert circ_db is not None and circ_db.edge_trunk == "Eth-Trunk127"
+
+
+def test_cli_communities_lista(db_session: Session) -> None:
+    lista = runner.invoke(app, ["communities", "list"])
+    assert lista.exit_code == 0, lista.output
+    assert "blackhole" in lista.output
+    assert "no-export" in lista.output
+
+
+def test_cli_bgp_sessions_community_add_remove(db_session: Session) -> None:
+    from sqlalchemy import select
+
+    from gerenet.domain import models
+
+    env = _ambiente_bgp(db_session)
+    circ = _circuito_cli(db_session, env, "CIRC-BGP-COM")
+    add = runner.invoke(
+        app,
+        [
+            "bgp-sessions", "add",
+            "--circuit-id", str(circ), "--device-id", str(env["ne_id"]),
+            "--afi", "ipv4",
+            "--local-address", "100.64.13.1", "--remote-address", "100.64.13.2",
+        ],
+    )
+    assert add.exit_code == 0, add.output
+
+    comunidade = db_session.scalar(
+        select(models.Community).where(models.Community.name == "blackhole")
+    )
+    assert comunidade is not None
+
+    associa = runner.invoke(app, ["bgp-sessions", "community", "add", "1", str(comunidade.id)])
+    assert associa.exit_code == 0, associa.output
+    assert "associada" in associa.output
+    vinculo = db_session.scalar(
+        select(models.BgpSessionCommunity).where(
+            models.BgpSessionCommunity.session_id == 1,
+            models.BgpSessionCommunity.community_id == comunidade.id,
+        )
+    )
+    assert vinculo is not None
+
+    remove = runner.invoke(app, ["bgp-sessions", "community", "remove", "1", comunidade.name])
+    assert remove.exit_code == 0, remove.output
+    assert "desassociada" in remove.output
+    assert db_session.scalar(
+        select(models.BgpSessionCommunity).where(
+            models.BgpSessionCommunity.session_id == 1,
+            models.BgpSessionCommunity.community_id == comunidade.id,
+        )
+    ) is None
+
+
+def test_cli_bgp_sessions_community_erros(db_session: Session) -> None:
+    env = _ambiente_bgp(db_session)
+    circ = _circuito_cli(db_session, env, "CIRC-BGP-COM-ERR")
+    add = runner.invoke(
+        app,
+        [
+            "bgp-sessions", "add",
+            "--circuit-id", str(circ), "--device-id", str(env["ne_id"]),
+            "--afi", "ipv4",
+            "--local-address", "100.64.15.1", "--remote-address", "100.64.15.2",
+        ],
+    )
+    assert add.exit_code == 0, add.output
+
+    sem_sessao = runner.invoke(app, ["bgp-sessions", "community", "add", "999", "blackhole"])
+    assert sem_sessao.exit_code == 1
+    assert "não encontrada" in sem_sessao.output
+
+    sem_sessao_rem = runner.invoke(app, ["bgp-sessions", "community", "remove", "999", "blackhole"])
+    assert sem_sessao_rem.exit_code == 1
+    assert "não encontrada" in sem_sessao_rem.output
+
+    sem_community = runner.invoke(app, ["bgp-sessions", "community", "add", "1", "9999"])
+    assert sem_community.exit_code == 1
+    assert "não encontrada" in sem_community.output
+
+    sem_community_rem = runner.invoke(app, ["bgp-sessions", "community", "remove", "1", "9999"])
+    assert sem_community_rem.exit_code == 1
+    assert "não encontrada" in sem_community_rem.output
+
+
+def test_cli_render_config_e_reconcile(db_session: Session) -> None:
+    env = _ambiente_bgp(db_session)
+    circ = _circuito_cli(db_session, env, "CIRC-BGP-REC")
+    add = runner.invoke(
+        app,
+        [
+            "bgp-sessions", "add",
+            "--circuit-id", str(circ), "--device-id", str(env["ne_id"]),
+            "--afi", "ipv4",
+            "--local-address", "100.64.14.1", "--remote-address", "100.64.14.2",
+        ],
+    )
+    assert add.exit_code == 0, add.output
+
+    render = runner.invoke(app, ["render-config", "ne-bgp-cli"])
+    assert render.exit_code == 0, render.output
+    assert "bgp 64610" in render.output  # asn do device do _ambiente_bgp
+    assert "peer 100.64.14.2 as-number 64513" in render.output  # org = ASN do par
+
+    rec = runner.invoke(app, ["reconcile", "ne-bgp-cli"])
+    assert rec.exit_code == 0, rec.output
+    assert "snapshot" in rec.output.lower()  # aviso orientando coleta
+
+    faltante = runner.invoke(app, ["render-config", "nao-existe"])
+    assert faltante.exit_code == 1
+    assert "não encontrado" in faltante.output

@@ -41,7 +41,7 @@ Toda task herda esta seção:
 9. **API**: `GET /api/v1/reconciliation` exige **exatamente um** de `device_id`/`snapshot_id` (nenhum/ambos ⇒ 400). `GET /api/v1/devices/{device_id}/desired-config` → 200 sempre que o device existe (blocos vazios ok); 404 device inexistente. `GET /api/v1/communities` read-only (padrão policy-profiles; listagem default inclui as desativadas? **não** — default = ativas; `include_disabled` via query). Associação: `POST /api/v1/bgp-sessions/{id}/communities` `{community_id}` → **200** `{session_id, community_id}` (idempotente); `DELETE …/communities/{community_id}` → **204** (idempotente); sessão/community inexistentes ⇒ 404. `BgpSessionOut` **não** ganha campo novo (evita quebrar contratos existentes).
 10. **CLI**: `gerenet communities list` (novo app); `gerenet bgp-sessions community add|remove <session_id> <community>` (comunidade por id **ou** nome); `gerenet render-config <device>` e `gerenet reconcile <device>` (device por id|nome) como **comandos top-level** registrados com `app.command(name=…)(fn)` no `cli/main.py`. Circuitos: o comando CLI `add` ganha `--edge-trunk` (não existe comando CLI de update; update é via API PATCH).
 11. **Seed**: migration única com `op.add_column('circuits', sa.Column('edge_trunk', sa.String(length=64), nullable=True))` + `insert into bgp_policy_profiles (name, label, direction, kind, admin_status) values ('somente-autorizadas', 'Somente rotas autorizadas', 'import', 'produto', true) on conflict do nothing` (padrão `b1a71e5e129b`). `down_revision = 'b1a71e5e129b'` (head). Downgrade: drop column + delete do seed.
-12. **Testes existentes quebrados pelo seed** (listagem default passa a ter 7 perfis): `tests/domain/test_policy_profiles_service.py`, `tests/api/test_policy_profiles_api.py::test_lista_catalogo_so_leitura`, `tests/cli/test_cli_smoke.py::test_cli_policy_profiles_lista` — corrigidos na T2 com código exato dado.
+12. **Testes existentes quebrados pelo seed** (listagem default passa a ter 7 perfis): `tests/domain/test_policy_profiles_service.py`, `tests/api/test_policy_profiles_api.py::test_lista_catalogo_so_leitura`, `tests/cli/test_cli_smoke.py::test_cli_policy_profiles_lista` — corrigidos na T2 com código exato dado. **E** `tests/domain/test_bgp_models.py::test_seeds_dos_catalogos_presentes` (4º arquivo; conjunto exato de 6 nomes + `all(d == "export")`) — corrigido na T2: set passa a incluir `somente-autorizadas` e a asserção de direções vira `set(...) == {"export", "import"}` (contrato de presença exata preservado).
 13. **`comentario` (dívida)**: linhas `# <texto>`; texto PT-BR citando produto/motivo (ex.: `# produto 'default_internas': rotas internas ainda não renderizáveis (ciclo C/F5)`); `objeto="session"`, `objeto_id=0`.
 
 ## File Structure
@@ -172,7 +172,7 @@ def _asn_valido(asn: int) -> str:
 def _afi_valida(afi: str) -> str:
     if afi not in _AFIS:
         raise ValidationError(f"Família inválida: {afi} (esperado ipv4 ou ipv6).")
-    return afi.upper()
+    return "V4" if afi == "ipv4" else "V6"
 
 
 def rp_import(asn: int, afi: str) -> str:
@@ -665,8 +665,8 @@ Criar `tests/automation/test_templates.py`:
 from gerenet.automation.render import _render_template
 
 
-def _render(nome: str, **ctx: object) -> str:
-    return _render_template(nome, ctx)
+def _render(template: str, **ctx: object) -> str:
+    return _render_template(template, ctx)
 
 
 def test_subinterface_dual() -> None:
@@ -2958,11 +2958,11 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 | Especificação | Onde está |
 |---|---|
 | §5.1 derivador de nomes (golden ASN 64500, bordas 1/2³²-1, ≤63) | T1 `test_naming.py` |
-| §5.2 5 templates atômicos | T3 `test_templates.py` (8 goldens) |
+| §5.2 5 templates atômicos | T3 `test_templates.py` (9 testes golden) |
 | §5.2 entrada completa, saída ordenada (§5.2 TIPO_ORDEM) e anotada | T4 `test_render_dual_completo_ordenado` |
 | §5.2 senha nunca emitida (só comentário com path) | T3 golden do peer + T4 `test_render_senha_vira_so_comentario` |
 | §5.2 idempotência (render 2×) | T4 `test_render_idempotente` |
-| §6 divergência read-only sem tabela nova | T5 `test_reconcile.py` (13 testes; um por tipo do §6 + sem-snapshot + desativada + parcial + outro device + mais recente) |
+| §6 divergência read-only sem tabela nova | T5 `test_reconcile.py` (17 testes; um por tipo do §6 + sem-snapshot + desativada + parcial + outro device + mais recente + produto em dívida) |
 | §6 snapshot ausente → aviso, sem erro | T5 + T6 (`test_reconciliation_200_com_aviso`) |
 | §6 itens `{tipo, severidade, esperado, encontrado, acao}` PT-BR | T5 dataclass + T6 `ReconcileItemOut` |
 | §7 migration única (edge_trunk nullable + seed import) | T2 (migration + upgrade/downgrade) |

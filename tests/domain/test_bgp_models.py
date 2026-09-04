@@ -68,9 +68,12 @@ def test_roundtrip_perfil_e_community(db_session: Session) -> None:
 
 
 def test_seeds_dos_catalogos_presentes(db_session: Session) -> None:
-    """Produtos §25.5 (exportação) e communities §25.6, inseridos pela migration."""
+    """Produtos §25.5 (exportação) e §3.6 (importação) e communities §25.6, inseridos pela migration."""
     nomes = set(db_session.scalars(select(models.PolicyProfile.name)).all())
-    assert nomes == {"default", "default_internas", "parcial", "full", "cdn", "personalizado"}
+    assert nomes == {
+        "default", "default_internas", "parcial", "full", "cdn", "personalizado",
+        "somente-autorizadas",
+    }
     rotulos = dict(
         db_session.execute(
             select(models.PolicyProfile.name, models.PolicyProfile.label)
@@ -82,9 +85,7 @@ def test_seeds_dos_catalogos_presentes(db_session: Session) -> None:
     assert rotulos["full"] == "Full routing"
     assert rotulos["cdn"] == "CDN"
     assert rotulos["personalizado"] == "Personalizado"
-    assert all(d == "export" for d in db_session.scalars(
-        select(models.PolicyProfile.direction)
-    ).all())
+    assert set(db_session.scalars(select(models.PolicyProfile.direction)).all()) == {"export", "import"}
     assert all(k == "produto" for k in db_session.scalars(
         select(models.PolicyProfile.kind)
     ).all())

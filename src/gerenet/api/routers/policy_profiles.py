@@ -22,7 +22,14 @@ SessionDep = Annotated[Session, Depends(get_db)]
 def listar(
     session: SessionDep, direction: str | None = None, include_disabled: bool = False
 ) -> list:
-    """Catálogo de produtos de roteamento — somente leitura (§6.5/§25.5)."""
+    """Catálogo read-only de produtos de roteamento (§6.5/§25.5).
+
+    Sem `direction`, lista os 6 produtos de exportação; o perfil
+    `somente-autorizadas` (importação), criado pelo seed do ciclo B (§8),
+    aparece com `direction=import`. A query `direction` aceita
+    export|import e filtra a listagem; nada neste endpoint altera o
+    equipamento.
+    """
     try:
         return svc.list_policy_profiles(
             session, direction=direction, include_disabled=include_disabled

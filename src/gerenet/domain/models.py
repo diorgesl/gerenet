@@ -226,6 +226,7 @@ class Circuit(Base):
     p2p_v4_len: Mapped[int] = mapped_column(Integer, default=31, nullable=False)  # /31 padrão, /30 opção
     description: Mapped[str | None] = mapped_column(String(255))
     notes: Mapped[str | None] = mapped_column(Text())
+    edge_trunk: Mapped[str | None] = mapped_column(String(64))  # trunk do edge com as subinterfaces (§25.18)
     admin_status: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

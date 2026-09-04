@@ -1,0 +1,9 @@
+route-policy {{ nome }} permit node 10
+{% if afi == 'ipv6' %}
+if-match ipv6 address prefix-list {{ lista }}
+{% else %}
+if-match ip-prefix {{ lista }}
+{% endif %}
+{% if local_preference %}
+apply local-preference {{ local_preference }}
+{% endif %}

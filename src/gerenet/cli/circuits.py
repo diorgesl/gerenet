@@ -34,6 +34,9 @@ def add(
     backup_edge_device_id: int | None = typer.Option(
         None, "--backup-edge-device-id", help="ID do edge de contingência."
     ),
+    edge_trunk: str | None = typer.Option(
+        None, "--edge-trunk", help="Trunk do edge que carrega as subinterfaces (ex.: Eth-Trunk127)."
+    ),
     stack: str = typer.Option("dual", help="ipv4, ipv6 ou dual."),
     vlan_mode: str = typer.Option("unica", "--vlan-mode", help="unica ou separada."),
     qinq: bool = typer.Option(False, "--qinq", help="Habilita QinQ."),
@@ -59,6 +62,7 @@ def add(
                     access_port=access_port,
                     edge_device_id=edge_device_id,
                     backup_edge_device_id=backup_edge_device_id,
+                    edge_trunk=edge_trunk,
                     stack=stack,
                     vlan_mode=vlan_mode,
                     qinq=qinq,

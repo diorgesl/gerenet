@@ -123,3 +123,21 @@ def test_update_circuito_audita_delta_somente_dos_campos_mudados(db_session: Ses
 def test_get_circuito_inexistente(db_session: Session) -> None:
     with pytest.raises(NotFoundError):
         get_circuit(db_session, 9999)
+
+
+def test_circuito_edge_trunk_no_cadastro_e_no_update(db_session: Session) -> None:
+    org_id, site_id, sw_id, ne_id, _ = _ambiente(db_session)
+    circ = create_circuit(
+        db_session, _circuito(site_id, org_id, sw_id, ne_id, code="CIRC-EDGE"),
+        actor="cli",
+    )
+    assert circ.edge_trunk is None
+    atual = update_circuit(db_session, circ.id, CircuitUpdate(edge_trunk="Eth-Trunk127"), actor="cli")
+    assert atual.edge_trunk == "Eth-Trunk127"
+
+    eventos = [
+        e for e in db_session.scalars(select(models.AuditEvent).order_by(models.AuditEvent.id))
+        if e.type.startswith("circuit.")
+    ]
+    assert [e.type for e in eventos] == ["circuit.create", "circuit.update"]
+    assert eventos[-1].details["depois"].get("edge_trunk") == "Eth-Trunk127"

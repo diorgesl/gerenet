@@ -1,0 +1,35 @@
+bgp {{ asn_local }}
+peer {{ peer }} as-number {{ asn_remote }}
+{% if descricao %}
+peer {{ peer }} description {{ descricao }}
+{% endif %}
+{% if has_password %}
+# password no Vault ({{ password_path }})
+{% endif %}
+{% if keepalive and holdtime %}
+peer {{ peer }} timer keepalive {{ keepalive }} hold {{ holdtime }}
+{% endif %}
+{% if graceful_restart %}
+peer {{ peer }} graceful-restart
+{% endif %}
+{% if bfd_enabled %}
+peer {{ peer }} bfd enable
+{% endif %}
+{% if shutdown %}
+peer {{ peer }} shutdown
+{% endif %}
+{% if afi == 'ipv6' %}
+ipv6-family unicast
+{% else %}
+ipv4-family unicast
+{% endif %}
+  peer {{ peer }} enable
+{% if rp_import %}
+  peer {{ peer }} import route-policy {{ rp_import }}
+{% endif %}
+{% if rp_export %}
+  peer {{ peer }} export route-policy {{ rp_export }}
+{% endif %}
+{% if maximum_prefix %}
+  peer {{ peer }} maximum-prefix {{ maximum_prefix }}{% if maximum_prefix_threshold %} {{ maximum_prefix_threshold }}{% endif %}
+{% endif %}

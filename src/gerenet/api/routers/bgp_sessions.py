@@ -7,6 +7,7 @@ from gerenet.api.deps import require_api_key
 from gerenet.config import get_settings
 from gerenet.db import get_db
 from gerenet.domain.schemas import (
+    BgpSessionCommunityIn,
     BgpSessionCreate,
     BgpSessionOut,
     BgpSessionPasswordIn,
@@ -90,3 +91,24 @@ def definir_senha(
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=f"Vault indisponível: {exc}.") from exc
     return svc.set_password(session, sessao.id, actor="api", path=caminho)
+
+
+@router.post("/{session_id}/communities", status_code=200)
+def associar_community(
+    session_id: int, data: BgpSessionCommunityIn, session: SessionDep
+) -> dict[str, int]:
+    """Associa uma community à sessão — idempotente (P2; spec §8)."""
+    try:
+        svc.add_community(session, session_id, data.community_id, actor="api")
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"session_id": session_id, "community_id": data.community_id}
+
+
+@router.delete("/{session_id}/communities/{community_id}", status_code=204)
+def desassociar_community(session_id: int, community_id: int, session: SessionDep) -> None:
+    """Desassocia uma community — idempotente (P2; spec §8)."""
+    try:
+        svc.remove_community(session, session_id, community_id, actor="api")
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc

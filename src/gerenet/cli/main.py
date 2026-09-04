@@ -4,12 +4,14 @@ from gerenet.cli import (
     bgp_sessions,
     circuits,
     collect,
+    communities,
     contacts,
     devices,
     hostkey,
     organizations,
     policy_profiles,
     prefix_authorizations,
+    reconcile,
     sites,
     snapshot,
     vault,
@@ -28,3 +30,6 @@ app.add_typer(hostkey.app, name="hostkey", help="Host keys dos equipamentos.")
 app.add_typer(vault.app, name="vault", help="Credenciais de automação no Vault.")
 app.add_typer(collect.app, name="collect", help="Coleta read-only.")
 app.add_typer(snapshot.app, name="snapshot", help="Snapshots de coleta.")
+app.add_typer(communities.app, name="communities", help="Communities BGP.")
+app.command(name="render-config")(reconcile.render_config)
+app.command(name="reconcile")(reconcile.reconcile)

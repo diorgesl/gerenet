@@ -186,3 +186,30 @@ def test_reserva_de_circuito_desativado_da_409(client: TestClient, db_session: S
     assert "desativado" in resp.json()["detail"]
 
     assert client.post("/api/v1/circuits/9999/reserve", headers=_auth()).status_code == 404
+
+
+def test_edge_trunk_aceito_no_post_e_patch(client: TestClient, db_session: Session) -> None:
+    env = _ambiente(db_session)
+    corpo = _corpo(env, "CIRC-TRUNK-API")
+    corpo["edge_trunk"] = "Eth-Trunk127"
+    criado = client.post("/api/v1/circuits", json=corpo, headers=_auth())
+    assert criado.status_code == 201, criado.text
+    assert criado.json()["edge_trunk"] == "Eth-Trunk127"
+
+    get_id = criado.json()["id"]
+    assert client.get(f"/api/v1/circuits/{get_id}", headers=_auth()).json()["edge_trunk"] == "Eth-Trunk127"
+
+    patch = client.patch(
+        f"/api/v1/circuits/{get_id}", json={"edge_trunk": "Eth-Trunk128"}, headers=_auth()
+    )
+    assert patch.status_code == 200
+    assert patch.json()["edge_trunk"] == "Eth-Trunk128"
+
+
+def test_edge_trunk_maior_que_64_da_422(client: TestClient, db_session: Session) -> None:
+    """Limite do VRP (§8): >64 chars é rejeitado na validação (422, não 500)."""
+    env = _ambiente(db_session)
+    corpo = _corpo(env, "CIRC-TRUNK-LONGO")
+    corpo["edge_trunk"] = "Eth-Trunk" + "9" * 56  # 65 chars no total
+    resp = client.post("/api/v1/circuits", json=corpo, headers=_auth())
+    assert resp.status_code == 422
