@@ -204,3 +204,12 @@ def test_edge_trunk_aceito_no_post_e_patch(client: TestClient, db_session: Sessi
     )
     assert patch.status_code == 200
     assert patch.json()["edge_trunk"] == "Eth-Trunk128"
+
+
+def test_edge_trunk_maior_que_64_da_422(client: TestClient, db_session: Session) -> None:
+    """Limite do VRP (§8): >64 chars é rejeitado na validação (422, não 500)."""
+    env = _ambiente(db_session)
+    corpo = _corpo(env, "CIRC-TRUNK-LONGO")
+    corpo["edge_trunk"] = "Eth-Trunk" + "9" * 56  # 65 chars no total
+    resp = client.post("/api/v1/circuits", json=corpo, headers=_auth())
+    assert resp.status_code == 422

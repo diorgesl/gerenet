@@ -43,6 +43,11 @@ def _item(tipo: str, severidade: str, esperado: str, encontrado: str, acao: str)
     )
 
 
+def _estado_efetivo(valor: str | None) -> bool:
+    """True quando o valor NÃO indica down (up, up(s), administratively down, etc.)."""
+    return valor is not None and "down" not in str(valor).lower()
+
+
 def _esperado_subinterfaces(blocos: list[BlocoRender]) -> dict[str, dict[str, list[str]]]:
     """Subinterfaces esperadas a partir dos blocos renderizados (ruling 7).
 
@@ -88,7 +93,7 @@ def reconciliar_device(
             .order_by(models.DeviceSnapshot.id.desc())
             .limit(1)
         ).first()
-    recursos = snap.resources if snap is not None else {}
+    recursos = (snap.resources or {}) if snap is not None else {}
     render = render_desejado(session, device_id)
     items: list[ReconcileItem] = []
     avisos: list[str] = []
@@ -133,7 +138,7 @@ def reconciliar_device(
                 ))
                 continue
             estado = f"{achada.get('phy')}/{achada.get('protocolo')}"
-            if achada.get("phy") != "up" or achada.get("protocolo") != "up":
+            if not _estado_efetivo(achada.get("phy")) or not _estado_efetivo(achada.get("protocolo")):
                 items.append(_item(
                     "subinterface.estado", "atencao", "up", estado,
                     "Verificar o estado físico/protocolo da subinterface.",
@@ -157,6 +162,11 @@ def reconciliar_device(
     if snap is not None and tem_peers:
         circuitos_reservados: dict[int, models.Circuit] = {}
         for sessao in list_sessions(session, device_id=device_id):
+            # reservado antes do peer.ausente: circuito sem trunk é aviso mesmo
+            # quando o peer não aparece no snapshot (M2 da revisão final)
+            circ = session.get(models.Circuit, sessao.circuit_id)
+            if circ is not None:
+                circuitos_reservados.setdefault(circ.id, circ)
             esperado = por_peer_encontrado.get((sessao.afi, sessao.remote_address))
             if esperado is None:
                 items.append(_item(
@@ -194,9 +204,6 @@ def reconciliar_device(
                             str(verbose.get(campo) or "—"),
                             "Filtro aplicado no equipamento diverge do renderizado (nomes §25.4).",
                         ))
-            circ = session.get(models.Circuit, sessao.circuit_id)
-            if circ is not None:
-                circuitos_reservados.setdefault(circ.id, circ)
 
         # circuito.sem_trunk: reservado (tem Vlan) + sessão ativa, sem edge_trunk
         if tem_interfaces:

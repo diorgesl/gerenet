@@ -357,6 +357,19 @@ def test_subinterface_estado_atencao(db_session: Session) -> None:
     assert itens[0].severidade == "atencao"
 
 
+def test_subinterface_up_s_nao_vira_estado(db_session: Session) -> None:
+    """`up(s)` (spoofing, spec §4.2) é estado legítimo — não gera item."""
+    from gerenet.automation.reconcile import reconciliar_device
+
+    env, _ = _ambiente_dual(db_session)
+    perfeito = _recursos_perfeitos(db_session, env)
+    perfeito["interfaces"][0]["phy"] = "up(s)"
+    _snapshot(db_session, env, **perfeito)
+    resultado = reconciliar_device(db_session, env["ne_id"])
+    assert [i.tipo for i in resultado.items] == []
+    assert resultado.aviso is None
+
+
 def test_pontas_v4_e_v6_critico(db_session: Session) -> None:
     from gerenet.automation.reconcile import reconciliar_device
 
@@ -397,6 +410,21 @@ def test_circuito_sem_trunk_vira_aviso(db_session: Session) -> None:
     assert itens[0].severidade == "aviso"
 
 
+def test_sem_trunk_com_peer_ausente_tambem_avisa(db_session: Session) -> None:
+    """Circuito reservado sem edge_trunk avisa mesmo quando o peer não aparece
+    no snapshot — o registro do circuito precede o continue de peer.ausente."""
+    from gerenet.automation.reconcile import reconciliar_device
+
+    env = _ambiente(db_session)
+    circ_id = _circuito_sem_trunk(db_session, env)
+    _sessao(db_session, env, circ_id, afi="ipv4")
+    _snapshot(db_session, env, bgp_peers=[])  # sem o peer no snapshot
+    itens = reconciliar_device(db_session, env["ne_id"]).items
+    assert [i.tipo for i in itens] == ["circuito.sem_trunk", "peer.ausente"]
+    assert next(i for i in itens if i.tipo == "circuito.sem_trunk").severidade == "aviso"
+    assert next(i for i in itens if i.tipo == "peer.ausente").severidade == "critica"
+
+
 def test_sessao_desativada_nao_gera_peer_ausente(db_session: Session) -> None:
     from gerenet.automation.reconcile import reconciliar_device
     from gerenet.domain.services.bgp_sessions import disable_session
@@ -408,6 +436,23 @@ def test_sessao_desativada_nao_gera_peer_ausente(db_session: Session) -> None:
     _snapshot(db_session, env)
     itens = reconciliar_device(db_session, env["ne_id"]).items
     assert itens == []  # sem sessões ativas, nada a comparar
+
+
+def test_snapshot_resources_nulo_nao_derruba(db_session: Session) -> None:
+    """Coluna JSON aceita NULL (row legado): recursos vira {} e o snap
+    parcial avisa em vez de TypeError no reconcile."""
+    from gerenet.automation.reconcile import reconciliar_device
+
+    env, _ = _ambiente_dual(db_session)
+    snap = models.DeviceSnapshot(
+        device_id=env["ne_id"], status="success", resources=None,
+        errors={}, raw_files={}, duration_ms=0,
+    )
+    db_session.add(snap)
+    db_session.commit()
+    resultado = reconciliar_device(db_session, env["ne_id"])
+    assert resultado.items == []
+    assert resultado.aviso is not None and "interfaces" in resultado.aviso
 
 
 def test_snapshot_parcial_omite_recurso_e_avisa(db_session: Session) -> None:
