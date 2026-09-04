@@ -499,3 +499,18 @@ class UserUpdateIn(BaseModel):
 
 class UserPasswordIn(BaseModel):
     password: str
+
+
+class JobRunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    device_id: int | None
+    origin: str
+    actor: str
+    kind: str
+    status: str
+    started_at: datetime
+    finished_at: datetime | None
+    duration_ms: int
+    snapshot_id: int | None
