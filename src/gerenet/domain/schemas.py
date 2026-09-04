@@ -369,3 +369,43 @@ class PrefixAuthorizationDisable(BaseModel):
 
 class BgpSessionPasswordIn(BaseModel):
     password: str = Field(min_length=1, max_length=128)
+
+
+class BgpSessionCommunityIn(BaseModel):
+    community_id: int
+
+
+class CommunityOut(BaseModel):
+    id: int
+    name: str
+    notes: str | None = None
+
+
+class BlocoOut(BaseModel):
+    tipo: str
+    objeto: str
+    objeto_id: int
+    comandos: list[str]
+
+
+class DesiredConfigOut(BaseModel):
+    device_id: int
+    gerado_em: datetime
+    texto: str
+    blocos: list[BlocoOut]
+
+
+class ReconcileItemOut(BaseModel):
+    tipo: str
+    severidade: str
+    esperado: str
+    encontrado: str
+    acao: str
+
+
+class ReconcileOut(BaseModel):
+    device_id: int
+    snapshot_id: int | None
+    aviso: str | None
+    gerado_em: datetime
+    items: list[ReconcileItemOut]
