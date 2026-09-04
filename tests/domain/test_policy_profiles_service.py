@@ -9,15 +9,24 @@ from gerenet.domain.services.policy_profiles import (
 
 
 def test_catalogo_export_tem_os_seis_produtos(db_session: Session) -> None:
-    nomes = [p.name for p in list_policy_profiles(db_session)]
-    assert nomes == [
+    assert [p.name for p in list_policy_profiles(db_session)] == [
         "cdn", "default", "default_internas", "full", "parcial", "personalizado",
-    ]  # order by name
+        "somente-autorizadas",
+    ]
+    assert [p.name for p in list_policy_profiles(db_session, direction="export")] == [
+        "cdn", "default", "default_internas", "full", "parcial", "personalizado",
+    ]
 
 
 def test_lista_filtra_direction(db_session: Session) -> None:
-    assert len(list_policy_profiles(db_session, direction="export")) == 6
-    assert list_policy_profiles(db_session, direction="import") == []
+    assert [p.name for p in list_policy_profiles(db_session, direction="import")] == [
+        "somente-autorizadas",
+    ]
+    assert [p.name for p in list_policy_profiles(db_session, direction="export")] == [
+        "cdn", "default", "default_internas", "full", "parcial", "personalizado",
+    ]
+    assert all(p.direction == "import" for p in list_policy_profiles(db_session, direction="import"))
+    assert all(p.label for p in list_policy_profiles(db_session))  # label PT-BR em todos
 
 
 def test_get_policy_profile_por_id(db_session: Session) -> None:

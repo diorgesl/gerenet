@@ -590,3 +590,17 @@ def test_set_password_troca_audita_novamente(db_session: Session) -> None:
 def test_set_password_sessao_inexistente_da_404(db_session: Session) -> None:
     with pytest.raises(NotFoundError, match="não encontrada"):
         set_password(db_session, 9999, actor="cli", path="gerenet/bgp-sessions/9999/password")
+
+
+def test_sessao_aceita_perfil_de_importacao_seedado(db_session: Session) -> None:
+    from gerenet.domain.services.policy_profiles import list_policy_profiles
+
+    env = _ambiente(db_session)
+    circ_id = _circuito(db_session, env, code="CIRC-IMP-SEED", edge_id=env["ne1_id"])
+    perfil_import = list_policy_profiles(db_session, direction="import")[0]
+    sessao = create_session(
+        db_session,
+        _sessao_data(env, circ_id, env["ne1_id"], import_profile_id=perfil_import.id),
+        actor="cli",
+    )
+    assert sessao.import_profile_id == perfil_import.id

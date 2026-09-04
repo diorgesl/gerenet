@@ -339,15 +339,18 @@ def test_cli_autorizacoes_ciclo_de_vida(db_session: Session) -> None:
 def test_cli_policy_profiles_lista(db_session: Session) -> None:
     lista = runner.invoke(app, ["policy-profiles", "list"])
     assert lista.exit_code == 0
-    assert len(lista.output.strip().splitlines()) == 6  # seeds de exportação
+    linhas = lista.output.strip().splitlines()
+    assert len(linhas) == 7  # 6 export + somente-autorizadas (import, ciclo B)
+    assert any("somente-autorizadas" in linha for linha in linhas)
 
     so_export = runner.invoke(app, ["policy-profiles", "list", "--direction", "export"])
     assert so_export.exit_code == 0
-    assert so_export.output == lista.output
+    assert len(so_export.output.strip().splitlines()) == 6
 
     so_import = runner.invoke(app, ["policy-profiles", "list", "--direction", "import"])
     assert so_import.exit_code == 0
-    assert so_import.output.strip() == ""
+    assert "somente-autorizadas" in so_import.output
+    assert "cdn" not in so_import.output
 
     invalida = runner.invoke(app, ["policy-profiles", "list", "--direction", "foo"])
     assert invalida.exit_code == 1
@@ -364,3 +367,30 @@ def test_cli_sites_add_bloco_p2p_grande_da_erro() -> None:
     invalido = runner.invoke(app, ["sites", "add", "--name", "POP-BLOCO", "--p2p-ipv4-block", "x" * 65])
     assert invalido.exit_code == 1
     assert "Erro:" in invalido.output
+
+
+def test_cli_circuits_add_edge_trunk(db_session: Session) -> None:
+    site = create_site(db_session, SiteCreate(name="pop-cli-trunk"), actor="cli")
+    org = create_organization(
+        db_session, OrganizationCreate(name="Org Circulo Trunk", asn=64515), actor="cli"
+    )
+    sw = create_device(db_session, DeviceCreate(name="sw-trunk", management_address="10.8.3.2"), actor="cli")
+    ne = create_device(
+        db_session, DeviceCreate(name="ne-trunk", management_address="10.8.3.1", asn=64605), actor="cli"
+    )
+    for dev in (sw, ne):
+        link_device(db_session, site.id, dev.id, actor="cli")
+
+    add = runner.invoke(
+        app,
+        [
+            "circuits", "add",
+            "--code", "CIRC-TRUNK-CLI", "--organization-id", str(org.id),
+            "--site-id", str(site.id), "--access-device-id", str(sw.id),
+            "--access-port", "GE0/0/1", "--edge-device-id", str(ne.id),
+            "--edge-trunk", "Eth-Trunk127",
+        ],
+    )
+    assert add.exit_code == 0, add.output
+    circ_db = db_session.scalar(select(models.Circuit).where(models.Circuit.code == "CIRC-TRUNK-CLI"))
+    assert circ_db is not None and circ_db.edge_trunk == "Eth-Trunk127"

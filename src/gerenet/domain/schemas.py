@@ -135,6 +135,7 @@ class CircuitCreate(BaseModel):
     p2p_v4_len: Literal[30, 31] = 31
     description: str | None = Field(default=None, max_length=255)
     notes: str | None = None
+    edge_trunk: str | None = None
 
 
 class CircuitUpdate(BaseModel):
@@ -154,6 +155,7 @@ class CircuitUpdate(BaseModel):
     p2p_v4_len: Literal[30, 31] | None = None
     description: str | None = Field(default=None, max_length=255)
     notes: str | None = None
+    edge_trunk: str | None = None
     admin_status: bool | None = None
 
 
@@ -275,6 +277,7 @@ class CircuitOut(BaseModel):
     p2p_v4_len: int
     description: str | None
     notes: str | None
+    edge_trunk: str | None
     admin_status: bool
 
 
