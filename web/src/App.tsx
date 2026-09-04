@@ -1,14 +1,18 @@
 import { Route, Routes } from "react-router-dom";
 import Login from "@/auth/Login";
 import { RequireAdmin, RequireAuth } from "@/auth/auth-context";
+import AuditEvents from "@/pages/AuditEvents";
 import BgpSessionDetail from "@/pages/BgpSessionDetail";
 import BgpSessions from "@/pages/BgpSessions";
 import CircuitDetail from "@/pages/CircuitDetail";
 import Circuits from "@/pages/Circuits";
+import Communities from "@/pages/Communities";
 import Contacts from "@/pages/Contacts";
 import Dashboard from "@/pages/Dashboard";
 import Devices from "@/pages/Devices";
 import Organizations from "@/pages/Organizations";
+import PolicyProfiles from "@/pages/PolicyProfiles";
+import PrefixAuthorizations from "@/pages/PrefixAuthorizations";
 import Sites from "@/pages/Sites";
 import Users from "@/pages/Users";
 
@@ -98,6 +102,10 @@ export default function App() {
           </RequireAuth>
         }
       />
+      <Route path="/policy-profiles" element={<RequireAuth><PolicyProfiles /></RequireAuth>} />
+      <Route path="/communities" element={<RequireAuth><Communities /></RequireAuth>} />
+      <Route path="/prefix-authorizations" element={<RequireAuth><PrefixAuthorizations /></RequireAuth>} />
+      <Route path="/audit-events" element={<RequireAuth><AuditEvents /></RequireAuth>} />
     </Routes>
   );
 }

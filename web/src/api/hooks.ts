@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./client";
 import type {
+  AuditEventOut,
   BgpSessionOut,
   CircuitDetailOut,
   CircuitOut,
@@ -12,6 +13,7 @@ import type {
   JobRunOut,
   OrganizationOut,
   PolicyProfileOut,
+  PrefixAuthorizationOut,
   SiteOut,
   UserOut,
 } from "./types";
@@ -286,3 +288,39 @@ export const usePolicyProfiles = (filtros?: { direction?: string }) =>
     },
   });
 export const useCommunities = () => useLista<CommunityOut>("communities", "/api/v1/communities");
+
+export const usePrefixAuthorizations = (filtros?: { organization_id?: number; family?: string; include_disabled?: boolean }) =>
+  useQuery({
+    queryKey: ["prefix-authorizations", filtros],
+    queryFn: () => {
+      const qs = new URLSearchParams();
+      if (filtros?.organization_id) qs.set("organization_id", String(filtros.organization_id));
+      if (filtros?.family) qs.set("family", filtros.family);
+      if (filtros?.include_disabled) qs.set("include_disabled", "true");
+      const suf = qs.size > 0 ? `?${qs.toString()}` : "";
+      return apiFetch<PrefixAuthorizationOut[]>(`/api/v1/prefix-authorizations${suf}`);
+    },
+  });
+export type PrefixAuthorizationCreateIn = {
+  organization_id: number;
+  family: "ipv4" | "ipv6";
+  prefix: string;
+  notes?: string | null;
+};
+export const usePrefixAuthorizationCriar = () =>
+  useCriar<PrefixAuthorizationCreateIn, PrefixAuthorizationOut>("prefix-authorizations", "/api/v1/prefix-authorizations");
+export const usePrefixAuthorizationDesativar = () =>
+  useAtualizar<{ admin_status?: boolean }, PrefixAuthorizationOut>("prefix-authorizations", "/api/v1/prefix-authorizations");
+
+export const useAuditEvents = (filtros?: { tipo?: string; objeto?: string; objeto_id?: number }) =>
+  useQuery({
+    queryKey: ["audit-events", filtros],
+    queryFn: () => {
+      const qs = new URLSearchParams();
+      if (filtros?.tipo) qs.set("tipo", filtros.tipo);
+      if (filtros?.objeto) qs.set("objeto", filtros.objeto);
+      if (filtros?.objeto_id) qs.set("objeto_id", String(filtros.objeto_id));
+      const suf = qs.size > 0 ? `?${qs.toString()}` : "";
+      return apiFetch<AuditEventOut[]>(`/api/v1/audit-events${suf}`);
+    },
+  });
