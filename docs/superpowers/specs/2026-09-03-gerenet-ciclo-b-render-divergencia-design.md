@@ -82,7 +82,7 @@ próprio), servidor MCP sobre as ferramentas (arco de integrações, após C).
 | config_backup | `display current-configuration` | existente; bruto no volume |
 | interfaces | `display interface brief` | tabela achatada |
 | interfaces | `display ip interface brief` | tabela com endereços v4/VPN |
-| interfaces | `display ipv6 int brief` | **agrupado**, não tabela |
+| interfaces | `display ipv6 interface brief` | **agrupado**, não tabela |
 | bgp_peers | `display bgp peer` | tabela IPv4 (padrão do VRP) |
 | bgp_peers | `display bgp ipv6 peer` | tabela IPv6 |
 | bgp_peers_verbose | `display bgp peer <ip> verbose` | só peers de sessões ativas do device; cap 50 |
@@ -97,7 +97,7 @@ próprio), servidor MCP sobre as ferramentas (arco de integrações, após C).
 - **`display ip interface brief`**: linhas de resumo no topo ("The number of interface that is
   UP in Physical is 72…"); colunas `Interface IP Address/Mask Physical Protocol VPN`; endereço
   `unassigned`; VPN `--` ou nome de VRF (`l3vpn` na captura).
-- **`display ipv6 int brief`**: **agrupado** — linha da interface
+- **`display ipv6 interface brief`**: **agrupado** — linha da interface
   (`Interface Physical Protocol VPN`) e, nas linhas seguintes,
   `[IPv6 Address/Prefix Length] <end>/<len>` com sufixos `[TENTATIVE]`/`Unassigned`; pode haver
   múltiplas entradas por interface.
@@ -127,7 +127,7 @@ JSONB com o parse estruturado; o bruto de config continua **no volume**, nunca n
     { "afi": "ipv4", "peer": "100.110.0.74", "asn": 270620,
       "estado": "Established", "pref_rcv": 1, "up_down": "0655h06m" }
   ],
-  "bgp_peers_detalhes": [
+  "bgp_peers_verbose": [
     { "afi": "ipv4", "peer": "100.110.0.74",
       "filtro_import": "ASN270620-V4-IMPORT", "filtro_export": "RP-270620-EXPORT-V4" }
   ]
@@ -136,8 +136,9 @@ JSONB com o parse estruturado; o bruto de config continua **no volume**, nunca n
 
 Falha/parse incompleto de um recurso não derruba a coleta: status **parcial** com erro por
 recurso no snapshot (padrão F1 §6.1). Nome de interface é a chave de merge entre os três
-comandos de interfaces. O shape do B **adiciona** `interfaces`/`bgp_peers`/`bgp_peers_detalhes`
-e não remove nem duplica o que a F1 já grava (version; referência do backup de config — o
+comandos de interfaces. O shape do B **adiciona** `interfaces`/`bgp_peers`/`bgp_peers_verbose`
+(a chave do recurso é sempre o nome do coletor; `bgp_peers_detalhes` é só o nome interno do
+merge) e não remove nem duplica o que a F1 já grava (version; referência do backup de config — o
 bruto segue no volume, nunca no banco).
 
 ## 5. Nomenclatura e render
