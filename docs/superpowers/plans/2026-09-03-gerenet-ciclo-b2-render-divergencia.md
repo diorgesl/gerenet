@@ -172,7 +172,7 @@ def _asn_valido(asn: int) -> str:
 def _afi_valida(afi: str) -> str:
     if afi not in _AFIS:
         raise ValidationError(f"Família inválida: {afi} (esperado ipv4 ou ipv6).")
-    return afi.upper()
+    return "V4" if afi == "ipv4" else "V6"
 
 
 def rp_import(asn: int, afi: str) -> str:
