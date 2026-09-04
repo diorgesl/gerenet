@@ -1,6 +1,10 @@
 import { Route, Routes } from "react-router-dom";
 import Login from "@/auth/Login";
 import { RequireAdmin, RequireAuth } from "@/auth/auth-context";
+import BgpSessionDetail from "@/pages/BgpSessionDetail";
+import BgpSessions from "@/pages/BgpSessions";
+import CircuitDetail from "@/pages/CircuitDetail";
+import Circuits from "@/pages/Circuits";
 import Contacts from "@/pages/Contacts";
 import Dashboard from "@/pages/Dashboard";
 import Devices from "@/pages/Devices";
@@ -35,6 +39,38 @@ export default function App() {
         element={
           <RequireAuth>
             <Devices />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/circuits"
+        element={
+          <RequireAuth>
+            <Circuits />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/circuits/:id"
+        element={
+          <RequireAuth>
+            <CircuitDetail />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/bgp-sessions"
+        element={
+          <RequireAuth>
+            <BgpSessions />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/bgp-sessions/:id"
+        element={
+          <RequireAuth>
+            <BgpSessionDetail />
           </RequireAuth>
         }
       />
