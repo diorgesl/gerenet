@@ -55,3 +55,8 @@ code, pre { font-family: var(--mono); }
 .login { max-width: 360px; margin: 15vh auto; padding: 1.5rem; }
 .login h1 { margin-top: 0; }
 .login form { display: flex; flex-direction: column; gap: 0.8rem; }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem; margin-bottom: 1.2rem; }
+.card { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 8px; padding: 0.9rem; font-size: 0.9rem; }
+.card strong { display: block; font-size: 1.5rem; }
+.form-inline { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.6rem; margin-bottom: 1rem; }
