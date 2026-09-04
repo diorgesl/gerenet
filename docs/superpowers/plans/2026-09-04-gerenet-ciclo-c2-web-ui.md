@@ -5630,6 +5630,7 @@ export default function App() {
 
 ```tsx
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { ApiError } from "@/api/client";
 import { useDevice, useDeviceColetar, useSites, useSnapshots } from "@/api/hooks";
 import { PageHeader } from "@/components/PageHeader";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -5639,7 +5640,7 @@ export default function DeviceDetail() {
   const { id } = useParams();
   const deviceId = Number(id);
   const navigate = useNavigate();
-  const { data: device, isLoading } = useDevice(deviceId);
+  const { data: device, isLoading, error } = useDevice(deviceId);
   const { data: sites } = useSites();
   const { data: snapshots } = useSnapshots(deviceId);
   const coletar = useDeviceColetar();
@@ -5647,7 +5648,13 @@ export default function DeviceDetail() {
   const ultimoSnapshot = snapshots && snapshots.length > 0 ? snapshots[0] : null;
 
   if (isLoading) return <main><p aria-busy="true">Carregando…</p></main>;
-  if (!device) return <main><p>Equipamento não encontrado.</p></main>;
+  if (!device) {
+    return (
+      <main>
+        <p role="alert">{error instanceof ApiError ? error.message : "Falha ao carregar o equipamento."}</p>
+      </main>
+    );
+  }
 
   return (
     <main>
@@ -5698,6 +5705,8 @@ export default function DeviceDetail() {
 ```
 
 > **Correção de defeito do rascunho (ruling da orquestração):** os valores deste `<ul>` são envolvidos em `<span>` (uniforme). Motivo: `getByText` da @testing-library compara `getNodeText` — a concatenação dos filhos diretos que são text nodes; `<li>ASN: {device.asn ?? "—"}</li>` vira `"ASN: 65001"` e a asserção `getByText("65001")` do teste (Step 5) falha de forma determinística (`Unable to find an element with the text: 65001`). Com `<span>` o valor é nó textual direto do próprio elemento e casa default `exact: true` — o mesmo vale para todos os valores do `ul` (estrutura uniforme para o que estiver no teste). Não mexer nos `StatusBadge`/`TimeAgo` (elementos filhos, ignorados pelo getNodeText — não afetam).
+>
+> **Segunda correção (revisor T11, Important):** `if (!device)` colocava 404, rede e 500 no mesmo texto "Equipamento não encontrado." — sem superfície de erro para `useDevice`. Agora o guard renderiza `role="alert"` com a mensagem exata (404 = `"Equipamento {id} não encontrado."` da API via `ApiError.message`; rede/500 idem — constraint de mensagens idênticas) e o texto estático fica só como fallback de query sem erro. MESMA família do pool T10 (JobDetail, listas de jobs/snapshots) — os demais casos ficam na revisão final.
 
 - [ ] **Step 5: testes**
 
