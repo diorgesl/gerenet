@@ -5916,11 +5916,24 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 - Consumes: backend de verdade (compose + alembic + uvicorn) com `.env`/config padrão.
 - Produces: 2 specs de fumo verdes localmente com a stack de pé; documentos.
 
-- [ ] **Step 1: `web/e2e/setup.ts`** — seeds idempotentes: cria usuário `admin` via `gerenet users create admin --role administrador` (senha via env `E2E_PASSWORD` padrão `e2e-super-8`), cria device+site+org+circuito+vlan+prefixo através da API com X-Api-Key (enviada ao backend diretamente via fetch node com Api-Key de `settings.api_key` — ler de `GERENET_API_KEY` env). Sem segredo hardcoded: senha só no env.
+- [ ] **Step 1: `web/e2e/setup.ts`** — seeds idempotentes: cria usuário `admin` via `gerenet users create admin --role administrador` (senha via env `E2E_PASSWORD` padrão `e2e-super-8`), cria device+site+org+circuito+prefixo através da API com X-Api-Key (enviada ao backend diretamente via fetch node com Api-Key de `settings.api_key` — ler de `GERENET_API_KEY` env). Sem segredo hardcoded: senha só no env.
+
+> **Fatos verificados para o seed (contrato real do backend):**
+> - `POST /api/v1/users` exige **sessão de administrador** (`require_admin` — ator da API key é `usuario=None` → 403 "Somente administradores."; deps.py:49-53) — o usuário admin só pode ser criado via CLI; em seed node, invocar via `execSync` com a senha **pipedada no stdin do prompt** (nunca em argv).
+> - Header de API: **`x-api-key`** com `settings.api_key` (default `"dev-key-change-me"`; env `GERENET_API_KEY` sobrepõe — config.py:13).
+> - POSTs disponíveis para seed (payload mínimo):
+>   - `/api/v1/sites` → `{name, city?, uf? (2 letras), p2p_ipv4_block?, p2p_ipv6_base?}` (ex. `{name: "POP-SP", uf: "SP"}`);
+>   - `/api/v1/devices` → `{name, management_address, vendor? ("huawei" default), model?, family?, role?, site_id?, asn?, ssh_port?, tags?}` (ex. `{name: "ne8000-01", management_address: "10.0.0.1", site_id: 1, asn: 65001}`);
+>   - `/api/v1/organizations` → `{name, kind? ("downstream"|"parceiro"), asn?, irr_as_set?, notes?}`;
+>   - `/api/v1/circuits` → `{code, organization_id, site_id, access_device_id, access_port (^[A-Za-z0-9/-]+$), edge_device_id, backup_edge_device_id?, stack?, vlan_mode?, qinq?, vrf?, mtu?, bandwidth?, bfd?, p2p_v4_len?, description?}`;
+>   - `/api/v1/prefix-authorizations` → `{organization_id, family: "ipv4"|"ipv6", prefix, notes?}`.
+> - **Não há** rota de POST para vlan/IP como entidade separada (VLAN vive dentro do CircuitCreate, `vlan_mode`; IPAM é do serviço) — o seed não cria vlan isolada.
+> - **Ruling de execução (SDD):** o run e2e desta task roda contra banco **dedicado `gerenet_e2e`** (`GERENET_DATABASE_URL=…:5432/gerenet_e2e` para alembic + uvicorn + CLI de seed + playwright) — nunca o `gerenet` dev nem `gerenet_test`. O `web/e2e/README.md` documenta o fluxo padrão do dev (compose + alembic default); o ruling não muda o documento.
 - [ ] **Step 2: `login.spec.ts`**:
   - `test('login ok → dashboard', …)`: goto `/login`, preenche, entra; vê h1 "Dashboard".
   - `test('login inválido → erro', …)`: senha errada; vê "Usuário ou senha inválidos."
   - `test('logout', …)`: sai; volta ao `/login`.
+  - Conexões: `test.describe.serial`/storageState opcional — o login.ok pode guardar estado autenticado para o smoke (ex. `storageState` em `use`/`setup`); decisão do implementer, desde que os 3 testes de login rode em sequência limpa e o smoke trabalhe com sessão autenticada.
 - [ ] **Step 3: `smoke.spec.ts`**:
   - `test('criar e desativar site', …)`: site → lista → desativar com confirmação.
   - `test('abrir Reconcile com device seedado', …)`: select device → tabela/aviso renderizada.
@@ -5931,7 +5944,7 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 3. cd web && npm run build && npm run test:e2e   (segundo terminal: rodar seed `npx playwright test e2e/setup? — ou script npm run e2e:seed`)
 ```
 - [ ] **Step 5: README.md** — seção "Interface web — dev e build" (run-book §7 da spec; mencionar `GERENET_COOKIE_SECURE=true` sob HTTPS).
-- [ ] **Step 6: CLAUDE.md** — atualizar "Estado do repositório" com `web/` (scripts, proxy, o que roda em dev).
+- [ ] **Step 6: CLAUDE.md** — atualizar "Estado do repositório" com `web/` (scripts, proxy, o que roda em dev; mencionar `npm run test:e2e` + seed, e que os e2e rodam contra stack local (uvicorn) com browser local).
 - [ ] **Step 7: rodar e2e (stack local de pé) e commit.**
 
 ```bash
