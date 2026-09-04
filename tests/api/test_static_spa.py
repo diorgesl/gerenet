@@ -38,10 +38,57 @@ def test_rotas_api_nao_caem_no_fallback(client: TestClient) -> None:
     assert resp.status_code == 404
     assert resp.text.strip().startswith("{")  # erro JSON, não index.html
 
+    resp_api = client.get("/api")  # exato: também é rota de API, nunca HTML da SPA
+    assert resp_api.status_code == 404
+    assert resp_api.text.strip().startswith("{")
 
-def test_sem_build_nao_registra() -> None:
+
+@pytest.mark.parametrize(
+    "rota",
+    [
+        # %2e%2e = ".." decodificado pelo uvicorn ao chegar no {path:path}
+        "/%2e%2e/%2e%2e/segredo.txt",
+        "/%2e%2e/segredo-vizinho.txt",
+        # separadores percent-encodados: os ".." chegam decodificados
+        "/..%2f..%2fsegredo.txt",
+        "/%2e%2e%2f%2e%2e%2fsegredo.txt",
+        # separador %2f apenas (um nível)
+        "/%2e%2e%2fsegredo-vizinho.txt",
+    ],
+)
+def test_nao_sirve_arquivos_fora_do_static_dir(
+    client: TestClient, tmp_path: Path, rota: str
+) -> None:
+    # Segredos FORA do static_dir (tmp_path/web/dist): um nível acima e na raiz do tmp_path.
+    (tmp_path / "segredo.txt").write_text("GRANA=1234", encoding="utf-8")
+    (tmp_path / "web" / "segredo-vizinho.txt").write_text("TOKEN=xy", encoding="utf-8")
+    resp = client.get(rota)
+    assert resp.status_code == 404, f"{rota} -> {resp.status_code} {resp.text[:60]!r}"
+
+
+def test_nao_get_em_rota_inexistente_e_404(client: TestClient) -> None:
+    for metodo in ("post", "put", "patch", "delete", "head", "options"):
+        resp = getattr(client, metodo)("/api/v1/nao-existe")
+        assert resp.status_code == 404, metodo
+
+    resp = client.post("/reconcile")  # rota do client sem POST
+    assert resp.status_code == 404
+
+
+def test_rota_real_vence_para_get(client: TestClient) -> None:
+    # Rota real de API registrada antes do fallback: GET não pode cair no SPA
+    # nem no 404 do catch-all (sem auth → 401, nunca HTML/404 de rota inexistente).
+    resp = client.get("/api/v1/devices")
+    assert resp.status_code == 401
+
+
+def test_sem_build_nao_registra(tmp_path: Path) -> None:
     # O app só é criado depois de set_settings: o fallback é registrado em
     # create_app(), então mudar settings depois do TestClient não tem efeito.
-    set_settings(Settings(api_key="teste-key", static_dir=Path("/tmp/nao-existe-dist-xyz"), _env_file=None))
+    # Subdiretório NUNCA criado — sem build, nada é montado.
+    dist_inexistente = tmp_path / "dist-inexistente"
+    set_settings(
+        Settings(api_key="teste-key", static_dir=dist_inexistente, _env_file=None)
+    )
     resp = TestClient(create_app()).get("/")
     assert resp.status_code == 404

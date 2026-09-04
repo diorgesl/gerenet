@@ -1,7 +1,8 @@
 """Servir o build da SPA (web/dist) com fallback para rotas do client (ciclo C).
 
-Mesma origem do backend (spec §3.1): sem CORS; o index.html só cai nas rotas
-GET que não começam com /api. Assets de /assets/ são imutáveis (hash no nome).
+A SPA é servida pela própria API (mesma origem, sem CORS): o index.html só
+cai nas rotas GET que não começam com /api. Assets de /assets/ são imutáveis
+(hash no nome). Sem build presente, nada é registrado.
 """
 from pathlib import Path
 
@@ -19,9 +20,14 @@ def montar_spa(app: FastAPI, static_dir: Path) -> None:
 
     @router.get("/{path:path}")
     def spa(path: str) -> FileResponse:
-        if path.startswith("api/"):
+        if path == "api" or path.startswith("api/"):
             raise HTTPException(status_code=404)
-        alvo = static_dir / path
+        # Contenção no diretório do build (resolve segue symlinks; is_relative_to
+        # bloqueia traversal — ex.: %2e%2e / .. decodificado pelo uvicorn).
+        raiz = static_dir.resolve()
+        alvo = (static_dir / path).resolve()
+        if not alvo.is_relative_to(raiz):
+            raise HTTPException(status_code=404)
         if path and alvo.is_file():
             cabecalhos = (
                 {"Cache-Control": "public,max-age=31536000,immutable"}
@@ -31,5 +37,15 @@ def montar_spa(app: FastAPI, static_dir: Path) -> None:
             return FileResponse(alvo, headers=cabecalhos)
         # fallback SPA: qualquer rota do client (react-router) → index.html
         return FileResponse(index)
+
+    @router.api_route(
+        "/{path:path}",
+        methods=["POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
+    )
+    def _outros_metodos(path: str) -> None:
+        # Rota inexistente/ imprópria para o método: 404, não 405 (contrato
+        # pré-fallback; o catch-all resposta só o que sobrou — rotas reais,
+        # registradas antes, vencem nos métodos que suportam).
+        raise HTTPException(status_code=404)
 
     app.include_router(router)
