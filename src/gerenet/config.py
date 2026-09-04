@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     connect_timeout: float = 15.0
     read_timeout: float = 60.0
     lock_ttl_seconds: int = 300
+    session_ttl_seconds: int = 28800  # TTL do cookie de sessão web (§4.2)
 
     # IPAM p2p (§25.8): bloco privado de enlaces v4 e base v6 por padrão;
     # cada site pode sobrescrever.
