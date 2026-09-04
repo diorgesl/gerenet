@@ -1,4 +1,5 @@
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { ApiError } from "@/api/client";
 import { useDevice, useDeviceColetar, useSites, useSnapshots } from "@/api/hooks";
 import { PageHeader } from "@/components/PageHeader";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -8,7 +9,7 @@ export default function DeviceDetail() {
   const { id } = useParams();
   const deviceId = Number(id);
   const navigate = useNavigate();
-  const { data: device, isLoading } = useDevice(deviceId);
+  const { data: device, isLoading, error } = useDevice(deviceId);
   const { data: sites } = useSites();
   const { data: snapshots } = useSnapshots(deviceId);
   const coletar = useDeviceColetar();
@@ -16,7 +17,13 @@ export default function DeviceDetail() {
   const ultimoSnapshot = snapshots && snapshots.length > 0 ? snapshots[0] : null;
 
   if (isLoading) return <main><p aria-busy="true">Carregando…</p></main>;
-  if (!device) return <main><p>Equipamento não encontrado.</p></main>;
+  if (!device) {
+    return (
+      <main>
+        <p role="alert">{error instanceof ApiError ? error.message : "Falha ao carregar o equipamento."}</p>
+      </main>
+    );
+  }
 
   return (
     <main>
