@@ -5,12 +5,65 @@ from gerenet.config import get_settings
 from gerenet.db import get_session
 from gerenet.domain.schemas import BgpSessionCreate
 from gerenet.domain.services import bgp_sessions as svc
-from gerenet.domain.services.errors import GerenetError
+from gerenet.domain.services import communities as com_svc
+from gerenet.domain.services.errors import GerenetError, NotFoundError
 from gerenet.secrets.vault_store import VaultSecretStore
 
 app = typer.Typer(help="Sessões BGP por família.")
 password = typer.Typer(help="Senha MD5 do peer (valor só no Vault).")
 app.add_typer(password, name="password")
+community = typer.Typer(help="Associa/desassocia community de uma sessão BGP.")
+app.add_typer(community, name="community")
+
+
+def _resolver_community(session, comunidade: str):
+    """Community por ID ou nome; None se não existir."""
+    if comunidade.isdigit():
+        try:
+            return com_svc.get_community(session, int(comunidade))
+        except NotFoundError:
+            return None
+    return next((c for c in com_svc.list_communities(session) if c.name == comunidade), None)
+
+
+@community.command("add")
+def associar(
+    session_id: int = typer.Argument(..., help="ID da sessão BGP."),
+    community: str = typer.Argument(..., help="ID ou nome da community."),
+) -> None:
+    """Associa uma community à sessão (idempotente)."""
+    with get_session() as session:
+        try:
+            sessao = svc.get_session(session, session_id)
+            com = _resolver_community(session, community)
+            if com is None:
+                typer.echo(f"Community {community} não encontrada.", err=True)
+                raise typer.Exit(1)
+            svc.add_community(session, sessao.id, com.id, actor="cli")
+        except GerenetError as exc:
+            typer.echo(f"Erro: {exc}", err=True)
+            raise typer.Exit(1) from exc
+    typer.echo(f"Community {com.name} associada à sessão BGP {session_id}.")
+
+
+@community.command("remove")
+def desassociar(
+    session_id: int = typer.Argument(..., help="ID da sessão BGP."),
+    community: str = typer.Argument(..., help="ID ou nome da community."),
+) -> None:
+    """Desassocia uma community da sessão (idempotente)."""
+    with get_session() as session:
+        try:
+            sessao = svc.get_session(session, session_id)
+            com = _resolver_community(session, community)
+            if com is None:
+                typer.echo(f"Community {community} não encontrada.", err=True)
+                raise typer.Exit(1)
+            svc.remove_community(session, sessao.id, com.id, actor="cli")
+        except GerenetError as exc:
+            typer.echo(f"Erro: {exc}", err=True)
+            raise typer.Exit(1) from exc
+    typer.echo(f"Community {com.name} desassociada da sessão BGP {session_id}.")
 
 
 @app.command("add")

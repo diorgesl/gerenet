@@ -394,3 +394,83 @@ def test_cli_circuits_add_edge_trunk(db_session: Session) -> None:
     assert add.exit_code == 0, add.output
     circ_db = db_session.scalar(select(models.Circuit).where(models.Circuit.code == "CIRC-TRUNK-CLI"))
     assert circ_db is not None and circ_db.edge_trunk == "Eth-Trunk127"
+
+
+def test_cli_communities_lista(db_session: Session) -> None:
+    lista = runner.invoke(app, ["communities", "list"])
+    assert lista.exit_code == 0, lista.output
+    assert "blackhole" in lista.output
+    assert "no-export" in lista.output
+
+
+def test_cli_bgp_sessions_community_add_remove(db_session: Session) -> None:
+    from sqlalchemy import select
+
+    from gerenet.domain import models
+
+    env = _ambiente_bgp(db_session)
+    circ = _circuito_cli(db_session, env, "CIRC-BGP-COM")
+    add = runner.invoke(
+        app,
+        [
+            "bgp-sessions", "add",
+            "--circuit-id", str(circ), "--device-id", str(env["ne_id"]),
+            "--afi", "ipv4",
+            "--local-address", "100.64.13.1", "--remote-address", "100.64.13.2",
+        ],
+    )
+    assert add.exit_code == 0, add.output
+
+    comunidade = db_session.scalar(
+        select(models.Community).where(models.Community.name == "blackhole")
+    )
+    assert comunidade is not None
+
+    associa = runner.invoke(app, ["bgp-sessions", "community", "add", "1", str(comunidade.id)])
+    assert associa.exit_code == 0, associa.output
+    assert "associada" in associa.output
+    vinculo = db_session.scalar(
+        select(models.BgpSessionCommunity).where(
+            models.BgpSessionCommunity.session_id == 1,
+            models.BgpSessionCommunity.community_id == comunidade.id,
+        )
+    )
+    assert vinculo is not None
+
+    remove = runner.invoke(app, ["bgp-sessions", "community", "remove", "1", comunidade.name])
+    assert remove.exit_code == 0, remove.output
+    assert "desassociada" in remove.output
+    assert db_session.scalar(
+        select(models.BgpSessionCommunity).where(
+            models.BgpSessionCommunity.session_id == 1,
+            models.BgpSessionCommunity.community_id == comunidade.id,
+        )
+    ) is None
+
+
+def test_cli_render_config_e_reconcile(db_session: Session) -> None:
+    env = _ambiente_bgp(db_session)
+    circ = _circuito_cli(db_session, env, "CIRC-BGP-REC")
+    add = runner.invoke(
+        app,
+        [
+            "bgp-sessions", "add",
+            "--circuit-id", str(circ), "--device-id", str(env["ne_id"]),
+            "--afi", "ipv4",
+            "--local-address", "100.64.14.1", "--remote-address", "100.64.14.2",
+        ],
+    )
+    assert add.exit_code == 0, add.output
+
+    render = runner.invoke(app, ["render-config", "ne-bgp-cli"])
+    assert render.exit_code == 0, render.output
+    assert "bgp 64610" in render.output  # asn do device do _ambiente_bgp
+    assert "peer 100.64.14.2 as-number 64513" in render.output  # org = ASN do par
+
+    rec = runner.invoke(app, ["reconcile", "ne-bgp-cli"])
+    assert rec.exit_code == 0, rec.output
+    assert "snapshot" in rec.output.lower()  # aviso orientando coleta
+
+    faltante = runner.invoke(app, ["render-config", "nao-existe"])
+    assert faltante.exit_code == 1
+    assert "não encontrado" in faltante.output
