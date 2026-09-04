@@ -820,7 +820,8 @@ export interface JobRunOut {
 export interface CollectResposta {
   queued: boolean;
   message: string;
-  job_id: number;
+  /** id do job RQ (uuid) — NÃO é o JobRun.id da tabela; não usar para navegar a /jobs/{id} */
+  job_id: string;
 }
 ```
 
@@ -2184,7 +2185,7 @@ export default function Devices() {
             {podeEscrever && (
               <button
                 type="button"
-                onClick={() => void coletar.mutate(d.id).then((r) => navigate(`/jobs/${r.job_id}`))}
+                onClick={() => void coletar.mutate(d.id).then(() => navigate(`/jobs?device_id=${d.id}`))}
               >
                 Coletar agora
               </button>
