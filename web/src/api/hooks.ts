@@ -135,6 +135,14 @@ export function useDeviceColetar() {
   });
 }
 
+export function useDevice(id: number) {
+  return useQuery({
+    queryKey: ["device", id],
+    queryFn: () => apiFetch<DeviceOut>(`/api/v1/devices/${id}`),
+    enabled: id > 0,
+  });
+}
+
 export type SiteCreateIn = {
   name: string;
   city?: string | null;
