@@ -201,18 +201,18 @@ export interface DashboardOut {
 }
 export interface JobRunOut {
   id: number;
-  device_id: number;
+  device_id: number | null;
   origin: string;
   actor: string;
   kind: string;
   status: string;
-  started_at: string | null;
+  started_at: string;
   finished_at: string | null;
-  duration_ms: number | null;
+  duration_ms: number;
   snapshot_id: number | null;
 }
 export interface CollectResposta {
   queued: boolean;
   message: string;
-  job_id: number;
+  job_id: string;
 }

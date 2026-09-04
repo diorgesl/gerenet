@@ -51,7 +51,10 @@ describe("apiFetch", () => {
     vi.mocked(fetch).mockResolvedValueOnce(
       responder(422, { detail: [{ loc: ["body", "password"], msg: "String should have at least 1 character" }] }),
     );
-    await expect(apiFetch("/api/v1/auth/login", { method: "POST", body: { password: "" } })).rejects.toThrow(ApiError);
+    await expect(apiFetch("/api/v1/auth/login", { method: "POST", body: { password: "" } })).rejects.toMatchObject({
+      status: 422,
+      fieldErrors: { password: "String should have at least 1 character" },
+    });
   });
 
   it("falha de rede → mensagem amigável", async () => {
