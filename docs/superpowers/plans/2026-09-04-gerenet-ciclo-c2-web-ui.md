@@ -3194,6 +3194,25 @@ def test_lista_communities_da_sessao(client: TestClient, db_session: Session) ->
 Run: `uv run pytest -q tests/api/test_communities_api.py`
 Expected: 4 passed.
 
+> **Ruling (pré-dispatch, verificado na implementação):** a linha `Expected: 4 passed` acima é INALCANÇÁVEL até a infra de teste ser tornada independente do `web/dist` que existir na máquina. `montar_spa` (static_spa.py) registra o catch-all quando `web/dist/index.html` EXISTE NO DISCO (não é rastreado; nasce do `vite build` do T2). Com o catch-all ativo, `POST /api/v1/communities` (rota real só-GET) casa com `/{path:path}` (POST) e devolve **404** (contrato documentado "404, não 405"), quebrando o `test_lista_communities_read_only` pré-existente do C1 (escreve 405). Em máquina sem `web/dist`, o teste passa (casa sem catch-all → 405 natural do Starlette). É o minor parkado do C1 "static_dir em fixtures": o `static_dir_inexistente` existe em tests/api/conftest.py mas só é usado por test_static_spa.py. **Correção (infra de teste, não produção, não o teste antigo):** autouse que pina um static_dir inexistente — o teste 405 fica intacto e a suíte volta a ser determinística para qualquer gate backend do ciclo (T8, T13).
+
+- [ ] **Step 0.5 (infra de teste): autouse `spa_sem_build` em tests/api/conftest.py**
+
+```python
+@pytest.fixture(autouse=True)
+def spa_sem_build(static_dir_inexistente: Path) -> Iterator[None]:
+    # Minor C1: os testes de API nunca devem depender do web/dist que existir
+    # na máquina — com o build presente, montar_spa registra o catch-all e
+    # POST/PUT/PATCH/DELETE em rota desconhecida devolvem 404 (contrato
+    # pré-fallback) em vez do 405 natural do Starlette. Pinando um diretório
+    # inexistente, o fallback não é montado; test_static_spa.py sobrepõe pelo
+    # próprio set_settings no fixture client (ordem: autouse corre antes).
+    set_settings(Settings(static_dir=static_dir_inexistente, _env_file=None))
+    yield
+```
+
+(Import: `from collections.abc import Iterator`; `from gerenet.config import Settings, set_settings`.)
+
 - [ ] **Step 1: hooks de circuits/bgp-sessions no `hooks.ts`** (append após os hooks da Task 6/7)
 
 ```ts
@@ -3288,7 +3307,7 @@ export function useSessionCommunity() {
   return useMutation({
     mutationFn: ({ sessionId, communityId, associa }: { sessionId: number; communityId: number; associa: boolean }) =>
       associa
-        ? apiFetch<{ session_id: number; community_id: number }>(
+        ? apiFetch<void>( // resposta não usada: a lista é refetched por invalidação; ambos os ramos → Promise<void>
             `/api/v1/bgp-sessions/${sessionId}/communities`,
             { method: "POST", body: { community_id: communityId } },
           )
@@ -3971,7 +3990,7 @@ const ME = { id: 1, username: "boss", role: "administrador", is_active: true, la
 const org = { id: 1, name: "Cliente A", legal_name: null, kind: "downstream", asn: 64512, irr_as_set: null, notes: null, admin_status: true };
 const site = { id: 1, name: "SPO", city: "São Paulo", uf: "SP", p2p_ipv4_block: null, p2p_ipv6_base: null, admin_status: true };
 const dev1 = { id: 1, name: "sw-01", management_address: "10.9.0.1", site_id: 1, model: null, family: "S6730", role: "acesso", asn: null, tags: [], ssh_port: 22, vendor: "Huawei", vrp_version: null, comm_status: "ok", admin_status: true, last_collected_at: null };
-const dev2 = { id: 1, name: "ne-01", management_address: "10.9.0.2", site_id: 1, model: null, family: "NE8000", role: "edge", asn: 64600, tags: [], ssh_port: 22, vendor: "Huawei", vrp_version: null, comm_status: "ok", admin_status: true, last_collected_at: null };
+const dev2 = { id: 2, name: "ne-01", management_address: "10.9.0.2", site_id: 1, model: null, family: "NE8000", role: "edge", asn: 64600, tags: [], ssh_port: 22, vendor: "Huawei", vrp_version: null, comm_status: "ok", admin_status: true, last_collected_at: null };
 const circ = { id: 1, code: "CIRC-01", organization_id: 1, site_id: 1, access_device_id: 1, access_port: "GE0/0/1", edge_device_id: 2, backup_edge_device_id: null, stack: "dual", vlan_mode: "unica", qinq: false, vrf: null, mtu: 1500, bandwidth: "1G", bfd: true, p2p_v4_len: 31, description: null, notes: null, edge_trunk: null, admin_status: true };
 
 beforeAll(() => {
@@ -4159,9 +4178,10 @@ describe("BgpSessions", () => {
     await screen.findByText(/Sessão BGP #1/);
     await userEvent.selectOptions(screen.getByLabelText("Community"), "1");
     await userEvent.click(screen.getByRole("button", { name: "Associar" }));
-    expect(await screen.findByText("blackhole")).toBeInTheDocument();
+    // "blackhole" aparece também no <option> do catálogo — assertar pelo botão da linha (sem colisão)
+    expect(await screen.findByRole("button", { name: "Remover" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Remover" }));
-    await waitFor(() => expect(screen.queryByText("blackhole")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Remover" })).not.toBeInTheDocument());
   });
 
   it("define senha MD5 e mostra que há senha", async () => {
@@ -4234,8 +4254,12 @@ import BgpSessions from "@/pages/BgpSessions";
 - [ ] **Step 8: commit** (backend e web em commits separados)
 
 ```bash
-git add src/gerenet/domain/services/bgp_sessions.py src/gerenet/api/routers/bgp_sessions.py tests/api/test_communities_api.py
+git add src/gerenet/domain/services/bgp_sessions.py src/gerenet/api/routers/bgp_sessions.py tests/api/test_communities_api.py tests/api/conftest.py
 git commit -m "feat(api): GET /bgp-sessions/{id}/communities para leitura das associacoes
+
+O mesclado carrega também a infra autouse spa_sem_build: sem ela o gate
+backend depende do web/dist existir na máquina (catch-all → 404 no lugar
+do 405 natural), quebrando test_lista_communities_read_only do C1.
 
 Co-Authored-By: Claude Code <noreply@anthropic.com>"
 ```
