@@ -16,6 +16,8 @@ from gerenet.api.routers import (
     reconciliation,
     sites,
 )
+from gerenet.api.static_spa import montar_spa
+from gerenet.config import get_settings
 
 
 async def _erro_validacao(request: Request, exc: RequestValidationError) -> JSONResponse:
@@ -53,5 +55,8 @@ def create_app() -> FastAPI:
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    # Por último: fallback SPA (só registra se web/dist/index.html existir).
+    montar_spa(app, get_settings().static_dir)
 
     return app
