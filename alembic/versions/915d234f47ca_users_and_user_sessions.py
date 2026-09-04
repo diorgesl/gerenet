@@ -1,7 +1,7 @@
 """users and user_sessions
 
 Revision ID: 915d234f47ca
-Revises: b1a71e5e129b
+Revises: 6973e567cc43
 Create Date: 2026-09-04
 
 """
@@ -14,7 +14,7 @@ from alembic import op
 USER_ROLES = ("visualizador", "operador", "aprovador", "executor", "administrador")
 
 revision: str = '915d234f47ca'
-down_revision: str | Sequence[str] | None = 'b1a71e5e129b'
+down_revision: str | Sequence[str] | None = '6973e567cc43'
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
