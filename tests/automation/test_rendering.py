@@ -242,3 +242,97 @@ def test_render_device_inexistente(db_session: Session) -> None:
 
     with pytest.raises(NotFoundError):
         render_desejado(db_session, 9999)
+
+
+def test_render_stack_ipv6_nao_emite_par_v4_interno(db_session: Session) -> None:
+    from gerenet.automation.render import render_desejado
+
+    env = _ambiente(db_session)
+    circ_id = _circuito_reservado(db_session, env, code="CIRC-R-12", stack="ipv6", vlan_mode="separada")
+    _sessao(db_session, env, circ_id, afi="ipv6")
+
+    resultado = render_desejado(db_session, env["ne_id"])
+    sub = next(b for b in resultado.blocos if b.tipo == "subinterface")
+    # Ruling 3: o par v4 interno (notes "Par v4 interno — derivação do sufixo")
+    # nunca vira endereço de interface numa interface IPv6-only
+    assert "interface Eth-Trunk127.3" in sub.comandos
+    assert not any(l.startswith("ip address") for l in sub.comandos)
+    assert "ipv6 enable" in sub.comandos
+    assert "ipv6 address 2804:194C:1000::6400:1/126" in sub.comandos
+
+
+def test_render_duas_sessoes_mesmo_asn_afi_deduplica_definicoes(db_session: Session) -> None:
+    from gerenet.automation.render import render_desejado
+
+    env = _ambiente(db_session)
+    perfis = {p.name: p.id for p in list_policy_profiles(db_session, direction="export")}
+    create_authorization(
+        db_session, PrefixAuthorizationCreate(
+            organization_id=env["org_id"], family="ipv4", prefix="192.0.2.0/24",
+        ), actor="cli",
+    )
+    circ_a = _circuito_reservado(db_session, env, code="CIRC-R-13", stack="ipv4")
+    _sessao(db_session, env, circ_a, afi="ipv4", export_profile_id=perfis["default"])
+    # vrf próprio: o serviço só permite 1 ipv4 ativo por (device, VRF)
+    circ_b = _circuito_reservado(db_session, env, code="CIRC-R-14", stack="ipv4", vrf="vpn-b")
+    _sessao(db_session, env, circ_b, afi="ipv4", export_profile_id=perfis["default"])
+
+    resultado = render_desejado(db_session, env["ne_id"])
+    # mesmas autorizações + mesmo produto ⇒ cada DEFINICAO (por nome) 1× só:
+    # 2 prefix-lists diferentes (IN-V4 da import + DEFAULT-V4 da export), 1 RP
+    # de import + 1 RP de export, embora haja 2 sessões ativas
+    assert sum(1 for b in resultado.blocos if b.tipo == "prefix_list") == 2
+    assert sum(1 for b in resultado.blocos if b.tipo == "route_policy_import") == 1
+    assert sum(1 for b in resultado.blocos if b.tipo == "route_policy_export") == 1
+    assert sum(1 for b in resultado.blocos if b.tipo == "bgp_peer") == 2
+    assert resultado.texto.count("ip ip-prefix IP-PFX-64512-IN-V4 index 10 permit 192.0.2.0/24") == 1
+    assert resultado.texto.count("ip ip-prefix IP-PFX-DEFAULT-V4 index 10 permit 0.0.0.0/0") == 1
+    assert resultado.texto.count("route-policy RP-64512-IMPORT-V4 permit node 10") == 1
+    assert resultado.texto.count("route-policy RP-64512-EXPORT-V4 permit node 10") == 1
+    # a definição fica anotada com a 1ª sessão que a gerou
+    import_bloco = next(b for b in resultado.blocos if b.tipo == "route_policy_import")
+    assert import_bloco.objeto == "session"
+
+
+def test_render_qinq_emite_vlan_type_dot1q_088a8(db_session: Session) -> None:
+    from gerenet.automation.render import render_desejado
+
+    env = _ambiente(db_session)
+    circ_id = _circuito_reservado(db_session, env, code="CIRC-R-11", stack="ipv4", qinq=True)
+    _sessao(db_session, env, circ_id, afi="ipv4")
+
+    texto = render_desejado(db_session, env["ne_id"]).texto
+    assert "vlan-type dot1q 0x88a8 vid 2" in texto
+    assert "vlan-type dot1q vid 2" not in texto
+
+
+def test_render_subinterface_no_backup_edge(db_session: Session) -> None:
+    from gerenet.automation.render import render_desejado
+
+    env = _ambiente(db_session)
+    ne_bkp = create_device(
+        db_session, DeviceCreate(name="ne-render-bkp", management_address="10.30.0.3", asn=64600),
+        actor="cli",
+    )
+    link_device(db_session, env["site_id"], ne_bkp.id, actor="cli")
+    base: dict = {
+        "code": "CIRC-R-10", "organization_id": env["org_id"], "site_id": env["site_id"],
+        "access_device_id": env["sw_id"], "access_port": "GE0/0/1",
+        "edge_device_id": env["ne_id"], "backup_edge_device_id": ne_bkp.id,
+        "edge_trunk": "Eth-Trunk127",
+    }
+    circ_id = create_circuit(db_session, CircuitCreate(**base), actor="cli").id
+    reservar_circuito(db_session, circ_id, actor="cli")
+    p = _pontas(db_session, circ_id)
+    sessoes_svc.create_session(
+        db_session, BgpSessionCreate(
+            circuit_id=circ_id, device_id=ne_bkp.id, afi="ipv4",
+            local_address=p["v4_l"], remote_address=p["v4_r"],
+        ), actor="cli",
+    )
+
+    resultado = render_desejado(db_session, ne_bkp.id)
+    # Ruling 3: o backup também recebe a subinterface do circuito
+    assert [b.tipo for b in resultado.blocos] == ["subinterface", "bgp_peer"]
+    assert resultado.blocos[0].objeto == "circuit"
+    assert resultado.blocos[0].objeto_id == circ_id

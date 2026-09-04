@@ -4,6 +4,7 @@ description {{ descricao }}
 {% endif %}
 {% if qinq %}
 vlan-type dot1q 0x88a8 vid {{ vid }}
+# second-dot1q: encapsulamento interno duplo — dívida do ciclo C
 {% else %}
 vlan-type dot1q vid {{ vid }}
 {% endif %}

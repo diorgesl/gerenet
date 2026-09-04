@@ -69,10 +69,15 @@ def _reserva(session: Session, circuito: models.Circuit) -> dict[str, dict]:
     """Endereços locais da reserva do circuito por família.
 
     Devolve {"ipv4": {"vid", "endereco", "mascara"}, "ipv6": {"vid", "endereco"}}
-    das pontas LOCAIS (IPAM §25.8). O par v4 interno de stack=ipv6 não vira
-    endereço de interface (ruling 3). VLAN family None (unica) serve às duas
+    das pontas LOCAIS (IPAM §25.8). VLAN family None (unica) serve às duas
     famílias. O /len deriva do CIDR reservado (o IPAM respeita
     circuit.p2p_v4_len).
+
+    Em stack=ipv6 o IpPrefix v4 nunca vira endereço de interface (Ruling 3):
+    o ipam cria a linha apenas para derivar o sufixo do /126 (§25.8, notes
+    "Par v4 interno …"), e o guard `circuito.stack != "ipv6"` espelha
+    exatamente a condição em que essa linha existe — sem o guard, a
+    subinterface IPv6-only receberia um `ip address` do par interno.
     """
     vlans = list(session.scalars(
         select(models.Vlan).where(models.Vlan.circuit_id == circuito.id).order_by(models.Vlan.vid)
@@ -85,7 +90,7 @@ def _reserva(session: Session, circuito: models.Circuit) -> dict[str, dict]:
     }
     local_v4: tuple[str, str] | None = None
     local_v6: str | None = None
-    if 4 in por_versao:
+    if 4 in por_versao and circuito.stack != "ipv6":
         rede = ipaddress.ip_network(por_versao[4])
         ponta_local, _ = pontas_v4(por_versao[4])
         local_v4 = (ponta_local, str(rede.netmask))
@@ -160,8 +165,33 @@ def _bloco_sub(session: Session, circuito: models.Circuit, device_id: int) -> li
     return blocos
 
 
+def _apensa_definicao(
+    blocos: list[BlocoRender],
+    definidas: dict[tuple[str, str], BlocoRender],
+    bloco: BlocoRender,
+    chave: tuple[str, str],
+) -> None:
+    """Dedup de blocos de DEFINIÇÃO (prefix-list / route-policy) por (tipo, nome).
+
+    Texto idêntico para o mesmo nome ⇒ emite 1× (fica o bloco da 1ª sessão,
+    com o objeto_id dela). O mesmo nome com texto DIVERGENTE não colapsa —
+    os blocos convivem no render (dívida de design §25.4/§25.5, ciclo C) e a
+    comparação de conteúdo da T5 acusa a maioria. Sem "definidas", duas
+    sessões do mesmo ASN+AFI no mesmo device duplicariam as definições.
+    """
+    existente = definidas.get(chave)
+    if existente is not None:
+        if existente.texto == bloco.texto:
+            return
+        blocos.append(bloco)
+        return
+    definidas[chave] = bloco
+    blocos.append(bloco)
+
+
 def _bloco_import(
-    session: Session, circuito: models.Circuit, sessao: models.BgpSession, emitidas: set[str]
+    session: Session, circuito: models.Circuit, sessao: models.BgpSession,
+    definidas: dict[tuple[str, str], BlocoRender],
 ) -> list[BlocoRender]:
     """Prefix-list + RP de importação a partir das autorizações da org (§6.4).
 
@@ -178,24 +208,30 @@ def _bloco_import(
     asn_par = sessao.asn_remote
     nome_pfx = naming.pfx_in(asn_par, afi)
     nome_rp = naming.rp_import(asn_par, afi)
+    entradas: list[dict] = []
+    if sessao.allow_default_route:
+        entradas.append({"index": 5, "prefixo": "0.0.0.0/0" if afi == "ipv4" else "::/0"})
+    entradas += [
+        {"index": 10 * (i + 1), "prefixo": a.prefix} for i, a in enumerate(autorizadas)
+    ]
+    comandos = _render_template(
+        "prefix_list", {"nome": nome_pfx, "afi": afi, "entradas": entradas}
+    ).splitlines()
     blocos: list[BlocoRender] = []
-    if nome_pfx not in emitidas:
-        emitidas.add(nome_pfx)
-        entradas: list[dict] = []
-        if sessao.allow_default_route:
-            entradas.append({"index": 5, "prefixo": "0.0.0.0/0" if afi == "ipv4" else "::/0"})
-        entradas += [
-            {"index": 10 * (i + 1), "prefixo": a.prefix} for i, a in enumerate(autorizadas)
-        ]
-        comandos = _render_template(
-            "prefix_list", {"nome": nome_pfx, "afi": afi, "entradas": entradas}
-        ).splitlines()
-        blocos.append(BlocoRender("prefix_list", "session", sessao.id, comandos))
+    _apensa_definicao(
+        blocos, definidas,
+        BlocoRender("prefix_list", "session", sessao.id, comandos),
+        ("prefix_list", nome_pfx),
+    )
     comandos = _render_template(
         "route_policy_import",
         {"nome": nome_rp, "afi": afi, "lista": nome_pfx, "local_preference": sessao.local_preference},
     ).splitlines()
-    blocos.append(BlocoRender("route_policy_import", "session", sessao.id, comandos))
+    _apensa_definicao(
+        blocos, definidas,
+        BlocoRender("route_policy_import", "session", sessao.id, comandos),
+        ("route_policy_import", nome_rp),
+    )
     return blocos
 
 
@@ -217,9 +253,14 @@ def _bloco_divida(texto: str) -> BlocoRender:
 
 
 def _bloco_export(
-    session: Session, sessao: models.BgpSession, emitidas: set[str]
+    session: Session, sessao: models.BgpSession,
+    definidas: dict[tuple[str, str], BlocoRender],
 ) -> list[BlocoRender]:
-    """RP de exportação pelo produto §6.5/§25.5 (ruling 5); dívidas viram comentário."""
+    """RP de exportação pelo produto §6.5/§25.5 (ruling 5); dívidas viram comentário.
+
+    Prefix-list/RP de exportação passam pelo dedup de definições (texto
+    idêntico ⇒ 1 bloco; divergente ⇒ convivem, dívida §25.4/§25.5 ciclo C).
+    """
     if sessao.export_profile_id is None:
         return []
     perfil = get_policy_profile(session, sessao.export_profile_id)
@@ -227,39 +268,52 @@ def _bloco_export(
     nome_rp = naming.rp_export(sessao.asn_remote, afi)
     produto = perfil.name
     if produto == "full":
-        return [_bloco_rp_export(sessao, nome_rp, afi, None)]
+        blocos: list[BlocoRender] = []
+        _apensa_definicao(
+            blocos, definidas, _bloco_rp_export(sessao, nome_rp, afi, None),
+            ("route_policy_export", nome_rp),
+        )
+        return blocos
     if produto == "default":
         lista = naming.pfx_produto("default", afi)
-        if lista not in emitidas:
-            emitidas.add(lista)
-            prefixo = "0.0.0.0/0" if afi == "ipv4" else "::/0"
-            comandos = _render_template(
-                "prefix_list", {"nome": lista, "afi": afi, "entradas": [{"index": 10, "prefixo": prefixo}]}
-            ).splitlines()
-            return [
-                BlocoRender("prefix_list", "session", sessao.id, comandos),
-                _bloco_rp_export(sessao, nome_rp, afi, lista),
-            ]
-        return [_bloco_rp_export(sessao, nome_rp, afi, lista)]
+        prefixo = "0.0.0.0/0" if afi == "ipv4" else "::/0"
+        comandos = _render_template(
+            "prefix_list", {"nome": lista, "afi": afi, "entradas": [{"index": 10, "prefixo": prefixo}]}
+        ).splitlines()
+        blocos = []
+        _apensa_definicao(
+            blocos, definidas,
+            BlocoRender("prefix_list", "session", sessao.id, comandos),
+            ("prefix_list", lista),
+        )
+        _apensa_definicao(
+            blocos, definidas, _bloco_rp_export(sessao, nome_rp, afi, lista),
+            ("route_policy_export", nome_rp),
+        )
+        return blocos
     if produto in ("cdn", "personalizado"):
         if not perfil.prefixes:
             return [_bloco_divida(
                 f"produto '{produto}': sem prefixos cadastrados para montar a lista de anúncio."
             )]
         lista = naming.pfx_produto(produto, afi)
-        if lista not in emitidas:
-            emitidas.add(lista)
-            entradas = [
-                {"index": 10 * (i + 1), "prefixo": p} for i, p in enumerate(perfil.prefixes)
-            ]
-            comandos = _render_template(
-                "prefix_list", {"nome": lista, "afi": afi, "entradas": entradas}
-            ).splitlines()
-            return [
-                BlocoRender("prefix_list", "session", sessao.id, comandos),
-                _bloco_rp_export(sessao, nome_rp, afi, lista),
-            ]
-        return [_bloco_rp_export(sessao, nome_rp, afi, lista)]
+        entradas = [
+            {"index": 10 * (i + 1), "prefixo": p} for i, p in enumerate(perfil.prefixes)
+        ]
+        comandos = _render_template(
+            "prefix_list", {"nome": lista, "afi": afi, "entradas": entradas}
+        ).splitlines()
+        blocos = []
+        _apensa_definicao(
+            blocos, definidas,
+            BlocoRender("prefix_list", "session", sessao.id, comandos),
+            ("prefix_list", lista),
+        )
+        _apensa_definicao(
+            blocos, definidas, _bloco_rp_export(sessao, nome_rp, afi, lista),
+            ("route_policy_export", nome_rp),
+        )
+        return blocos
     # default_internas / parcial
     return [_bloco_divida(
         f"produto '{produto}': rotas internas ainda não renderizáveis (ciclo C/F5)."
@@ -302,7 +356,7 @@ def render_desejado(session: Session, device_id: int) -> RenderResult:
                 circuitos[sessao.circuit_id] = circ
 
     blocos: list[BlocoRender] = []
-    emitidas: set[str] = set()
+    definidas: dict[tuple[str, str], BlocoRender] = {}
     for circ_id in sorted(circuitos):
         circuito = circuitos[circ_id]
         blocos.extend(_bloco_sub(session, circuito, device_id))
@@ -310,8 +364,8 @@ def render_desejado(session: Session, device_id: int) -> RenderResult:
             list_sessions(session, circuit_id=circ_id, device_id=device_id),
             key=lambda s: (s.afi, s.remote_address),
         ):
-            import_blocos = _bloco_import(session, circuito, sessao, emitidas)
-            export_blocos = _bloco_export(session, sessao, emitidas)
+            import_blocos = _bloco_import(session, circuito, sessao, definidas)
+            export_blocos = _bloco_export(session, sessao, definidas)
             blocos.extend(import_blocos)
             blocos.extend(export_blocos)
             rp_import = next(

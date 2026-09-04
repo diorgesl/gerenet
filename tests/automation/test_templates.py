@@ -45,6 +45,7 @@ def test_subinterface_qinq_0x88a8() -> None:
     ) == "\n".join([
         "interface Eth-Trunk127.100",
         "vlan-type dot1q 0x88a8 vid 100",
+        "# second-dot1q: encapsulamento interno duplo — dívida do ciclo C",
         "ipv6 enable",
         "ipv6 address 2001:DB8::1/126",
     ])
