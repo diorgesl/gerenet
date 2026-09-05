@@ -82,3 +82,20 @@ def test_patch_contato_desativa_e_audita(db_session: Session, client: TestClient
         e.type for e in db_session.scalars(select(models.AuditEvent).order_by(models.AuditEvent.id))
     ]
     assert tipos == ["organization.create", "contact.create", "contact.disable", "contact.update"]
+
+
+def test_lista_nao_inclui_desativados_sem_flag(client: TestClient) -> None:
+    org_id = _org(client)
+    criado = client.post(
+        "/api/v1/contacts",
+        json={"organization_id": org_id, "name": "Zé NOC", "kind": "noc"},
+        headers=_auth(),
+    )
+    assert criado.status_code == 201
+    cid = criado.json()["id"]
+    assert client.patch(f"/api/v1/contacts/{cid}", json={"admin_status": False}, headers=_auth()).status_code == 200
+
+    sem_flag = client.get("/api/v1/contacts", headers=_auth()).json()
+    assert [c["name"] for c in sem_flag] == []
+    com_flag = client.get("/api/v1/contacts?include_disabled=true", headers=_auth()).json()
+    assert [c["name"] for c in com_flag] == ["Zé NOC"]

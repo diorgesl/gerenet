@@ -15,8 +15,10 @@ SessionDep = Annotated[Session, Depends(get_db)]
 
 
 @router.get("", response_model=list[ContactOut])
-def listar(session: SessionDep, organization_id: int | None = None) -> list:
-    return svc.list_contacts(session, organization_id=organization_id)
+def listar(
+    session: SessionDep, organization_id: int | None = None, include_disabled: bool = False
+) -> list:
+    return svc.list_contacts(session, organization_id=organization_id, include_disabled=include_disabled)
 
 
 @router.post("", response_model=ContactOut, status_code=201)

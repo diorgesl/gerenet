@@ -33,11 +33,14 @@ def get_contact(session: Session, contact_id: int) -> models.Contact:
     return contato
 
 
-def list_contacts(session: Session, organization_id: int | None = None) -> list[models.Contact]:
+def list_contacts(
+    session: Session, organization_id: int | None = None, include_disabled: bool = False
+) -> list[models.Contact]:
     stmt = select(models.Contact).order_by(models.Contact.name)
     if organization_id is not None:
         stmt = stmt.where(models.Contact.organization_id == organization_id)
-    stmt = stmt.where(models.Contact.admin_status.is_(True))
+    if not include_disabled:
+        stmt = stmt.where(models.Contact.admin_status.is_(True))
     return list(session.scalars(stmt))
 
 
