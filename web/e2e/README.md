@@ -31,10 +31,11 @@ E2E_PASSWORD="e2e-super-8" npm run test:e2e
   da raiz do repositório** (`cd ..` antes de `uv run uvicorn ...`; o webServer
   roda com CWD em `web/`, e `static_dir` (`web/dist`) é um caminho relativo ao
   CWD — subido de `web/` a API não registraria o fallback SPA e `/login`
-  devolveria `{"detail":"Not Found"}`), com `reuseExistingServer: true` (se já
-  houver algo na porta 8000, reusa — **não rode os e2e com o uvicorn de dev
-  ativo na 8000**: ele é reutilizado, a env `GERENET_DATABASE_URL` do comando
-  vira no-op e o seed toca o banco de dev).
+  devolveria `{"detail":"Not Found"}`), com `reuseExistingServer: false`
+  (**falha dura**: se houver algo na porta 8000, o smoke morre já no boot —
+  nunca reusa o uvicorn de dev, que apontaria para o banco default `gerenet`;
+  antes de rodar, garantia: nada escutando na 8000 — por exemplo, pare o
+  uvicorn de dev).
 - `e2e/setup.ts` é o **globalSetup**: roda automaticamente antes dos specs e
   é **idempotente** (repetir a execução não duplica o seed):
   - usuário `admin` (perfil `administrador`): verificado via
@@ -72,7 +73,7 @@ default (`postgresql+psycopg://gerenet:gerenet@localhost:5432/gerenet`).
 | Sintoma | Causa provável / solução |
 | --- | --- |
 | `Executable doesn't exist at ...` | rodar o passo 2 (`playwright install chromium`); se o download falhar (`Download failure, code=1`), o CDN do Playwright está inacessível na rede — instalar o Google Chrome do sistema e rodar com `GERENET_E2E_CHANNEL=chrome` (o config só usa o canal "chrome" com essa env) |
-| fumos rodam mas não contra o banco dedicado | o webServer reutiliza uvicorn já ativo na porta 8000 (feito para o dev) — **pare o uvicorn de dev** antes do `npm run test:e2e`, senão o seed toca o banco default `gerenet` |
+| `Error: reuseExistingServer` / port 8000 ocupada | outro processo já escuta na 8000 (uvicorn de dev, IDE…) — **pare-o** e rode de novo; o webServer agora falha duro, sem reutilizar |
 | `Timed out waiting 60000ms from config.webServer` | subiu com o banco fora do ar ou a porta 8000 ocupada por outro processo sem `uvicorn` sendo servido — verificar `docker compose ps` e o que está na 8000 |
 | login falha com "Usuário ou senha inválidos" | o `admin` do banco `gerenet_e2e` tem senha de outra execução — resetar com `GERENET_DATABASE_URL="postgresql+psycopg://gerenet:gerenet@localhost:5432/gerenet_e2e" uv run gerenet users set-password admin` (com a env! sem ela o reset cai no banco de dev) e usar o mesmo valor de `E2E_PASSWORD` |
 | testes passam mas o seed parece vazio | conferir `GERENET_DATABASE_URL` apontando para `gerenet_e2e` no mesmo comando |

@@ -21,7 +21,9 @@ export default defineConfig({
     command:
       'bash -c "npm run build && cd .. && uv run uvicorn gerenet.api.main:create_app --factory --port 8000"',
     url: "http://localhost:8000/api/v1/dashboard",
-    reuseExistingServer: true,
+    // Falha dura: se a porta 8000 já estiver ocupada, o smoke morre no boot —
+    // nunca reusa o uvicorn de dev (que apontaria para o banco default).
+    reuseExistingServer: false,
     timeout: 60_000,
   },
 });
