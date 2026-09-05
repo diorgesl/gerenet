@@ -2609,7 +2609,7 @@ function formatarIdade(seconds: number | null | undefined): string {
   if (seconds == null) return "—";
   if (seconds < 60) return `${Math.round(seconds)} s`;
   if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
-  if (seconds < 86400) return `${(seconds / 3600).toFixed(1)} h`;
+  if (seconds < 3 * 86400) return `${(seconds / 3600).toFixed(1)} h`; // até 72 h, em horas
   return `${(seconds / 86400).toFixed(1)} d`;
 }
 ```
