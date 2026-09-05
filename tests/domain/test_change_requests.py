@@ -54,9 +54,9 @@ def _sessao(db_session, circ, dev):
     )
 
 
-def _cria_cr(db_session, circ, *, acao="provision"):
+def _cria_cr(db_session, circ, *, acao="provision", usuario="operador"):
     from gerenet.domain.schemas import ChangeRequestCreate
-    sol = _usuario(db_session, "operador", "operador")
+    sol = _usuario(db_session, usuario, "operador")
     cr = crsvc.create_change_request(
         db_session,
         ChangeRequestCreate(circuit_id=circ.id, acao=acao, motivo="Ativação.", criticidade="media"),
@@ -147,6 +147,34 @@ def test_cancelar_de_rascunho_e_de_aprovado(db_session):
     cr, _ = _cria_cr(db_session, circ)
     crsvc.cancelar(db_session, cr.id, actor="operador")
     assert cr.status == "cancelado"
+    # leg "de aprovado": §4.1 permite aprovado → cancelado
+    cr2, _ = _cria_cr(db_session, circ, usuario="operador2")
+    crsvc.enviar_para_aprovacao(db_session, cr2.id, actor="operador")
+    aprovador = _usuario(db_session, "aprovador-c", "aprovador")
+    crsvc.aprovar(db_session, cr2.id, ator_id=aprovador.id, actor="aprovador", decisao="aprovar")
+    crsvc.cancelar(db_session, cr2.id, actor="operador")
+    assert cr2.status == "cancelado"
+
+
+def test_reaprovar_apos_reconciliar(db_session):
+    """§4.1: reconciliar devolve a CR a aguardando_aprovacao — nova aprovação
+    (ciclo novo); a duplicidade (§4.3) vale por ciclo."""
+    circ, dev = _circuito_reservado(db_session)
+    _sessao(db_session, circ, dev)
+    cr, _ = _cria_cr(db_session, circ)
+    crsvc.enviar_para_aprovacao(db_session, cr.id, actor="operador")
+    aprovador = _usuario(db_session, "aprovador", "aprovador")
+    cr = crsvc.aprovar(db_session, cr.id, ator_id=aprovador.id, actor="aprovador", decisao="aprovar")
+    crsvc.marcar_executando(db_session, cr.id, actor="executor")
+    cr.steps[0].status = "falhou"
+    cr.steps[0].erro = "VRP: % Error"
+    cr.status = "parcial"
+    db_session.commit()
+    cr = crsvc.reconciliar(db_session, cr.id, actor="operador")
+    assert cr.status == "aguardando_aprovacao"
+    cr = crsvc.aprovar(db_session, cr.id, ator_id=aprovador.id, actor="aprovador", decisao="aprovar")
+    assert cr.status == "aprovado"
+    assert len(cr.approvals) == 2
 
 
 def test_reconciliar_de_parcial_recomputa_steps(db_session):

@@ -111,13 +111,37 @@ def enviar_para_aprovacao(session: Session, cr_id: int, *, actor: str = "cli") -
     return cr
 
 
+def _ciclo_novo(session: Session, cr_id: int) -> bool:
+    """CR reaberta por `reconciliar` (ciclo novo de aprovação, §4.1)?
+
+    O último evento entre as decisões da CR (approved/rejected/reconciled)
+    decide: reconciliação depois de uma decisão abre ciclo novo — a
+    duplicidade (§4.3) vale por ciclo; sem esse evento, nenhuma decisão existe.
+    """
+    ultimo = session.scalar(
+        select(models.AuditEvent.type)
+        .where(
+            models.AuditEvent.type.in_(("change.approved", "change.rejected", "change.reconciled")),
+            models.AuditEvent.details["objeto"].as_string() == "change_request",
+            models.AuditEvent.details["objeto_id"].as_integer() == cr_id,
+        )
+        .order_by(models.AuditEvent.id.desc())
+        .limit(1)
+    )
+    return ultimo == "change.reconciled"
+
+
 def aprovar(
     session: Session, cr_id: int, *, ator_id: int | None = None, actor: str,
     decisao: str, comentario: str | None = None,
 ) -> models.ChangeRequest:
     cr = get_change_request(session, cr_id)
-    if cr.approvals:
+    if cr.approvals and not _ciclo_novo(session, cr_id):
         raise ValidationError("Change request já decidida — aprovação é única (spec §4.3).")
+    if ator_id is None:
+        raise ValidationError("Aprovador não informado.")
+    if decisao not in ("aprovar", "rejeitar"):
+        raise ValidationError(f"Decisão inválida: {decisao!r} — use \"aprovar\" ou \"rejeitar\".")
     if ator_id is not None and cr.solicitante_id is not None and cr.solicitante_id == ator_id:
         raise ValidationError("Aprovador não pode ser o próprio solicitante (spec §3.3).")
     _transita(session, cr, "aprovado" if decisao == "aprovar" else "rejeitado",
