@@ -18,6 +18,8 @@ cd web
 #   (o config usa o canal "chrome" apenas com essa env)
 
 # 3. Rodar os fumos (build da SPA + uvicorn + seed automático + specs)
+# (máquina fresca: primeiro crie/migre o banco dedicado — ver a seção
+#  "Banco dedicado `gerenet_e2e`" abaixo, passos 1-2)
 GERENET_DATABASE_URL="postgresql+psycopg://gerenet:gerenet@localhost:5432/gerenet_e2e" \
 E2E_PASSWORD="e2e-super-8" npm run test:e2e
 ```
