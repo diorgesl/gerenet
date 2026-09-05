@@ -208,12 +208,47 @@ def test_fail_open_quando_redis_fora_do_ar() -> None:
     rate_limit.limpar(sem_redis, "10.0.0.1", "op1")  # não levanta
 ```
 
-Em `tests/api/test_auth_api.py`, adicione:
+Em `tests/api/test_auth_api.py`, adicione (antes dos testes, a classe `FakeRedis` é duplicada aqui — `tests/` não é pacote, então `from tests.api...` não importa; mantemos os fakes locais):
 
 ```python
+class FakeRedis:
+    """Duck-type do Redis — cópia local (tests/ não é pacote; ver plano)."""
+
+    def __init__(self) -> None:
+        self._valores: dict[str, int] = {}
+
+    def get(self, chave: str) -> int | None:
+        return self._valores.get(chave)
+
+    def incr(self, chave: str) -> int:
+        self._valores[chave] = self._valores.get(chave, 0) + 1
+        return self._valores[chave]
+
+    def expire(self, chave: str, _segundos: int) -> bool:
+        return True
+
+    def delete(self, chave: str) -> int:
+        return 1 if self._valores.pop(chave, None) is not None else 0
+
+
+class RedisForaDoAr:
+    """Redis que levanta em todo comando — simula a indisponibilidade."""
+
+    def get(self, *_args, **_kwargs):
+        raise RedisConnectionError("redis fora do ar")
+
+    def incr(self, *_args, **_kwargs):
+        raise RedisConnectionError("redis fora do ar")
+
+    def expire(self, *_args, **_kwargs):
+        raise RedisConnectionError("redis fora do ar")
+
+    def delete(self, *_args, **_kwargs):
+        raise RedisConnectionError("redis fora do ar")
+
+
 def test_login_bloqueia_apos_5_falhas(client: TestClient, db_session, monkeypatch) -> None:
     from gerenet.api import rate_limit
-    from tests.api.test_rate_limit import FakeRedis
 
     _cria_usuario(db_session)
     fake = FakeRedis()
@@ -231,7 +266,6 @@ def test_login_bloqueia_apos_5_falhas(client: TestClient, db_session, monkeypatc
 
 def test_login_sucesso_limpa_falhas(client: TestClient, db_session, monkeypatch) -> None:
     from gerenet.api import rate_limit
-    from tests.api.test_rate_limit import FakeRedis
 
     _cria_usuario(db_session)
     fake = FakeRedis()
@@ -248,7 +282,6 @@ def test_login_sucesso_limpa_falhas(client: TestClient, db_session, monkeypatch)
 
 def test_login_fail_open_sem_redis(client: TestClient, db_session, monkeypatch) -> None:
     from gerenet.api import rate_limit
-    from tests.api.test_rate_limit import RedisForaDoAr
 
     _cria_usuario(db_session)
     monkeypatch.setattr(rate_limit, "conectar", lambda settings: RedisForaDoAr())
@@ -2829,7 +2862,7 @@ git commit -m "chore(e2e): reuseExistingServer desligado — falha dura na porta
 
 - [ ] **Step 1: Atualizar a seção "Estado do repositório"**
 
-Em `CLAUDE.md`, na subseção "Web (ciclo C2)", adicione um parágrafo novo após o bloco atual:
+Em `CLAUDE.md`, na subseção "Web (ciclo C2)", **corrija antes** a frase que descreve o `reuseExistingServer` ligado (o T13 desligou): o texto atual "com `reuseExistingServer` ligado, **não deixe o uvicorn de dev ativo na :8000** durante o `npm run test:e2e`, senão o seed toca o banco de dev" vira "com `reuseExistingServer: false` (desde o C3), porta 8000 ocupada = **falha dura no boot** — nunca reusa o uvicorn de dev". Depois adicione um parágrafo novo após o bloco atual:
 
 ```markdown
 - Web (ciclo C3): edição/reativação de todas as entidades com página web
