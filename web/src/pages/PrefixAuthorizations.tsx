@@ -27,7 +27,6 @@ export default function PrefixAuthorizations() {
   const desativar = usePrefixAuthorizationDesativar();
   const [form, setForm] = useState(FORM_VAZIO);
   const [desativando, setDesativando] = useState<PrefixAuthorizationOut | null>(null);
-  const [reativando, setReativando] = useState<PrefixAuthorizationOut | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [editando, setEditando] = useState<PrefixAuthorizationOut | null>(null);
   const [formEdit, setFormEdit] = useState(FORM_VAZIO);
@@ -137,15 +136,11 @@ export default function PrefixAuthorizations() {
                 Editar
               </button>
             )}
-            {podeEscrever && z.admin_status ? (
+            {podeEscrever && z.admin_status && (
               <button type="button" onClick={() => setDesativando(z)}>
                 Desativar
               </button>
-            ) : podeEscrever ? (
-              <button type="button" onClick={() => setReativando(z)}>
-                Reativar
-              </button>
-            ) : null}
+            )}
           </>
         )}
       />
@@ -161,20 +156,6 @@ export default function PrefixAuthorizations() {
               .catch((err) => setErro(err instanceof ApiError ? err.message : "Falha ao desativar a autorização."));
         }}
         onCancelar={() => setDesativando(null)}
-        confirmando={desativar.isPending}
-      />
-      <ConfirmDialog
-        aberto={reativando !== null}
-        titulo={`Reativar ${reativando?.prefix ?? ""}?`}
-        mensagem="O prefixo volta ao catálogo ativo."
-        onConfirmar={() => {
-          if (reativando)
-            void desativar
-              .mutateAsync({ id: reativando.id, admin_status: true })
-              .then(() => setReativando(null))
-              .catch((err) => setErro(err instanceof ApiError ? err.message : "Falha ao reativar a autorização."));
-        }}
-        onCancelar={() => setReativando(null)}
         confirmando={desativar.isPending}
       />
       {editando && (
