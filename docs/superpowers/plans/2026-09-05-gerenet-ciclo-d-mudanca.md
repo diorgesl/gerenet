@@ -628,6 +628,25 @@ git commit -m "feat(automation): render inverso de remoção por encontrado (cic
 
 ### Task 3: Plano — `automation/changes.py` (provision + remoção)
 
+> **Nota de revisão (SDD, 2026-09-05):** na execução, a revisão da Task 2
+> apontou dois defeitos no código verbatim desta seção do plano (Task 2):
+> (1) dedup assimétrico — `blocos_remocao` passou a dedupear `undo route-policy`
+> por (tipo, nome) e `undo peer ... enable` per-family por (afi, remote),
+> espelhando `_apensa_definicao`; (2) gate total — `blocos_remocao` retorna `[]`
+> se `resources` não trouxer `bgp_peers` E `interfaces`. A Task 3 abaixo já
+> assume as assinaturas (que não mudaram) e o contrato corrigido (um undo por
+> definição; sem plano parcial de recursos incompletos).
+>
+> **Nota de revisão 2 (SDD, 2026-09-05):** a revisão desta Task também apontou
+> um defeito no código verbatim do plano: o skip de `bgp_peer` em `_ja_existe`
+> era por endereço apenas — troca de ASN renderiza bloco novo mas o plano o
+> saltava (falso "convergido"; `reconcile` marca `peer.asn` como crítica).
+> Corrigido na execução: o skip agora exige mesmo `peer`, mesmo `afi` e `asn`
+> igual ao encontrado (entrada sem `asn` ⇒ não pula — conservador). O texto do
+> código abaixo seguiu com o predicado antigo (IP-only); o contrato vigente é
+> o corrigido. Nota para a Task 4 (re-diff §5.3): não reusar um predicado
+> IP-only como check de aborto.
+
 **Files:**
 - Create: `src/gerenet/automation/changes.py`
 - Test: `tests/automation/test_changes.py`
