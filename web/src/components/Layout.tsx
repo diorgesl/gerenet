@@ -46,6 +46,10 @@ const GRUPOS_NAV: { rotulo: string; itens: { para: string; rotulo: string; admin
       { para: "/users", rotulo: "Usuários", admin: true },
     ],
   },
+  {
+    rotulo: "Ajuda",
+    itens: [{ para: "/wiki", rotulo: "Wiki" }],
+  },
 ];
 
 const TODOS = GRUPOS_NAV.flatMap((g) => g.itens);

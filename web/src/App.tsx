@@ -22,6 +22,7 @@ import DesiredConfig from "@/pages/DesiredConfig";
 import Reconcile from "@/pages/Reconcile";
 import Jobs from "@/pages/Jobs";
 import JobDetail from "@/pages/JobDetail";
+import Wiki from "@/pages/Wiki";
 
 export default function App() {
   return (
@@ -53,6 +54,7 @@ export default function App() {
         <Route path="/reconcile" element={<Reconcile />} />
         <Route path="/jobs" element={<Jobs />} />
         <Route path="/jobs/:id" element={<JobDetail />} />
+        <Route path="/wiki/:slug?" element={<Wiki />} />
         <Route
           path="/users"
           element={

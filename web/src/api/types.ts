@@ -230,3 +230,16 @@ export interface CollectResposta {
   message: string;
   job_id: string;
 }
+export interface WikiIndiceItem {
+  slug: string;
+  titulo: string;
+  secao: string;
+  order: number;
+  em_breve: boolean;
+}
+export interface WikiPagina {
+  slug: string;
+  titulo: string;
+  em_breve: boolean;
+  html: string;
+}
