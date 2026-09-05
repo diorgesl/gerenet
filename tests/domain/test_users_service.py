@@ -39,6 +39,7 @@ def test_user_session_model(db_session) -> None:
 """Serviço de usuários — hash scrypt, CRUD, autenticação e sessões."""
 
 import pytest
+from sqlalchemy.orm import Session
 
 from gerenet.config import Settings
 from gerenet.domain.services import users as svc
@@ -165,3 +166,38 @@ def test_sessoes_validar_encerrar_e_expirada(db_session) -> None:
     db_session.commit()
     assert svc.validar_sessao(db_session, t2) is None  # expirada → None (e apagada lazy)
     assert db_session.scalar(select(models.UserSession)) is None
+
+
+def test_disable_user_invalida_sessoes_e_audita(db_session: Session) -> None:
+    from gerenet.config import Settings
+
+    usuario = svc.create_user(
+        db_session, username="boss", password="senha-super-8", role="administrador", actor="cli"
+    )
+    svc.iniciar_sessao(db_session, usuario, settings=Settings(_env_file=None))
+    db_session.commit()
+
+    desativado = svc.disable_user(db_session, usuario.id, actor="admin")
+    assert desativado is usuario
+    assert usuario.is_active is False
+    # Sessões apagadas (mesmo padrão do reset de senha).
+    linhas = db_session.scalar(select(models.UserSession).where(models.UserSession.user_id == usuario.id))
+    assert linhas is None
+    evento = db_session.scalar(
+        select(models.AuditEvent).where(models.AuditEvent.type == "user.disable")
+    )
+    assert evento is not None and evento.actor == "admin"
+
+
+def test_disable_user_idempotente_nao_audita_de_novo(db_session: Session) -> None:
+    usuario = svc.create_user(
+        db_session, username="op2", password="senha-super-8", role="operador", actor="cli"
+    )
+    db_session.commit()
+    svc.disable_user(db_session, usuario.id, actor="cli")
+    db_session.commit()
+    svc.disable_user(db_session, usuario.id, actor="cli")  # repetição: sem transição (Ruling 5)
+    eventos = db_session.scalars(
+        select(models.AuditEvent).where(models.AuditEvent.type == "user.disable")
+    ).all()
+    assert len(eventos) == 1

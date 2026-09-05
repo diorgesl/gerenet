@@ -37,6 +37,15 @@ def criar(data: UserCreateIn, actor: AdminDep, session: SessionDep) -> object:
 def atualizar(data: UserUpdateIn, user_id: int, actor: AdminDep, session: SessionDep) -> object:
     if actor.usuario is not None and actor.usuario.id == user_id and (data.role is not None or data.is_active is not None):
         raise HTTPException(status_code=403, detail="Não é possível alterar a própria conta.")
+    mudancas = data.model_dump(exclude_unset=True)
+    # Ruling 1: desativação pura vira o serviço dedicado (evento user.disable,
+    # sessões revogadas). Mudança mista (ex.: username + is_active) segue no
+    # update genérico — mesmo desenho dos demais routers.
+    if mudancas == {"is_active": False}:
+        try:
+            return svc.disable_user(session, user_id, actor=actor.nome)
+        except NotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
     try:
         return svc.update_user(
             session,

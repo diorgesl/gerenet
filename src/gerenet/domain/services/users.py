@@ -144,6 +144,30 @@ def update_user(
     return usuario
 
 
+def disable_user(
+    session: Session, user_id: int, *, actor: str = "cli"
+) -> models.User:
+    usuario = session.get(models.User, user_id)
+    if usuario is None:
+        raise NotFoundError("Usuário não encontrado.")
+    if usuario.is_active is False:
+        return usuario  # idempotente: sem transição, sem evento (Ruling 5)
+    # Segurança: desativar invalida as sessões — reativar não "ressuscita" sessões
+    # antigas (padrão de reset_password, spec §4.5).
+    session.execute(delete(models.UserSession).where(models.UserSession.user_id == user_id))
+    usuario.is_active = False
+    registrar(
+        session,
+        tipo="user.disable",
+        ator=actor,
+        objeto="user",
+        objeto_id=usuario.id,
+        antes={"is_active": True},
+        depois={"is_active": False},
+    )
+    return usuario
+
+
 def reset_password(session: Session, user_id: int, *, password: str, actor: str = "cli") -> models.User:
     _valida_senha(password)
     usuario = session.get(models.User, user_id)

@@ -137,13 +137,12 @@ def test_desativar_invalida_sessao(client: TestClient, db_session) -> None:
     # admin desativa o diogo
     assert client.patch(f"/api/v1/users/{operador['id']}", json={"is_active": False}).status_code == 200
 
-    # sessão existente do diogo passa a 403 (usuário desativado) e login novo → 401
+    # desativar revoga as sessões do diogo: o cookie antigo não vale mais (401)
     diogo.cookies.clear()
     diogo.cookies.set("gerenet_sess", token)
-    # /users é o único router com require_actor no T4 (a troca dos demais é a T5)
     resp = diogo.get("/api/v1/users")
-    assert resp.status_code == 403
-    assert resp.json() == {"detail": "Usuário desativado."}
+    assert resp.status_code == 401
+    assert resp.json() == {"detail": "Chave de API ausente ou inválida."}
     # reativa para o "logon próprio" do bloco a seguir (autenticar rejeita inativo)
     assert client.patch(f"/api/v1/users/{operador['id']}", json={"is_active": True}).status_code == 200
     with TestClient(create_app()) as diogo:
@@ -153,9 +152,9 @@ def test_desativar_invalida_sessao(client: TestClient, db_session) -> None:
 
         assert client.patch(f"/api/v1/users/{operador['id']}", json={"is_active": False}).status_code == 200
 
-        # o cookie do diogo (da sessão do logon próprio) agora é rejeitado
+        # a segunda desativação também revoga a sessão: o cookie é inválido (401)
         resp = diogo.get("/api/v1/users")
-        assert resp.status_code == 403
-        assert resp.json() == {"detail": "Usuário desativado."}
+        assert resp.status_code == 401
+        assert resp.json() == {"detail": "Chave de API ausente ou inválida."}
         login = diogo.post("/api/v1/auth/login", json={"username": "diogo", "password": "senha-super-8"})
         assert login.status_code == 401
