@@ -43,7 +43,11 @@ export default function DeviceDetail() {
         <button
           className="primary"
           disabled={coletar.isPending}
-          onClick={() => void coletar.mutateAsync(device.id).then(() => navigate(`/jobs?device_id=${device.id}`))}
+          onClick={() =>
+            void coletar.mutateAsync(device.id)
+              .then(() => navigate(`/jobs?device_id=${device.id}`))
+              .catch(() => undefined)
+          }
         >
           Coletar agora
         </button>

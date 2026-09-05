@@ -191,7 +191,12 @@ export default function Devices() {
             {podeEscrever && (
               <button
                 type="button"
-                onClick={() => void coletar.mutateAsync(d.id).then(() => navigate(`/jobs?device_id=${d.id}`))}
+                onClick={() =>
+                  void coletar
+                    .mutateAsync(d.id)
+                    .then(() => navigate(`/jobs?device_id=${d.id}`))
+                    .catch((err) => setErro(err instanceof ApiError ? err.message : "Falha ao coletar."))
+                }
               >
                 Coletar agora
               </button>

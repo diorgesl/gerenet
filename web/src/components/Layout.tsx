@@ -65,7 +65,10 @@ export function Layout() {
         </Link>
         {atual && <span className="app-breadcrumb">/ {atual.rotulo}</span>}
         <span className="app-usuario">{usuario?.username}</span>
-        <button type="button" onClick={() => void logout().then(() => navigate("/login"))}>
+        <button
+          type="button"
+          onClick={() => void logout().then(() => navigate("/login")).catch(() => undefined)}
+        >
           Sair
         </button>
       </header>
