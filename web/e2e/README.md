@@ -11,12 +11,11 @@ docker compose up -d
 uv run alembic upgrade head
 
 # 2. Navegador do Playwright — uma vez (download do Chromium)
-# (nesta máquina o CDN do Playwright está inacessível: o config usa
-#  `channel: "chrome"`, que executa o Google Chrome do sistema)
 cd web
 ./node_modules/.bin/playwright install chromium
-# — ou, se o CDN estiver bloqueado, basta ter o Google Chrome instalado
-#   no sistema (o config já aponta para o canal "chrome")
+# — ou, se o download falhar (CDN do Playwright inacessível), instale o
+#   Google Chrome do sistema e rode os fumos com GERENET_E2E_CHANNEL=chrome
+#   (o config usa o canal "chrome" apenas com essa env)
 
 # 3. Rodar os fumos (build da SPA + uvicorn + seed automático + specs)
 GERENET_DATABASE_URL="postgresql+psycopg://gerenet:gerenet@localhost:5432/gerenet_e2e" \
@@ -31,7 +30,9 @@ E2E_PASSWORD="e2e-super-8" npm run test:e2e
   roda com CWD em `web/`, e `static_dir` (`web/dist`) é um caminho relativo ao
   CWD — subido de `web/` a API não registraria o fallback SPA e `/login`
   devolveria `{"detail":"Not Found"}`), com `reuseExistingServer: true` (se já
-  houver algo na porta 8000, reusa).
+  houver algo na porta 8000, reusa — **não rode os e2e com o uvicorn de dev
+  ativo na 8000**: ele é reutilizado, a env `GERENET_DATABASE_URL` do comando
+  vira no-op e o seed toca o banco de dev).
 - `e2e/setup.ts` é o **globalSetup**: roda automaticamente antes dos specs e
   é **idempotente** (repetir a execução não duplica o seed):
   - usuário `admin` (perfil `administrador`): verificado via
@@ -46,11 +47,20 @@ E2E_PASSWORD="e2e-super-8" npm run test:e2e
 
 ## Banco dedicado `gerenet_e2e`
 
-Os e2e usam o banco dedicado **`gerenet_e2e`** (já migrado) — **nunca** o banco
-default `gerenet` nem `gerenet_test*`. A variável `GERENET_DATABASE_URL` deve
-estar no processo do `npm run test:e2e`: o uvicorn do webServer, o CLI do seed
-e o globalSetup herdam o mesmo ambiente. Sem ela, o uvicorn cai no banco
-default dev, e o seed pode tocar dados de desenvolvimento.
+Os e2e usam o banco dedicado **`gerenet_e2e`** — **nunca** o banco default
+`gerenet` nem `gerenet_test*`. Em máquina fresca, os passos únicos (o compose
+só cria o default `gerenet`):
+
+```bash
+docker compose exec db createdb -U gerenet gerenet_e2e
+GERENET_DATABASE_URL="postgresql+psycopg://gerenet:gerenet@localhost:5432/gerenet_e2e" \
+  uv run alembic upgrade head
+```
+
+A variável `GERENET_DATABASE_URL` deve estar no processo do `npm run test:e2e`:
+o uvicorn do webServer, o CLI do seed e o globalSetup herdam o mesmo ambiente.
+Sem ela, o uvicorn cai no banco default dev, e o seed pode tocar dados de
+desenvolvimento.
 
 Fluxo padrão do dev sem e2e: `uv run alembic upgrade head` contra o banco
 default (`postgresql+psycopg://gerenet:gerenet@localhost:5432/gerenet`).
@@ -59,9 +69,10 @@ default (`postgresql+psycopg://gerenet:gerenet@localhost:5432/gerenet`).
 
 | Sintoma | Causa provável / solução |
 | --- | --- |
-| `Executable doesn't exist at ...` | rodar o passo 2 (`playwright install chromium`); se o download falhar (`Download failure, code=1`), o CDN do Playwright está inacessível na rede — o config usa `channel: "chrome"` (Google Chrome do sistema), então basta ter o Chrome instalado e nenhum download é necessário |
+| `Executable doesn't exist at ...` | rodar o passo 2 (`playwright install chromium`); se o download falhar (`Download failure, code=1`), o CDN do Playwright está inacessível na rede — instalar o Google Chrome do sistema e rodar com `GERENET_E2E_CHANNEL=chrome` (o config só usa o canal "chrome" com essa env) |
+| fumos rodam mas não contra o banco dedicado | o webServer reutiliza uvicorn já ativo na porta 8000 (feito para o dev) — **pare o uvicorn de dev** antes do `npm run test:e2e`, senão o seed toca o banco default `gerenet` |
 | `Timed out waiting 60000ms from config.webServer` | subiu com o banco fora do ar ou a porta 8000 ocupada por outro processo sem `uvicorn` sendo servido — verificar `docker compose ps` e o que está na 8000 |
-| login falha com "Usuário ou senha inválidos" | o `admin` do banco `gerenet_e2e` tem senha de outra execução — resetar com `uv run gerenet users set-password admin` (mesmo valor de `E2E_PASSWORD`) |
+| login falha com "Usuário ou senha inválidos" | o `admin` do banco `gerenet_e2e` tem senha de outra execução — resetar com `GERENET_DATABASE_URL="postgresql+psycopg://gerenet:gerenet@localhost:5432/gerenet_e2e" uv run gerenet users set-password admin` (com a env! sem ela o reset cai no banco de dev) e usar o mesmo valor de `E2E_PASSWORD` |
 | testes passam mas o seed parece vazio | conferir `GERENET_DATABASE_URL` apontando para `gerenet_e2e` no mesmo comando |
 
 ## Specs

@@ -3,9 +3,15 @@ import { defineConfig } from "@playwright/test";
 export default defineConfig({
   testDir: "./e2e",
   timeout: 30_000,
-  // channel "chrome": usa o Google Chrome do sistema (o CDN do Playwright
-  // está inacessível nesta máquina — ver e2e/README.md, seção "Erros comuns").
-  use: { baseURL: "http://localhost:8000", trace: "retain-on-failure", channel: "chrome" },
+  // Default: Chromium do Playwright (`playwright install chromium`).
+  // GERENET_E2E_CHANNEL=chrome executa o Google Chrome do sistema — para
+  // máquinas sem download do Chromium (CDN do Playwright inacessível);
+  // ver e2e/README.md, seção "Erros comuns".
+  use: {
+    baseURL: "http://localhost:8000",
+    trace: "retain-on-failure",
+    ...(process.env.GERENET_E2E_CHANNEL === "chrome" ? { channel: "chrome" } : {}),
+  },
   // Seed idempotente (usuário admin + site/device/org/circuito/autorização)
   // antes dos specs — run-book em e2e/README.md (Task 12).
   globalSetup: "./e2e/setup.ts",

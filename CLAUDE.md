@@ -124,6 +124,9 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   `npm run test:e2e` (fumos Playwright: webServer sobe build + uvicorn em :8000
   — o uvicorn do webServer é iniciado na raiz do repo, pois `static_dir` `web/dist`
   é relativo ao CWD; e o globalSetup `web/e2e/setup.ts` roda o seed idempotente;
-  run-book em `web/e2e/README.md`).
+  run-book em `web/e2e/README.md`). Os e2e exigem o banco **dedicado**
+  `gerenet_e2e` (criado e migrado à parte — nunca o default `gerenet`); com
+  `reuseExistingServer` ligado, **não deixe o uvicorn de dev ativo na :8000**
+  durante o `npm run test:e2e`, senão o seed toca o banco de dev.
 - Convenções previstas no `.gitignore`: Python com venv e pytest (`.venv/`, `.pytest_cache/`), deploy via Docker Compose em `deploy/` com `.env` ignorado, `config.yaml` local com segredos **fora do repositório**, logs em `logs/` ignorados.
 - `.claude/settings.local.json` contém token e aponta o harness para uma API externa: é arquivo local — não versionar nem alterar.
