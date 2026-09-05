@@ -11,8 +11,23 @@ function led(total: number, ativos: number): string {
   return ativos === total ? "green" : "amber";
 }
 
+const IDADE_ALERTA_SEGUNDOS = 24 * 3600;
+
+function formatarIdade(seconds: number | null | undefined): string {
+  if (seconds == null) return "—";
+  if (seconds < 60) return `${Math.round(seconds)} s`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
+  if (seconds < 3 * 86400) return `${(seconds / 3600).toFixed(1)} h`; // até 72 h, em horas
+  return `${(seconds / 86400).toFixed(1)} d`;
+}
+
 export default function Dashboard() {
   const { data, isLoading, error } = useDashboard();
+
+  const idades = (data?.per_device ?? [])
+    .map((d) => d.snapshot_age_seconds)
+    .filter((x): x is number => x != null);
+  const idadeMax = idades.length > 0 ? Math.max(...idades) : null;
 
   return (
     <main>
@@ -51,7 +66,20 @@ export default function Dashboard() {
               <span className="val">{data.ip_prefixes.reserved}</span>
               <span className="label">prefixos<br />reservados</span>
             </div>
+            <div className="metric">
+              <span
+                className={`led ${idadeMax == null ? "gray" : idadeMax > IDADE_ALERTA_SEGUNDOS ? "amber" : "green"}`}
+                aria-hidden="true"
+              />
+              <span className="val">{formatarIdade(idadeMax)}</span>
+              <span className="label">idade da<br />última coleta</span>
+            </div>
           </section>
+          <p className="estados-equipamentos">
+            {data.devices.total} equipamento(s): {data.devices.by_comm_status.ok ?? 0} ok ·{" "}
+            {data.devices.by_comm_status.fail ?? 0} com falha ·{" "}
+            {data.devices.by_comm_status.unknown ?? 0} desconhecido
+          </p>
 
           <h2>Equipamentos</h2>
           {data.per_device.length === 0 ? (

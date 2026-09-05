@@ -14,7 +14,7 @@ const DASH = {
       site_name: null,
       comm_status: "ok",
       last_collected_at: null,
-      snapshot_age_seconds: null,
+      snapshot_age_seconds: 90000, // 25 h > 24 h → alerta
       latest_snapshot: {
         id: 9,
         status: "error",
@@ -56,6 +56,8 @@ describe("Dashboard", () => {
     );
     expect(await screen.findByText("ne8000-01")).toBeTruthy();
     expect(screen.getByText("2/3")).toBeTruthy();
+    expect(screen.getByText("3 equipamento(s): 1 ok · 1 com falha · 1 desconhecido")).toBeTruthy();
+    expect(screen.getByText("25.0 h")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Equipamentos" })).toBeTruthy();
     expect(screen.getByText("Authentication to device failed.")).toBeTruthy();
     expect(screen.getByText("coleta")).toBeTruthy();

@@ -219,6 +219,7 @@ h2 {
   background: var(--ink-2);
   margin-bottom: 1.4rem;
 }
+.estados-equipamentos { margin: 0 0 0.8rem; font-size: 0.85rem; color: var(--sub); }
 .metric {
   display: flex;
   align-items: center;
