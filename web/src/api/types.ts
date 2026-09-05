@@ -130,7 +130,20 @@ export interface CommunityOut {
   id: number;
   name: string;
   notes: string | null;
+  admin_status: boolean;
 }
+
+export type CommunityUpdateIn = { name?: string; notes?: string | null; admin_status?: boolean };
+
+export type PolicyProfileUpdateIn = {
+  name?: string;
+  label?: string;
+  direction?: "import" | "export";
+  kind?: string;
+  prefixes?: string[] | null;
+  notes?: string | null;
+  admin_status?: boolean;
+};
 export interface AuditEventOut {
   id: number;
   type: string;

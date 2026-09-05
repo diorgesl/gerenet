@@ -164,6 +164,11 @@ input:focus, select:focus, textarea:focus {
 .form-inline { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.6rem; margin-bottom: 1rem; }
 .form-inline .field { margin-bottom: 0; }
 
+.inline-check {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  margin: 0.8rem 0; font-size: 0.9rem; cursor: pointer;
+}
+
 /* Status = LED, não pill: ponto de cor + palavra curta */
 .badge {
   display: inline-flex;

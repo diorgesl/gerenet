@@ -45,7 +45,8 @@ const FORM_VAZIO = {
 
 export default function BgpSessions() {
   const { podeEscrever } = useAuth();
-  const { data, isLoading, error } = useBgpSessions();
+  const [incluirInativos, setIncluirInativos] = useState(false);
+  const { data, isLoading, error } = useBgpSessions({ include_disabled: incluirInativos });
   const { data: circuits } = useCircuits();
   const { data: devices } = useDevices();
   const { data: profiles } = usePolicyProfiles();
@@ -53,6 +54,7 @@ export default function BgpSessions() {
   const atualizar = useBgpSessionAtualizar();
   const [form, setForm] = useState(FORM_VAZIO);
   const [desativando, setDesativando] = useState<BgpSessionOut | null>(null);
+  const [reativando, setReativando] = useState<BgpSessionOut | null>(null);
   const [erro, setErro] = useState<string | null>(null);
 
   const num = (v: string) => (v === "" ? null : Number(v));
@@ -94,6 +96,14 @@ export default function BgpSessions() {
   return (
     <main>
       <PageHeader titulo="Sessões BGP" />
+      <label className="inline-check">
+        <input
+          type="checkbox"
+          checked={incluirInativos}
+          onChange={(e) => setIncluirInativos(e.target.checked)}
+        />
+        Ver desativados
+      </label>
       {podeEscrever && (
         <form onSubmit={onSubmit} className="grid-form">
           <FormField label="Circuito *">
@@ -199,6 +209,7 @@ export default function BgpSessions() {
           { key: "addresses", title: "Endereços", render: (s) => `${s.local_address} ↔ ${s.remote_address}` },
           { key: "asns", title: "ASNs", render: (s) => `${s.asn_local ?? "—"} ↔ ${s.asn_remote ?? "—"}` },
           { key: "shutdown", title: "Situação", render: (s) => <StatusBadge estado={s.shutdown ? "inativo" : "ativo"} /> },
+          { key: "cadastro", title: "Cadastro", render: (s) => <StatusBadge estado={s.admin_status ? "ativo" : "inativo"} /> },
         ]}
         linhas={data ?? []}
         carregando={isLoading}
@@ -211,6 +222,11 @@ export default function BgpSessions() {
                 Desativar
               </button>
             )}
+            {podeEscrever && !s.admin_status && (
+              <button type="button" onClick={() => setReativando(s)}>
+                Reativar
+              </button>
+            )}
           </>
         )}
       />
@@ -219,9 +235,27 @@ export default function BgpSessions() {
         titulo={`Desativar sessão ${desativando?.id ?? ""}?`}
         mensagem="A sessão fica indisponível para novas configurações; o registro permanece."
         onConfirmar={() => {
-          if (desativando) void atualizar.mutateAsync({ id: desativando.id, admin_status: false }).then(() => setDesativando(null));
+          if (desativando)
+            void atualizar
+              .mutateAsync({ id: desativando.id, admin_status: false })
+              .then(() => setDesativando(null))
+              .catch((err) => setErro(err instanceof ApiError ? err.message : "Falha ao desativar a sessão."));
         }}
         onCancelar={() => setDesativando(null)}
+        confirmando={atualizar.isPending}
+      />
+      <ConfirmDialog
+        aberto={reativando !== null}
+        titulo={`Reativar sessão ${reativando?.id ?? ""}?`}
+        mensagem="A sessão volta ao catálogo ativo."
+        onConfirmar={() => {
+          if (reativando)
+            void atualizar
+              .mutateAsync({ id: reativando.id, admin_status: true })
+              .then(() => setReativando(null))
+              .catch((err) => setErro(err instanceof ApiError ? err.message : "Falha ao reativar a sessão."));
+        }}
+        onCancelar={() => setReativando(null)}
         confirmando={atualizar.isPending}
       />
     </main>

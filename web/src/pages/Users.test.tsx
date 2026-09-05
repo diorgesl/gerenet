@@ -26,12 +26,24 @@ const USUARIOS = [
   },
 ];
 
+const INATIVO1 = {
+  id: 3,
+  username: "inativo-1",
+  role: "operador",
+  is_active: false,
+  last_login_at: null,
+  created_at: "2026-09-04T00:00:00Z",
+};
+
 function mockFetch() {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
       if (url === "/api/v1/auth/me") {
         return new Response(JSON.stringify(ME_ADMIN), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url === "/api/v1/users?include_disabled=true") {
+        return new Response(JSON.stringify([...USUARIOS, INATIVO1]), { status: 200, headers: { "Content-Type": "application/json" } });
       }
       if (url === "/api/v1/users" && (init?.method === undefined || init.method === "GET")) {
         return new Response(JSON.stringify(USUARIOS), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -82,5 +94,14 @@ describe("Users", () => {
       expect(patch).toBeTruthy();
       expect(JSON.parse(String(patch![1].body))).toEqual({ is_active: false });
     });
+  });
+
+  it("mostra Reativar para usuário inativo", async () => {
+    mockFetch();
+    renderUsers();
+    await screen.findByText("boss");
+    await userEvent.click(screen.getByLabelText("Ver desativados"));
+    await screen.findByText("inativo-1");
+    expect(screen.getByRole("button", { name: "Reativar" })).toBeInTheDocument();
   });
 });

@@ -14,11 +14,13 @@ const FORM_VAZIO = { name: "", legal_name: "", kind: "downstream" as "downstream
 
 export default function Organizations() {
   const { podeEscrever } = useAuth();
-  const { data, isLoading, error } = useOrganizations();
+  const [incluirInativos, setIncluirInativos] = useState(false);
+  const { data, isLoading, error } = useOrganizations({ includeDisabled: incluirInativos });
   const criar = useOrganizationCriar();
   const atualizar = useOrganizationAtualizar();
   const [form, setForm] = useState(FORM_VAZIO);
   const [desativando, setDesativando] = useState<OrganizationOut | null>(null);
+  const [reativando, setReativando] = useState<OrganizationOut | null>(null);
   const [erro, setErro] = useState<string | null>(null);
 
   async function onSubmit(e: FormEvent) {
@@ -42,6 +44,14 @@ export default function Organizations() {
   return (
     <main>
       <PageHeader titulo="Organizações" />
+      <label className="inline-check">
+        <input
+          type="checkbox"
+          checked={incluirInativos}
+          onChange={(e) => setIncluirInativos(e.target.checked)}
+        />
+        Ver desativados
+      </label>
       {podeEscrever && (
         <form onSubmit={onSubmit} className="grid-form">
           <FormField label="Nome *">
@@ -82,6 +92,7 @@ export default function Organizations() {
           { key: "asn", title: "ASN", render: (o) => o.asn ?? "—" },
           { key: "irr_as_set", title: "IRR AS-SET", render: (o) => o.irr_as_set ?? "—" },
           { key: "notes", title: "Observações", render: (o) => o.notes ?? "—" },
+          { key: "admin_status", title: "Situação", render: (o) => <StatusBadge estado={o.admin_status ? "ativo" : "inativo"} /> },
         ]}
         linhas={data ?? []}
         carregando={isLoading}
@@ -90,6 +101,10 @@ export default function Organizations() {
           podeEscrever && o.admin_status ? (
             <button type="button" onClick={() => setDesativando(o)}>
               Desativar
+            </button>
+          ) : podeEscrever ? (
+            <button type="button" onClick={() => setReativando(o)}>
+              Reativar
             </button>
           ) : null
         }
@@ -100,9 +115,26 @@ export default function Organizations() {
         mensagem="A organização fica indisponível para novos cadastros; o registro permanece."
         onConfirmar={() => {
           if (desativando)
-            void atualizar.mutateAsync({ id: desativando.id, admin_status: false }).then(() => setDesativando(null));
+            void atualizar
+              .mutateAsync({ id: desativando.id, admin_status: false })
+              .then(() => setDesativando(null))
+              .catch((err) => setErro(err instanceof ApiError ? err.message : "Falha ao desativar a organização."));
         }}
         onCancelar={() => setDesativando(null)}
+        confirmando={atualizar.isPending}
+      />
+      <ConfirmDialog
+        aberto={reativando !== null}
+        titulo={`Reativar ${reativando?.name ?? ""}?`}
+        mensagem="A organização volta ao catálogo ativo."
+        onConfirmar={() => {
+          if (reativando)
+            void atualizar
+              .mutateAsync({ id: reativando.id, admin_status: true })
+              .then(() => setReativando(null))
+              .catch((err) => setErro(err instanceof ApiError ? err.message : "Falha ao reativar a organização."));
+        }}
+        onCancelar={() => setReativando(null)}
         confirmando={atualizar.isPending}
       />
     </main>

@@ -14,7 +14,8 @@ const ROLES = ["visualizador", "operador", "aprovador", "executor", "administrad
 
 export default function Users() {
   const { usuario } = useAuth();
-  const { data, isLoading, error } = useUsers();
+  const [incluirInativos, setIncluirInativos] = useState(false);
+  const { data, isLoading, error } = useUsers({ includeDisabled: incluirInativos });
   const criar = useUserCriar();
   const atualizar = useUserAtualizar();
   const senha = useUserSenha();
@@ -44,6 +45,14 @@ export default function Users() {
   return (
     <main>
       <PageHeader titulo="Usuários" />
+      <label className="inline-check">
+        <input
+          type="checkbox"
+          checked={incluirInativos}
+          onChange={(e) => setIncluirInativos(e.target.checked)}
+        />
+        Ver desativados
+      </label>
       <form onSubmit={onSubmit} className="form-inline">
         <FormField label="Usuário">
           <input value={username} onChange={(e) => setUsername(e.target.value)} required />
@@ -86,7 +95,7 @@ export default function Users() {
             </button>
             {u.id !== usuario?.id && (
               <button type="button" onClick={() => alternarAtivo(u)}>
-                Desativar
+                {u.is_active ? "Desativar" : "Reativar"}
               </button>
             )}
           </>

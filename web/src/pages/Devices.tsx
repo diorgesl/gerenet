@@ -33,7 +33,8 @@ const FORM_VAZIO = {
 export default function Devices() {
   const { podeEscrever } = useAuth();
   const navigate = useNavigate();
-  const { data, isLoading, error } = useDevices();
+  const [incluirInativos, setIncluirInativos] = useState(false);
+  const { data, isLoading, error } = useDevices({ includeDisabled: incluirInativos });
   const { data: sites } = useSites();
   const criar = useDeviceCriar();
   const atualizar = useDeviceAtualizar();
@@ -41,6 +42,7 @@ export default function Devices() {
 
   const [form, setForm] = useState(FORM_VAZIO);
   const [desativando, setDesativando] = useState<DeviceOut | null>(null);
+  const [reativando, setReativando] = useState<DeviceOut | null>(null);
   const [erro, setErro] = useState<string | null>(null);
 
   async function onSubmit(e: FormEvent) {
@@ -68,12 +70,21 @@ export default function Devices() {
     if (!desativando) return;
     void atualizar
       .mutateAsync({ id: desativando.id, admin_status: false })
-      .then(() => setDesativando(null));
+      .then(() => setDesativando(null))
+      .catch((err) => setErro(err instanceof ApiError ? err.message : "Falha ao desativar o equipamento."));
   }
 
   return (
     <main>
       <PageHeader titulo="Equipamentos" />
+      <label className="inline-check">
+        <input
+          type="checkbox"
+          checked={incluirInativos}
+          onChange={(e) => setIncluirInativos(e.target.checked)}
+        />
+        Ver desativados
+      </label>
       {podeEscrever && (
         <form onSubmit={onSubmit} className="grid-form">
           <FormField label="Nome *">
@@ -124,6 +135,7 @@ export default function Devices() {
           { key: "role", title: "Função", render: (d) => d.role ?? "—" },
           { key: "comm_status", title: "Comunicação", render: (d) => <StatusBadge estado={d.comm_status} /> },
           { key: "last_collected_at", title: "Última coleta", render: (d) => <TimeAgo iso={d.last_collected_at} /> },
+          { key: "admin_status", title: "Situação", render: (d) => <StatusBadge estado={d.admin_status ? "ativo" : "inativo"} /> },
         ]}
         linhas={data ?? []}
         carregando={isLoading}
@@ -143,6 +155,11 @@ export default function Devices() {
                 Desativar
               </button>
             )}
+            {podeEscrever && !d.admin_status && (
+              <button type="button" onClick={() => setReativando(d)}>
+                Reativar
+              </button>
+            )}
           </>
         )}
       />
@@ -152,6 +169,20 @@ export default function Devices() {
         mensagem="Não exclui o registro: só desativa a administração."
         onConfirmar={desativar}
         onCancelar={() => setDesativando(null)}
+        confirmando={atualizar.isPending}
+      />
+      <ConfirmDialog
+        aberto={reativando !== null}
+        titulo={`Reativar ${reativando?.name ?? ""}?`}
+        mensagem="Volta a ser gerenciado; a coleta será retomada."
+        onConfirmar={() => {
+          if (reativando)
+            void atualizar
+              .mutateAsync({ id: reativando.id, admin_status: true })
+              .then(() => setReativando(null))
+              .catch((err) => setErro(err instanceof ApiError ? err.message : "Falha ao reativar o equipamento."));
+        }}
+        onCancelar={() => setReativando(null)}
         confirmando={atualizar.isPending}
       />
     </main>

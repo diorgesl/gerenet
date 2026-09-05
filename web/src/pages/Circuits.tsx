@@ -34,7 +34,8 @@ const FORM_VAZIO = {
 
 export default function Circuits() {
   const { podeEscrever } = useAuth();
-  const { data, isLoading, error } = useCircuits();
+  const [incluirInativos, setIncluirInativos] = useState(false);
+  const { data, isLoading, error } = useCircuits({ includeDisabled: incluirInativos });
   const { data: organizations } = useOrganizations();
   const { data: sites } = useSites();
   const { data: devices } = useDevices();
@@ -42,6 +43,7 @@ export default function Circuits() {
   const atualizar = useCircuitAtualizar();
   const [form, setForm] = useState(FORM_VAZIO);
   const [desativando, setDesativando] = useState<CircuitOut | null>(null);
+  const [reativando, setReativando] = useState<CircuitOut | null>(null);
   const [erro, setErro] = useState<string | null>(null);
 
   const num = (v: string) => (v === "" ? null : Number(v));
@@ -79,6 +81,14 @@ export default function Circuits() {
   return (
     <main>
       <PageHeader titulo="Circuitos" />
+      <label className="inline-check">
+        <input
+          type="checkbox"
+          checked={incluirInativos}
+          onChange={(e) => setIncluirInativos(e.target.checked)}
+        />
+        Ver desativados
+      </label>
       {podeEscrever && (
         <form onSubmit={onSubmit} className="grid-form">
           <FormField label="Código *">
@@ -198,6 +208,10 @@ export default function Circuits() {
             <button type="button" onClick={() => setDesativando(c)}>
               Desativar
             </button>
+          ) : podeEscrever ? (
+            <button type="button" onClick={() => setReativando(c)}>
+              Reativar
+            </button>
           ) : null
         }
       />
@@ -206,9 +220,27 @@ export default function Circuits() {
         titulo={`Desativar ${desativando?.code ?? ""}?`}
         mensagem="O circuito não recebe novas sessões; o registro permanece."
         onConfirmar={() => {
-          if (desativando) void atualizar.mutateAsync({ id: desativando.id, admin_status: false }).then(() => setDesativando(null));
+          if (desativando)
+            void atualizar
+              .mutateAsync({ id: desativando.id, admin_status: false })
+              .then(() => setDesativando(null))
+              .catch((err) => setErro(err instanceof ApiError ? err.message : "Falha ao desativar o circuito."));
         }}
         onCancelar={() => setDesativando(null)}
+        confirmando={atualizar.isPending}
+      />
+      <ConfirmDialog
+        aberto={reativando !== null}
+        titulo={`Reativar ${reativando?.code ?? ""}?`}
+        mensagem="O circuito volta ao catálogo ativo."
+        onConfirmar={() => {
+          if (reativando)
+            void atualizar
+              .mutateAsync({ id: reativando.id, admin_status: true })
+              .then(() => setReativando(null))
+              .catch((err) => setErro(err instanceof ApiError ? err.message : "Falha ao reativar o circuito."));
+        }}
+        onCancelar={() => setReativando(null)}
         confirmando={atualizar.isPending}
       />
     </main>

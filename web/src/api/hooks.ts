@@ -7,6 +7,7 @@ import type {
   CircuitOut,
   CollectResposta,
   CommunityOut,
+  CommunityUpdateIn,
   ContactOut,
   DashboardOut,
   DesiredConfigOut,
@@ -14,6 +15,7 @@ import type {
   JobRunOut,
   OrganizationOut,
   PolicyProfileOut,
+  PolicyProfileUpdateIn,
   PrefixAuthorizationOut,
   ReconcileOut,
   SiteOut,
@@ -21,10 +23,10 @@ import type {
   UserOut,
 } from "./types";
 
-export function useUsers() {
+export function useUsers(opts?: { includeDisabled?: boolean }) {
   return useQuery({
-    queryKey: ["users"],
-    queryFn: () => apiFetch<UserOut[]>("/api/v1/users"),
+    queryKey: ["users", opts?.includeDisabled ?? false],
+    queryFn: () => apiFetch<UserOut[]>(opts?.includeDisabled ? "/api/v1/users?include_disabled=true" : "/api/v1/users"),
   });
 }
 
@@ -75,8 +77,11 @@ export function useJobPoll(id: number | null) {
   });
 }
 
-export function useLista<T>(chave: string, url: string) {
-  return useQuery({ queryKey: [chave], queryFn: () => apiFetch<T[]>(url) });
+export function useLista<T>(chave: string, url: string, opts: { includeDisabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: [chave, opts.includeDisabled ?? false],
+    queryFn: () => apiFetch<T[]>(opts.includeDisabled ? `${url}?include_disabled=true` : url),
+  });
 }
 
 export function useCriar<TIn, TOut>(chave: string, url: string) {
@@ -102,10 +107,10 @@ export function useAtualizar<TIn, TOut>(chave: string, url: string) {
   });
 }
 
-export const useDevices = () => useLista<DeviceOut>("devices", "/api/v1/devices");
-export const useSites = () => useLista<SiteOut>("sites", "/api/v1/sites");
-export const useOrganizations = () => useLista<OrganizationOut>("organizations", "/api/v1/organizations");
-export const useContacts = () => useLista<ContactOut>("contacts", "/api/v1/contacts");
+export const useDevices = (opts?: { includeDisabled?: boolean }) => useLista<DeviceOut>("devices", "/api/v1/devices", opts);
+export const useSites = (opts?: { includeDisabled?: boolean }) => useLista<SiteOut>("sites", "/api/v1/sites", opts);
+export const useOrganizations = (opts?: { includeDisabled?: boolean }) => useLista<OrganizationOut>("organizations", "/api/v1/organizations", opts);
+export const useContacts = (opts?: { includeDisabled?: boolean }) => useLista<ContactOut>("contacts", "/api/v1/contacts", opts);
 
 export type DeviceCreateIn = {
   name: string;
@@ -176,7 +181,7 @@ export const useContactCriar = () => useCriar<ContactCreateIn, ContactOut>("cont
 export const useContactAtualizar = () =>
   useAtualizar<Partial<ContactCreateIn> & { admin_status?: boolean }, ContactOut>("contacts", "/api/v1/contacts");
 
-export const useCircuits = () => useLista<CircuitOut>("circuits", "/api/v1/circuits");
+export const useCircuits = (opts?: { includeDisabled?: boolean }) => useLista<CircuitOut>("circuits", "/api/v1/circuits", opts);
 export const useCircuitDetail = (id: number) =>
   useQuery({ queryKey: ["circuit", id], queryFn: () => apiFetch<CircuitDetailOut>(`/api/v1/circuits/${id}`), enabled: id > 0 });
 
@@ -215,13 +220,14 @@ export function useCircuitoReservar() {
   });
 }
 
-export const useBgpSessions = (filtros?: { circuit_id?: number; device_id?: number }) =>
+export const useBgpSessions = (filtros?: { circuit_id?: number; device_id?: number; include_disabled?: boolean }) =>
   useQuery({
     queryKey: ["bgp-sessions", filtros],
     queryFn: () => {
       const qs = new URLSearchParams();
       if (filtros?.circuit_id) qs.set("circuit_id", String(filtros.circuit_id));
       if (filtros?.device_id) qs.set("device_id", String(filtros.device_id));
+      if (filtros?.include_disabled) qs.set("include_disabled", "true");
       const suf = qs.size > 0 ? `?${qs.toString()}` : "";
       return apiFetch<BgpSessionOut[]>(`/api/v1/bgp-sessions${suf}`);
     },
@@ -290,17 +296,22 @@ export function useSessionSenha() {
   });
 }
 
-export const usePolicyProfiles = (filtros?: { direction?: string }) =>
+export const usePolicyProfiles = (filtros?: { direction?: string; include_disabled?: boolean }) =>
   useQuery({
     queryKey: ["policy-profiles", filtros],
     queryFn: () => {
       const qs = new URLSearchParams();
       if (filtros?.direction) qs.set("direction", filtros.direction);
+      if (filtros?.include_disabled) qs.set("include_disabled", "true");
       const suf = qs.size > 0 ? `?${qs.toString()}` : "";
       return apiFetch<PolicyProfileOut[]>(`/api/v1/policy-profiles${suf}`);
     },
   });
-export const useCommunities = () => useLista<CommunityOut>("communities", "/api/v1/communities");
+export const useCommunities = (opts?: { includeDisabled?: boolean }) => useLista<CommunityOut>("communities", "/api/v1/communities", opts);
+export const useCommunityAtualizar = () =>
+  useAtualizar<CommunityUpdateIn, CommunityOut>("communities", "/api/v1/communities");
+export const usePolicyProfileAtualizar = () =>
+  useAtualizar<PolicyProfileUpdateIn, PolicyProfileOut>("policy-profiles", "/api/v1/policy-profiles");
 
 export const usePrefixAuthorizations = (filtros?: { organization_id?: number; family?: string; include_disabled?: boolean }) =>
   useQuery({

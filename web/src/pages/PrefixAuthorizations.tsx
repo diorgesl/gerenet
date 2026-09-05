@@ -10,6 +10,7 @@ import {
 } from "@/api/hooks";
 import { DataTable } from "@/components/DataTable";
 import { FormField } from "@/components/FormField";
+import { StatusBadge } from "@/components/StatusBadge";
 import { PageHeader } from "@/components/PageHeader";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import type { PrefixAuthorizationOut } from "@/api/types";
@@ -18,12 +19,14 @@ const FORM_VAZIO = { organization_id: "", family: "ipv4" as "ipv4" | "ipv6", pre
 
 export default function PrefixAuthorizations() {
   const { podeEscrever } = useAuth();
-  const { data, isLoading, error } = usePrefixAuthorizations();
+  const [incluirInativos, setIncluirInativos] = useState(false);
+  const { data, isLoading, error } = usePrefixAuthorizations({ include_disabled: incluirInativos });
   const { data: organizations } = useOrganizations();
   const criar = usePrefixAuthorizationCriar();
   const desativar = usePrefixAuthorizationDesativar();
   const [form, setForm] = useState(FORM_VAZIO);
   const [desativando, setDesativando] = useState<PrefixAuthorizationOut | null>(null);
+  const [reativando, setReativando] = useState<PrefixAuthorizationOut | null>(null);
   const [erro, setErro] = useState<string | null>(null);
 
   async function onSubmit(e: FormEvent) {
@@ -45,6 +48,14 @@ export default function PrefixAuthorizations() {
   return (
     <main>
       <PageHeader titulo="Prefixos autorizados" />
+      <label className="inline-check">
+        <input
+          type="checkbox"
+          checked={incluirInativos}
+          onChange={(e) => setIncluirInativos(e.target.checked)}
+        />
+        Ver desativados
+      </label>
       {podeEscrever && (
         <form onSubmit={onSubmit} className="grid-form">
           <FormField label="Organização *">
@@ -80,7 +91,7 @@ export default function PrefixAuthorizations() {
           { key: "prefix", title: "Prefixo" },
           { key: "origin", title: "Origem" },
           { key: "notes", title: "Observações", render: (z) => z.notes ?? "—" },
-          { key: "admin_status", title: "Situação", render: (z) => (z.admin_status ? "ativo" : "inativo") },
+          { key: "admin_status", title: "Situação", render: (z) => <StatusBadge estado={z.admin_status ? "ativo" : "inativo"} /> },
         ]}
         linhas={data ?? []}
         carregando={isLoading}
@@ -90,6 +101,10 @@ export default function PrefixAuthorizations() {
             <button type="button" onClick={() => setDesativando(z)}>
               Desativar
             </button>
+          ) : podeEscrever ? (
+            <button type="button" onClick={() => setReativando(z)}>
+              Reativar
+            </button>
           ) : null
         }
       />
@@ -98,9 +113,27 @@ export default function PrefixAuthorizations() {
         titulo={`Desativar ${desativando?.prefix ?? ""}?`}
         mensagem="Para alterar um prefixo autorizado, desative e cadastre um novo."
         onConfirmar={() => {
-          if (desativando) void desativar.mutateAsync({ id: desativando.id, admin_status: false }).then(() => setDesativando(null));
+          if (desativando)
+            void desativar
+              .mutateAsync({ id: desativando.id, admin_status: false })
+              .then(() => setDesativando(null))
+              .catch((err) => setErro(err instanceof ApiError ? err.message : "Falha ao desativar a autorização."));
         }}
         onCancelar={() => setDesativando(null)}
+        confirmando={desativar.isPending}
+      />
+      <ConfirmDialog
+        aberto={reativando !== null}
+        titulo={`Reativar ${reativando?.prefix ?? ""}?`}
+        mensagem="O prefixo volta ao catálogo ativo."
+        onConfirmar={() => {
+          if (reativando)
+            void desativar
+              .mutateAsync({ id: reativando.id, admin_status: true })
+              .then(() => setReativando(null))
+              .catch((err) => setErro(err instanceof ApiError ? err.message : "Falha ao reativar a autorização."));
+        }}
+        onCancelar={() => setReativando(null)}
         confirmando={desativar.isPending}
       />
     </main>

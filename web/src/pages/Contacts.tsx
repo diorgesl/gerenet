@@ -5,6 +5,7 @@ import { ApiError } from "@/api/client";
 import { useContactAtualizar, useContactCriar, useContacts, useOrganizations } from "@/api/hooks";
 import { DataTable } from "@/components/DataTable";
 import { FormField } from "@/components/FormField";
+import { StatusBadge } from "@/components/StatusBadge";
 import { PageHeader } from "@/components/PageHeader";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import type { ContactOut } from "@/api/types";
@@ -13,12 +14,14 @@ const FORM_VAZIO = { organization_id: "", name: "", email: "", phone: "", kind: 
 
 export default function Contacts() {
   const { podeEscrever } = useAuth();
-  const { data, isLoading, error } = useContacts();
+  const [incluirInativos, setIncluirInativos] = useState(false);
+  const { data, isLoading, error } = useContacts({ includeDisabled: incluirInativos });
   const { data: organizations } = useOrganizations();
   const criar = useContactCriar();
   const atualizar = useContactAtualizar();
   const [form, setForm] = useState(FORM_VAZIO);
   const [desativando, setDesativando] = useState<ContactOut | null>(null);
+  const [reativando, setReativando] = useState<ContactOut | null>(null);
   const [erro, setErro] = useState<string | null>(null);
 
   async function onSubmit(e: FormEvent) {
@@ -42,6 +45,14 @@ export default function Contacts() {
   return (
     <main>
       <PageHeader titulo="Contatos" />
+      <label className="inline-check">
+        <input
+          type="checkbox"
+          checked={incluirInativos}
+          onChange={(e) => setIncluirInativos(e.target.checked)}
+        />
+        Ver desativados
+      </label>
       {podeEscrever && (
         <form onSubmit={onSubmit} className="grid-form">
           <FormField label="Organização *">
@@ -94,6 +105,7 @@ export default function Contacts() {
             title: "Organização",
             render: (c) => organizations?.find((o) => o.id === c.organization_id)?.name ?? "—",
           },
+          { key: "admin_status", title: "Situação", render: (c) => <StatusBadge estado={c.admin_status ? "ativo" : "inativo"} /> },
         ]}
         linhas={data ?? []}
         carregando={isLoading}
@@ -102,6 +114,10 @@ export default function Contacts() {
           podeEscrever && c.admin_status ? (
             <button type="button" onClick={() => setDesativando(c)}>
               Desativar
+            </button>
+          ) : podeEscrever ? (
+            <button type="button" onClick={() => setReativando(c)}>
+              Reativar
             </button>
           ) : null
         }
@@ -112,9 +128,26 @@ export default function Contacts() {
         mensagem="O contato fica indisponível para novos cadastros; o registro permanece."
         onConfirmar={() => {
           if (desativando)
-            void atualizar.mutateAsync({ id: desativando.id, admin_status: false }).then(() => setDesativando(null));
+            void atualizar
+              .mutateAsync({ id: desativando.id, admin_status: false })
+              .then(() => setDesativando(null))
+              .catch((err) => setErro(err instanceof ApiError ? err.message : "Falha ao desativar o contato."));
         }}
         onCancelar={() => setDesativando(null)}
+        confirmando={atualizar.isPending}
+      />
+      <ConfirmDialog
+        aberto={reativando !== null}
+        titulo={`Reativar ${reativando?.name ?? ""}?`}
+        mensagem="O contato volta ao catálogo ativo."
+        onConfirmar={() => {
+          if (reativando)
+            void atualizar
+              .mutateAsync({ id: reativando.id, admin_status: true })
+              .then(() => setReativando(null))
+              .catch((err) => setErro(err instanceof ApiError ? err.message : "Falha ao reativar o contato."));
+        }}
+        onCancelar={() => setReativando(null)}
         confirmando={atualizar.isPending}
       />
     </main>
