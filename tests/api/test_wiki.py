@@ -67,3 +67,13 @@ def test_titulo_fallback_sem_frontmatter(client: TestClient, tmp_path) -> None:
 def test_docs_wiki_ausente_lista_vazia(client: TestClient, tmp_path) -> None:
     set_settings(Settings(wiki_dir=tmp_path / "sem-wiki", api_key="teste-key", _env_file=None))
     assert client.get("/api/v1/wiki", headers=_auth()).json() == []
+
+
+def test_order_nao_numerico_nao_derruba_indice(client: TestClient, tmp_path) -> None:
+    (tmp_path / "index.md").write_text(
+        "---\ntitle: Ordem inválida\norder: abc\n---\n# Ordem inválida\n\ncorpo.\n"
+    )
+    resp = client.get("/api/v1/wiki", headers=_auth())
+    assert resp.status_code == 200
+    index = next(p for p in resp.json() if p["slug"] == "index")
+    assert index["order"] == 999

@@ -6,6 +6,7 @@ import nh3
 from fastapi import APIRouter, Depends, HTTPException
 
 from gerenet.api.deps import require_actor
+from gerenet.config import get_settings
 
 router = APIRouter(prefix="/api/v1/wiki", tags=["wiki"], dependencies=[Depends(require_actor)])
 
@@ -46,6 +47,13 @@ def _titulo(meta: dict[str, str], texto_md: str) -> str:
     return "Sem título"
 
 
+def _order(meta: dict[str, str]) -> int:
+    try:
+        return int(meta.get("order", "999"))
+    except (TypeError, ValueError):
+        return 999
+
+
 def _renderizar(texto_md: str) -> str:
     html = markdown.markdown(texto_md, extensions=["tables", "fenced_code"])
     return nh3.clean(html, tags=_TAGS, attributes=_ATRIBUTOS, url_schemes={"http", "https", "mailto"})
@@ -63,7 +71,7 @@ def listar_wiki(wiki_dir: Path) -> list[dict]:
                 "slug": _slug(arquivo),
                 "titulo": _titulo(meta, corpo),
                 "secao": meta.get("secao", "Geral"),
-                "order": int(meta.get("order", "999")),
+                "order": _order(meta),
                 "em_breve": meta.get("em_breve", "").lower() in ("true", "1", "sim"),
             }
         )
@@ -90,15 +98,11 @@ def pagina_wiki(slug: str, wiki_dir: Path) -> dict | None:
 
 @router.get("")
 def wikilist() -> list[dict]:
-    from gerenet.config import get_settings
-
     return listar_wiki(get_settings().wiki_dir)
 
 
 @router.get("/{slug}")
 def wikipagina(slug: str) -> dict:
-    from gerenet.config import get_settings
-
     pagina = pagina_wiki(slug, get_settings().wiki_dir)
     if pagina is None:
         raise HTTPException(status_code=404, detail="Página do wiki não encontrada.")
