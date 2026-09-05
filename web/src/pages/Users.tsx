@@ -84,7 +84,7 @@ export default function Users() {
             </button>
             {u.id !== usuario?.id && (
               <button type="button" onClick={() => alternarAtivo(u)}>
-                {u.is_active ? "Desativar" : "Reativar"}
+                Desativar
               </button>
             )}
           </>

@@ -3,7 +3,7 @@ import ReactDOM from "react-dom/client";
 import { useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, useNavigate } from "react-router-dom";
-import { AuthProvider } from "./auth/auth-context";
+import { AuthProvider, useAuth } from "./auth/auth-context";
 import { setOnUnauthorized } from "./api/client";
 import App from "./App";
 import "./styles/global.css";
@@ -12,9 +12,12 @@ const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 1 } } 
 
 function Raiz() {
   const navigate = useNavigate();
+  const { refresh } = useAuth();
   useEffect(() => {
-    setOnUnauthorized(() => navigate("/login", { replace: true }));
-  }, [navigate]);
+    setOnUnauthorized(() => {
+      void refresh().finally(() => navigate("/login", { replace: true }));
+    });
+  }, [navigate, refresh]);
   return <App />;
 }
 

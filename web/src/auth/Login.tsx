@@ -12,9 +12,9 @@ export default function Login() {
   const [enviando, setEnviando] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
-  const destino = (location.state as { from?: { pathname: string } } | null)?.from?.pathname ?? "/";
+  const destino = location.state?.from as { pathname?: string; search?: string } | undefined;
 
-  if (usuario) return <Navigate to={destino} replace />;
+  if (usuario) return <Navigate to={`${destino?.pathname ?? "/"}${destino?.search ?? ""}`} replace />;
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -22,7 +22,7 @@ export default function Login() {
     setEnviando(true);
     try {
       await login(username, password);
-      navigate(destino, { replace: true });
+      navigate(`${destino?.pathname ?? "/"}${destino?.search ?? ""}`, { replace: true });
     } catch (err) {
       setErro(err instanceof ApiError ? err.message : "Usuário ou senha inválidos.");
     } finally {

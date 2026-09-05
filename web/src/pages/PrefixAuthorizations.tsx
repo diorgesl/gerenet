@@ -18,7 +18,7 @@ const FORM_VAZIO = { organization_id: "", family: "ipv4" as "ipv4" | "ipv6", pre
 
 export default function PrefixAuthorizations() {
   const { podeEscrever } = useAuth();
-  const { data, isLoading } = usePrefixAuthorizations();
+  const { data, isLoading, error } = usePrefixAuthorizations();
   const { data: organizations } = useOrganizations();
   const criar = usePrefixAuthorizationCriar();
   const desativar = usePrefixAuthorizationDesativar();
@@ -84,6 +84,7 @@ export default function PrefixAuthorizations() {
         ]}
         linhas={data ?? []}
         carregando={isLoading}
+        erro={error instanceof ApiError ? error.message : error ? "Falha ao carregar os registros." : undefined}
         acoes={(z) =>
           podeEscrever && z.admin_status ? (
             <button type="button" onClick={() => setDesativando(z)}>

@@ -33,7 +33,7 @@ const FORM_VAZIO = {
 export default function Devices() {
   const { podeEscrever } = useAuth();
   const navigate = useNavigate();
-  const { data, isLoading } = useDevices();
+  const { data, isLoading, error } = useDevices();
   const { data: sites } = useSites();
   const criar = useDeviceCriar();
   const atualizar = useDeviceAtualizar();
@@ -127,6 +127,7 @@ export default function Devices() {
         ]}
         linhas={data ?? []}
         carregando={isLoading}
+        erro={error instanceof ApiError ? error.message : error ? "Falha ao carregar os registros." : undefined}
         acoes={(d) => (
           <>
             {podeEscrever && (

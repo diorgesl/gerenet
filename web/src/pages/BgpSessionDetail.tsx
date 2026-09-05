@@ -9,7 +9,7 @@ import { PageHeader } from "@/components/PageHeader";
 export default function BgpSessionDetail() {
   const { id } = useParams();
   const sessionId = Number(id);
-  const { data, isLoading } = useBgpSession(sessionId);
+  const { data, isLoading, error } = useBgpSession(sessionId);
   const { data: comunidades } = useSessionCommunities(sessionId);
   const { data: catalogo } = useCommunities();
   const assoc = useSessionCommunity();
@@ -19,7 +19,13 @@ export default function BgpSessionDetail() {
   const [erro, setErro] = useState<string | null>(null);
 
   if (isLoading) return <p aria-busy="true">Carregando…</p>;
-  if (!data) return <p role="alert">Sessão não encontrada.</p>;
+  if (!data) {
+    return (
+      <main>
+        <p role="alert">{error instanceof ApiError ? error.message : "Falha ao carregar a sessão BGP."}</p>
+      </main>
+    );
+  }
 
   return (
     <main>

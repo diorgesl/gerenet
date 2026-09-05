@@ -66,7 +66,7 @@ export default function Snapshots() {
   const [params, setParams] = useSearchParams();
   const { data: devices, isLoading: carregandoDevices } = useDevices();
   const [deviceId, setDeviceId] = useState<number>(Number(params.get("device_id") ?? 0));
-  const { data: snapshots, isLoading } = useSnapshots(deviceId);
+  const { data: snapshots, isLoading, error: erroSnapshots } = useSnapshots(deviceId);
   const [selecionado, setSelecionado] = useState<number | null>(null);
   const detalhe = useSnapshot(selecionado ?? 0);
 
@@ -103,6 +103,7 @@ export default function Snapshots() {
           linhas={snapshots ?? []}
           carregando={carregandoDevices || isLoading}
           vazio="Nenhum snapshot deste equipamento."
+          erro={erroSnapshots ? (erroSnapshots instanceof ApiError ? erroSnapshots.message : "Falha ao carregar os registros.") : undefined}
           acoes={(s) => (
             <button type="button" onClick={() => setSelecionado(s.id)}>
               Ver

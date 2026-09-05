@@ -33,6 +33,12 @@ describe("kit", () => {
     expect(screen.queryByText("1")).not.toBeInTheDocument();
   });
 
+  it("DataTable com erro mostra alert e não o vazio", () => {
+    render(<DataTable colunas={[{ key: "a", title: "A" }]} linhas={[]} erro="Falha ao carregar os registros." />);
+    expect(screen.getByRole("alert")).toHaveTextContent("Falha ao carregar os registros.");
+    expect(screen.queryByText("Nenhum registro.")).not.toBeInTheDocument();
+  });
+
   it("ConfirmDialog confirma e cancela", async () => {
     const onConfirmar = vi.fn();
     const onCancelar = vi.fn();

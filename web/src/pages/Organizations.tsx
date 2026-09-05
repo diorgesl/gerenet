@@ -14,7 +14,7 @@ const FORM_VAZIO = { name: "", legal_name: "", kind: "downstream" as "downstream
 
 export default function Organizations() {
   const { podeEscrever } = useAuth();
-  const { data, isLoading } = useOrganizations();
+  const { data, isLoading, error } = useOrganizations();
   const criar = useOrganizationCriar();
   const atualizar = useOrganizationAtualizar();
   const [form, setForm] = useState(FORM_VAZIO);
@@ -85,6 +85,7 @@ export default function Organizations() {
         ]}
         linhas={data ?? []}
         carregando={isLoading}
+        erro={error instanceof ApiError ? error.message : error ? "Falha ao carregar os registros." : undefined}
         acoes={(o) =>
           podeEscrever && o.admin_status ? (
             <button type="button" onClick={() => setDesativando(o)}>

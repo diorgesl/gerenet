@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { ApiError } from "@/api/client";
 import { useDashboard } from "@/api/hooks";
 import { StatusBadge } from "@/components/StatusBadge";
 import { TimeAgo } from "@/components/TimeAgo";
@@ -6,12 +7,15 @@ import { PageHeader } from "@/components/PageHeader";
 import type { PerDeviceOut } from "@/api/types";
 
 export default function Dashboard() {
-  const { data, isLoading } = useDashboard();
+  const { data, isLoading, error } = useDashboard();
 
   return (
     <main>
       <PageHeader titulo="Dashboard" />
       {isLoading && <p aria-busy="true">Carregando…</p>}
+      {error && !data && (
+        <p role="alert">{error instanceof ApiError ? error.message : "Falha ao carregar o painel."}</p>
+      )}
       {data && (
         <>
           <section className="cards">
@@ -40,7 +44,6 @@ export default function Dashboard() {
                   <td>{d.active_job ? <StatusBadge estado={d.active_job.status} /> : "—"}</td>
                   <td>
                     <Link to={`/devices/${d.device_id}`}>Detalhe</Link>{" "}
-                    <Link to={`/devices/${d.device_id}`}>Coletar</Link>{" "}
                     <Link to={`/reconcile?device_id=${d.device_id}`}>Reconciliar</Link>
                   </td>
                 </tr>

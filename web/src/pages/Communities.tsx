@@ -1,11 +1,12 @@
 import { useState } from "react";
+import { ApiError } from "@/api/client";
 import { useCommunities } from "@/api/hooks";
 import { DataTable } from "@/components/DataTable";
 import { PageHeader } from "@/components/PageHeader";
 import type { CommunityOut } from "@/api/types";
 
 export default function Communities() {
-  const { data, isLoading } = useCommunities();
+  const { data, isLoading, error } = useCommunities();
   const [detalhe, setDetalhe] = useState<CommunityOut | null>(null);
   return (
     <main>
@@ -17,6 +18,7 @@ export default function Communities() {
         ]}
         linhas={data ?? []}
         carregando={isLoading}
+        erro={error instanceof ApiError ? error.message : error ? "Falha ao carregar os registros." : undefined}
         acoes={(c) => (
           <button type="button" onClick={() => setDetalhe(c)}>
             Detalhar

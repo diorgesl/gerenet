@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ApiError } from "@/api/client";
 import { usePolicyProfiles } from "@/api/hooks";
 import { DataTable } from "@/components/DataTable";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -8,7 +9,7 @@ import type { PolicyProfileOut } from "@/api/types";
 
 export default function PolicyProfiles() {
   const [direcao, setDirecao] = useState("");
-  const { data, isLoading } = usePolicyProfiles(direcao ? { direction: direcao } : {});
+  const { data, isLoading, error } = usePolicyProfiles(direcao ? { direction: direcao } : {});
   return (
     <main>
       <PageHeader
@@ -32,6 +33,7 @@ export default function PolicyProfiles() {
         ]}
         linhas={data ?? []}
         carregando={isLoading}
+        erro={error instanceof ApiError ? error.message : error ? "Falha ao carregar os registros." : undefined}
       />
     </main>
   );

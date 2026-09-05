@@ -62,7 +62,7 @@ export async function apiFetch<T>(
     throw new ApiError(0, "Servidor indisponível. Tente novamente.");
   }
 
-  if (res.status === 401 && !path.startsWith("/api/v1/auth/login")) {
+  if (res.status === 401 && !path.startsWith("/api/v1/auth/login") && !path.startsWith("/api/v1/auth/me")) {
     onUnauthorized?.();
   }
   if (!res.ok) {

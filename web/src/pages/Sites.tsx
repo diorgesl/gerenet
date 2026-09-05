@@ -13,7 +13,7 @@ const FORM_VAZIO = { name: "", city: "", uf: "", p2p_ipv4_block: "", p2p_ipv6_ba
 
 export default function Sites() {
   const { podeEscrever } = useAuth();
-  const { data, isLoading } = useSites();
+  const { data, isLoading, error } = useSites();
   const criar = useSiteCriar();
   const atualizar = useSiteAtualizar();
   const [form, setForm] = useState(FORM_VAZIO);
@@ -73,6 +73,7 @@ export default function Sites() {
         ]}
         linhas={data ?? []}
         carregando={isLoading}
+        erro={error instanceof ApiError ? error.message : error ? "Falha ao carregar os registros." : undefined}
         acoes={(s) =>
           podeEscrever && s.admin_status ? (
             <button type="button" onClick={() => setDesativando(s)}>

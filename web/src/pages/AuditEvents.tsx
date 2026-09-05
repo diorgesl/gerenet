@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ApiError } from "@/api/client";
 import { useAuditEvents } from "@/api/hooks";
 import { DataTable } from "@/components/DataTable";
 import { TimeAgo } from "@/components/TimeAgo";
@@ -8,7 +9,7 @@ import type { AuditEventOut } from "@/api/types";
 export default function AuditEvents() {
   const [tipo, setTipo] = useState("");
   const [objeto, setObjeto] = useState("");
-  const { data, isLoading } = useAuditEvents({
+  const { data, isLoading, error } = useAuditEvents({
     ...(tipo ? { tipo } : {}),
     ...(objeto ? { objeto } : {}),
   });
@@ -43,6 +44,7 @@ export default function AuditEvents() {
         ]}
         linhas={data ?? []}
         carregando={isLoading}
+        erro={error instanceof ApiError ? error.message : error ? "Falha ao carregar os registros." : undefined}
       />
     </main>
   );

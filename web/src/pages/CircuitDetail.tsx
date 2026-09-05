@@ -8,7 +8,7 @@ import { PageHeader } from "@/components/PageHeader";
 export default function CircuitDetail() {
   const { id } = useParams();
   const circuitId = Number(id);
-  const { data, isLoading } = useCircuitDetail(circuitId);
+  const { data, isLoading, error } = useCircuitDetail(circuitId);
   const { data: sessions } = useBgpSessions({ circuit_id: circuitId });
   const { data: devices } = useDevices();
   const { data: sites } = useSites();
@@ -17,7 +17,13 @@ export default function CircuitDetail() {
   const [erro, setErro] = useState<string | null>(null);
 
   if (isLoading) return <p aria-busy="true">Carregando…</p>;
-  if (!data) return <p role="alert">Circuito não encontrado.</p>;
+  if (!data) {
+    return (
+      <main>
+        <p role="alert">{error instanceof ApiError ? error.message : "Falha ao carregar o circuito."}</p>
+      </main>
+    );
+  }
 
   return (
     <main>

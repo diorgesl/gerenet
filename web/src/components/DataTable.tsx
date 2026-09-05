@@ -11,11 +11,13 @@ interface Props<T> {
   linhas: T[];
   carregando?: boolean;
   vazio?: string;
+  erro?: string;
   acoes?: (linha: T) => ReactNode;
 }
 
-export function DataTable<T>({ colunas, linhas, carregando, vazio = "Nenhum registro.", acoes }: Props<T>) {
+export function DataTable<T>({ colunas, linhas, carregando, vazio = "Nenhum registro.", erro, acoes }: Props<T>) {
   if (carregando) return <p aria-busy="true">Carregando…</p>;
+  if (erro) return <p role="alert">{erro}</p>;
   const vazioMsg = linhas.length === 0 ? <p>{vazio}</p> : null;
   return (
     <>

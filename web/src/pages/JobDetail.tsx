@@ -15,6 +15,7 @@ export default function JobDetail() {
       <PageHeader titulo={`Job #${data ? data.id : (id ?? "")}`} acoes={<Link to="/jobs">← Voltar</Link>} />
       {isLoading && <p aria-busy="true">Carregando…</p>}
       {error && <p role="alert">{error instanceof ApiError ? error.message : "Falha ao carregar o job."}</p>}
+      {!data && !isLoading && !error && <p role="alert">Falha ao carregar a execução.</p>}
       {data && (
         <>
           <dl>

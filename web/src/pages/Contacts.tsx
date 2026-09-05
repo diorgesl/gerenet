@@ -13,7 +13,7 @@ const FORM_VAZIO = { organization_id: "", name: "", email: "", phone: "", kind: 
 
 export default function Contacts() {
   const { podeEscrever } = useAuth();
-  const { data, isLoading } = useContacts();
+  const { data, isLoading, error } = useContacts();
   const { data: organizations } = useOrganizations();
   const criar = useContactCriar();
   const atualizar = useContactAtualizar();
@@ -97,6 +97,7 @@ export default function Contacts() {
         ]}
         linhas={data ?? []}
         carregando={isLoading}
+        erro={error instanceof ApiError ? error.message : error ? "Falha ao carregar os registros." : undefined}
         acoes={(c) =>
           podeEscrever && c.admin_status ? (
             <button type="button" onClick={() => setDesativando(c)}>

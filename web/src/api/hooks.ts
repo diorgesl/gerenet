@@ -21,10 +21,6 @@ import type {
   UserOut,
 } from "./types";
 
-export function useMe() {
-  return useQuery({ queryKey: ["me"], queryFn: () => apiFetch<UserOut>("/api/v1/auth/me"), retry: false });
-}
-
 export function useUsers() {
   return useQuery({
     queryKey: ["users"],
@@ -72,7 +68,10 @@ export function useJobPoll(id: number | null) {
     queryFn: () => apiFetch<JobRunOut>(`/api/v1/jobs/${id}`),
     enabled: id !== null && id > 0,
     refetchInterval: (query) =>
-      query.state.data && JOB_STATUS_TERMINAL.includes(query.state.data.status) ? false : 3000,
+      query.state.status === "error" ||
+      (query.state.data && JOB_STATUS_TERMINAL.includes(query.state.data.status))
+        ? false
+        : 3000,
   });
 }
 
@@ -179,7 +178,7 @@ export const useContactAtualizar = () =>
 
 export const useCircuits = () => useLista<CircuitOut>("circuits", "/api/v1/circuits");
 export const useCircuitDetail = (id: number) =>
-  useQuery({ queryKey: ["circuit", id], queryFn: () => apiFetch<CircuitDetailOut>(`/api/v1/circuits/${id}`) });
+  useQuery({ queryKey: ["circuit", id], queryFn: () => apiFetch<CircuitDetailOut>(`/api/v1/circuits/${id}`), enabled: id > 0 });
 
 export type CircuitCreateIn = {
   code: string;
@@ -228,7 +227,7 @@ export const useBgpSessions = (filtros?: { circuit_id?: number; device_id?: numb
     },
   });
 export const useBgpSession = (id: number) =>
-  useQuery({ queryKey: ["bgp-session", id], queryFn: () => apiFetch<BgpSessionOut>(`/api/v1/bgp-sessions/${id}`) });
+  useQuery({ queryKey: ["bgp-session", id], queryFn: () => apiFetch<BgpSessionOut>(`/api/v1/bgp-sessions/${id}`), enabled: id > 0 });
 
 export type BgpSessionCreateIn = {
   circuit_id: number;
@@ -284,7 +283,10 @@ export function useSessionSenha() {
   return useMutation({
     mutationFn: ({ sessionId, password }: { sessionId: number; password: string }) =>
       apiFetch<BgpSessionOut>(`/api/v1/bgp-sessions/${sessionId}/password`, { method: "POST", body: { password } }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["bgp-sessions"] }),
+    onSuccess: (_d, v) => {
+      void qc.invalidateQueries({ queryKey: ["bgp-session", v.sessionId] });
+      void qc.invalidateQueries({ queryKey: ["bgp-sessions"] });
+    },
   });
 }
 

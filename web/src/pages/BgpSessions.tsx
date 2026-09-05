@@ -45,7 +45,7 @@ const FORM_VAZIO = {
 
 export default function BgpSessions() {
   const { podeEscrever } = useAuth();
-  const { data, isLoading } = useBgpSessions();
+  const { data, isLoading, error } = useBgpSessions();
   const { data: circuits } = useCircuits();
   const { data: devices } = useDevices();
   const { data: profiles } = usePolicyProfiles();
@@ -202,6 +202,7 @@ export default function BgpSessions() {
         ]}
         linhas={data ?? []}
         carregando={isLoading}
+        erro={error instanceof ApiError ? error.message : error ? "Falha ao carregar os registros." : undefined}
         acoes={(s) => (
           <>
             <Link to={`/bgp-sessions/${s.id}`}>Detalhe</Link>{" "}

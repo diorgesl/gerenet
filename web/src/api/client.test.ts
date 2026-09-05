@@ -47,6 +47,14 @@ describe("apiFetch", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
+  it("401 no /auth/me não dispara onUnauthorized (evita recursão no refresh)", async () => {
+    const spy = vi.fn();
+    setOnUnauthorized(spy);
+    vi.mocked(fetch).mockResolvedValueOnce(responder(401, { detail: "Chave de API ausente ou inválida." }));
+    await expect(apiFetch("/api/v1/auth/me")).rejects.toThrow(ApiError);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
   it("422 vira erros por campo", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
       responder(422, { detail: [{ loc: ["body", "password"], msg: "String should have at least 1 character" }] }),

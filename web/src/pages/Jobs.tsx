@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
+import { ApiError } from "@/api/client";
 import { useDevices, useJobs } from "@/api/hooks";
 import { DataTable } from "@/components/DataTable";
 import { FormField } from "@/components/FormField";
@@ -12,12 +13,13 @@ const STATUS = ["queued", "running", "success", "partial", "error"] as const;
 
 export default function Jobs() {
   const { data: devices } = useDevices();
-  const [deviceId, setDeviceId] = useState(0);
+  const [params, setParams] = useSearchParams();
+  const [deviceId, setDeviceId] = useState<number>(Number(params.get("device_id") ?? 0));
   const [status, setStatus] = useState("");
   const [kind, setKind] = useState("");
   const [limite, setLimite] = useState(100);
   const [offset, setOffset] = useState(0);
-  const { data, isLoading } = useJobs({
+  const { data, isLoading, error } = useJobs({
     device_id: deviceId > 0 ? deviceId : undefined,
     status: status || undefined,
     kind: kind || undefined,
@@ -33,8 +35,10 @@ export default function Jobs() {
           <select
             value={deviceId}
             onChange={(e) => {
-              setDeviceId(Number(e.target.value));
+              const v = Number(e.target.value);
+              setDeviceId(v);
               setOffset(0);
+              setParams(v > 0 ? { device_id: String(v) } : {});
             }}
           >
             <option value={0}>Todos</option>
@@ -97,6 +101,7 @@ export default function Jobs() {
         linhas={data ?? []}
         carregando={isLoading}
         vazio="Nenhum job."
+        erro={error instanceof ApiError ? error.message : error ? "Falha ao carregar os registros." : undefined}
       />
       <p>
         <button type="button" disabled={offset === 0} onClick={() => setOffset((o) => Math.max(0, o - limite))}>

@@ -34,7 +34,7 @@ const FORM_VAZIO = {
 
 export default function Circuits() {
   const { podeEscrever } = useAuth();
-  const { data, isLoading } = useCircuits();
+  const { data, isLoading, error } = useCircuits();
   const { data: organizations } = useOrganizations();
   const { data: sites } = useSites();
   const { data: devices } = useDevices();
@@ -192,6 +192,7 @@ export default function Circuits() {
         ]}
         linhas={data ?? []}
         carregando={isLoading}
+        erro={error instanceof ApiError ? error.message : error ? "Falha ao carregar os registros." : undefined}
         acoes={(c) =>
           podeEscrever && c.admin_status ? (
             <button type="button" onClick={() => setDesativando(c)}>
