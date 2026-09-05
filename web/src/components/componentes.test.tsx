@@ -91,3 +91,16 @@ describe("kit", () => {
     expect(screen.getByRole("button", { name: "Novo" })).toBeTruthy();
   });
 });
+
+describe("FormField help", () => {
+  it("renderiza o ícone e o texto de ajuda quando help é passado", () => {
+    render(<FormField label="Nome" help="Nome único (1–64 caracteres)."><input /></FormField>);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Nome único (1–64 caracteres).");
+    expect(screen.getByText("?")).toBeInTheDocument();
+  });
+
+  it("não renderiza nada extra sem help", () => {
+    render(<FormField label="Nome"><input /></FormField>);
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  });
+});
