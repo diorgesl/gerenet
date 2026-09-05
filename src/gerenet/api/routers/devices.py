@@ -69,6 +69,15 @@ def atualizar(
         )
         if mudancas == {"admin_status": False} and not desativando:
             return dev  # repeat disable: sem transição, sem evento (Ruling 5)
+        reativando = (
+            mudancas.get("admin_status") is True
+            and set(mudancas) == {"admin_status"}
+            and dev.admin_status is not True
+        )
+        if mudancas == {"admin_status": True} and not reativando:
+            return dev  # repeat enable: sem transição, sem evento (Ruling 5)
+        if reativando:
+            return svc.enable_device(session, device_id, actor=actor.nome)
         registrar(
             session,
             tipo="device.disable" if desativando else "device.update",

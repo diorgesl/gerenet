@@ -137,3 +137,48 @@ def test_patch_asn_reservado_da_400(client: TestClient) -> None:
     )
     assert resp.status_code == 400
     assert "reservado" in resp.json()["detail"]
+
+
+def test_patch_reativar_usa_enable_device(db_session: Session, client: TestClient) -> None:
+    criado = client.post(
+        "/api/v1/devices",
+        json={"name": "r5-en", "management_address": "10.0.0.11"},
+        headers=_auth(),
+    )
+    assert criado.status_code == 201
+    dev_id = criado.json()["id"]
+
+    assert client.patch(f"/api/v1/devices/{dev_id}", json={"admin_status": False}, headers=_auth()).status_code == 200
+    resp = client.patch(f"/api/v1/devices/{dev_id}", json={"admin_status": True}, headers=_auth())
+    assert resp.status_code == 200 and resp.json()["admin_status"] is True
+
+    # repetição (já ativo) → 200 sem novo evento (Ruling 5)
+    repetido = client.patch(f"/api/v1/devices/{dev_id}", json={"admin_status": True}, headers=_auth())
+    assert repetido.status_code == 200 and repetido.json()["admin_status"] is True
+
+    tipos = [
+        e.type
+        for e in db_session.scalars(select(models.AuditEvent).order_by(models.AuditEvent.id))
+    ]
+    assert tipos == ["device.create", "device.disable", "device.enable"]
+
+
+def test_patch_reativar_misto_continua_update(db_session: Session, client: TestClient) -> None:
+    criado = client.post(
+        "/api/v1/devices",
+        json={"name": "r6-mix", "management_address": "10.0.0.12"},
+        headers=_auth(),
+    )
+    assert criado.status_code == 201
+    dev_id = criado.json()["id"]
+    assert client.patch(f"/api/v1/devices/{dev_id}", json={"admin_status": False}, headers=_auth()).status_code == 200
+    # admin_status true + outro campo → caminho genérico (device.update)
+    resp = client.patch(
+        f"/api/v1/devices/{dev_id}", json={"admin_status": True, "role": "edge"}, headers=_auth()
+    )
+    assert resp.status_code == 200 and resp.json()["role"] == "edge"
+    tipos = [
+        e.type
+        for e in db_session.scalars(select(models.AuditEvent).order_by(models.AuditEvent.id))
+    ]
+    assert tipos == ["device.create", "device.disable", "device.update"]
