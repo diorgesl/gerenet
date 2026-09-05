@@ -16,6 +16,7 @@ import { FormField } from "@/components/FormField";
 import { StatusBadge } from "@/components/StatusBadge";
 import { PageHeader } from "@/components/PageHeader";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { Modal } from "@/components/Modal";
 import type { BgpSessionOut } from "@/api/types";
 
 const FORM_VAZIO = {
@@ -43,6 +44,8 @@ const FORM_VAZIO = {
   allow_default_route: false,
 };
 
+type FormEdit = typeof FORM_VAZIO;
+
 export default function BgpSessions() {
   const { podeEscrever } = useAuth();
   const [incluirInativos, setIncluirInativos] = useState(false);
@@ -56,8 +59,76 @@ export default function BgpSessions() {
   const [desativando, setDesativando] = useState<BgpSessionOut | null>(null);
   const [reativando, setReativando] = useState<BgpSessionOut | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  const [editando, setEditando] = useState<BgpSessionOut | null>(null);
+  const [formEdit, setFormEdit] = useState<FormEdit>(FORM_VAZIO);
+  const [erroEdit, setErroEdit] = useState<string | null>(null);
 
   const num = (v: string) => (v === "" ? null : Number(v));
+
+  function abrirEdicao(s: BgpSessionOut) {
+    setFormEdit({
+      circuit_id: String(s.circuit_id),
+      device_id: String(s.device_id),
+      afi: s.afi,
+      local_address: s.local_address,
+      remote_address: s.remote_address,
+      source_address: s.source_address ?? "",
+      asn_local: s.asn_local === null ? "" : String(s.asn_local),
+      asn_remote: s.asn_remote === null ? "" : String(s.asn_remote),
+      description: s.description ?? "",
+      import_profile_id: s.import_profile_id === null ? "" : String(s.import_profile_id),
+      export_profile_id: s.export_profile_id === null ? "" : String(s.export_profile_id),
+      maximum_prefix: s.maximum_prefix === null ? "" : String(s.maximum_prefix),
+      maximum_prefix_threshold: s.maximum_prefix_threshold === null ? "" : String(s.maximum_prefix_threshold),
+      local_preference: s.local_preference === null ? "" : String(s.local_preference),
+      med: s.med === null ? "" : String(s.med),
+      prepend: s.prepend === null ? "" : String(s.prepend),
+      keepalive: s.keepalive === null ? "" : String(s.keepalive),
+      holdtime: s.holdtime === null ? "" : String(s.holdtime),
+      bfd_enabled: s.bfd_enabled,
+      graceful_restart: s.graceful_restart,
+      shutdown: s.shutdown,
+      allow_default_route: s.allow_default_route,
+    });
+    setErroEdit(null);
+    setEditando(s);
+  }
+
+  async function salvarEdicao(e: FormEvent) {
+    e.preventDefault();
+    if (!editando) return;
+    setErroEdit(null);
+    try {
+      await atualizar.mutateAsync({
+        id: editando.id,
+        circuit_id: Number(formEdit.circuit_id),
+        device_id: Number(formEdit.device_id),
+        afi: formEdit.afi,
+        local_address: formEdit.local_address,
+        remote_address: formEdit.remote_address,
+        source_address: formEdit.source_address || null,
+        asn_local: num(formEdit.asn_local),
+        asn_remote: num(formEdit.asn_remote),
+        description: formEdit.description || null,
+        import_profile_id: formEdit.import_profile_id === "" ? null : Number(formEdit.import_profile_id),
+        export_profile_id: formEdit.export_profile_id === "" ? null : Number(formEdit.export_profile_id),
+        maximum_prefix: num(formEdit.maximum_prefix),
+        maximum_prefix_threshold: num(formEdit.maximum_prefix_threshold),
+        local_preference: num(formEdit.local_preference),
+        med: num(formEdit.med),
+        prepend: num(formEdit.prepend),
+        keepalive: num(formEdit.keepalive),
+        holdtime: num(formEdit.holdtime),
+        bfd_enabled: formEdit.bfd_enabled,
+        graceful_restart: formEdit.graceful_restart,
+        shutdown: formEdit.shutdown,
+        allow_default_route: formEdit.allow_default_route,
+      });
+      setEditando(null);
+    } catch (err) {
+      setErroEdit(err instanceof ApiError ? err.message : "Falha ao salvar a sessão BGP.");
+    }
+  }
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -217,6 +288,11 @@ export default function BgpSessions() {
         acoes={(s) => (
           <>
             <Link to={`/bgp-sessions/${s.id}`}>Detalhe</Link>{" "}
+            {podeEscrever && (
+              <button type="button" onClick={() => abrirEdicao(s)}>
+                Editar
+              </button>
+            )}
             {podeEscrever && s.admin_status && (
               <button type="button" onClick={() => setDesativando(s)}>
                 Desativar
@@ -258,6 +334,110 @@ export default function BgpSessions() {
         onCancelar={() => setReativando(null)}
         confirmando={atualizar.isPending}
       />
+      {editando && (
+        <Modal aberto titulo={`Editar sessão BGP #${editando.id}`} onFechar={() => setEditando(null)}>
+          <form onSubmit={salvarEdicao} className="grid-form">
+            <FormField label="Circuito *">
+              <select value={formEdit.circuit_id} onChange={(e) => setFormEdit({ ...formEdit, circuit_id: e.target.value })} required>
+                <option value="">—</option>
+                {(circuits ?? []).map((c) => (
+                  <option key={c.id} value={c.id}>{c.code}</option>
+                ))}
+              </select>
+            </FormField>
+            <FormField label="Equipamento *">
+              <select value={formEdit.device_id} onChange={(e) => setFormEdit({ ...formEdit, device_id: e.target.value })} required>
+                <option value="">—</option>
+                {(devices ?? []).map((d) => (
+                  <option key={d.id} value={d.id}>{d.name}</option>
+                ))}
+              </select>
+            </FormField>
+            <FormField label="Família">
+              <select value={formEdit.afi} onChange={(e) => setFormEdit({ ...formEdit, afi: e.target.value as "ipv4" | "ipv6" })}>
+                <option value="ipv4">ipv4</option>
+                <option value="ipv6">ipv6</option>
+              </select>
+            </FormField>
+            <FormField label="Endereço local *">
+              <input value={formEdit.local_address} onChange={(e) => setFormEdit({ ...formEdit, local_address: e.target.value })} required />
+            </FormField>
+            <FormField label="Endereço remoto *">
+              <input value={formEdit.remote_address} onChange={(e) => setFormEdit({ ...formEdit, remote_address: e.target.value })} required />
+            </FormField>
+            <FormField label="Source address">
+              <input value={formEdit.source_address} onChange={(e) => setFormEdit({ ...formEdit, source_address: e.target.value })} />
+            </FormField>
+            <FormField label="ASN local">
+              <input type="number" value={formEdit.asn_local} onChange={(e) => setFormEdit({ ...formEdit, asn_local: e.target.value })} />
+            </FormField>
+            <FormField label="ASN remoto">
+              <input type="number" value={formEdit.asn_remote} onChange={(e) => setFormEdit({ ...formEdit, asn_remote: e.target.value })} />
+            </FormField>
+            <FormField label="Descrição">
+              <input value={formEdit.description} onChange={(e) => setFormEdit({ ...formEdit, description: e.target.value })} />
+            </FormField>
+            <FormField label="Perfil de importação">
+              <select value={formEdit.import_profile_id} onChange={(e) => setFormEdit({ ...formEdit, import_profile_id: e.target.value })}>
+                <option value="">—</option>
+                {(profiles ?? []).map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </FormField>
+            <FormField label="Perfil de exportação">
+              <select value={formEdit.export_profile_id} onChange={(e) => setFormEdit({ ...formEdit, export_profile_id: e.target.value })}>
+                <option value="">—</option>
+                {(profiles ?? []).map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </FormField>
+            <FormField label="Maximum-prefix">
+              <input type="number" value={formEdit.maximum_prefix} onChange={(e) => setFormEdit({ ...formEdit, maximum_prefix: e.target.value })} />
+            </FormField>
+            <FormField label="Limiar (%)">
+              <input type="number" value={formEdit.maximum_prefix_threshold} onChange={(e) => setFormEdit({ ...formEdit, maximum_prefix_threshold: e.target.value })} />
+            </FormField>
+            <FormField label="Local-preference">
+              <input type="number" value={formEdit.local_preference} onChange={(e) => setFormEdit({ ...formEdit, local_preference: e.target.value })} />
+            </FormField>
+            <FormField label="MED">
+              <input type="number" value={formEdit.med} onChange={(e) => setFormEdit({ ...formEdit, med: e.target.value })} />
+            </FormField>
+            <FormField label="Prepend">
+              <input type="number" value={formEdit.prepend} onChange={(e) => setFormEdit({ ...formEdit, prepend: e.target.value })} />
+            </FormField>
+            <FormField label="Keepalive">
+              <input type="number" value={formEdit.keepalive} onChange={(e) => setFormEdit({ ...formEdit, keepalive: e.target.value })} />
+            </FormField>
+            <FormField label="Holdtime">
+              <input type="number" value={formEdit.holdtime} onChange={(e) => setFormEdit({ ...formEdit, holdtime: e.target.value })} />
+            </FormField>
+            <FormField label="BFD">
+              <input type="checkbox" checked={formEdit.bfd_enabled} onChange={(e) => setFormEdit({ ...formEdit, bfd_enabled: e.target.checked })} />
+            </FormField>
+            <FormField label="Graceful restart">
+              <input type="checkbox" checked={formEdit.graceful_restart} onChange={(e) => setFormEdit({ ...formEdit, graceful_restart: e.target.checked })} />
+            </FormField>
+            <FormField label="Shutdown">
+              <input type="checkbox" checked={formEdit.shutdown} onChange={(e) => setFormEdit({ ...formEdit, shutdown: e.target.checked })} />
+            </FormField>
+            <FormField label="Default route">
+              <input type="checkbox" checked={formEdit.allow_default_route} onChange={(e) => setFormEdit({ ...formEdit, allow_default_route: e.target.checked })} />
+            </FormField>
+            <div className="dialog-actions">
+              <button type="button" onClick={() => setEditando(null)} disabled={atualizar.isPending}>
+                Cancelar
+              </button>
+              <button className="primary" type="submit" disabled={atualizar.isPending}>
+                {atualizar.isPending ? "Salvando…" : "Salvar"}
+              </button>
+            </div>
+          </form>
+          {erroEdit && <p role="alert">{erroEdit}</p>}
+        </Modal>
+      )}
     </main>
   );
 }

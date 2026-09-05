@@ -9,10 +9,31 @@ import { FormField } from "@/components/FormField";
 import { StatusBadge } from "@/components/StatusBadge";
 import { PageHeader } from "@/components/PageHeader";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { Modal } from "@/components/Modal";
 import type { CircuitOut } from "@/api/types";
 
 const FORM_VAZIO = {
   code: "",
+  organization_id: "",
+  site_id: "",
+  access_device_id: "",
+  access_port: "",
+  edge_device_id: "",
+  backup_edge_device_id: "",
+  stack: "dual" as "ipv4" | "ipv6" | "dual",
+  vlan_mode: "unica" as "unica" | "separada",
+  qinq: false,
+  vrf: "",
+  mtu: "",
+  bandwidth: "",
+  bfd: false,
+  p2p_v4_len: "31" as "30" | "31",
+  description: "",
+  notes: "",
+  edge_trunk: "",
+};
+
+const FORM_EDIT_VAZIO = {
   organization_id: "",
   site_id: "",
   access_device_id: "",
@@ -45,8 +66,66 @@ export default function Circuits() {
   const [desativando, setDesativando] = useState<CircuitOut | null>(null);
   const [reativando, setReativando] = useState<CircuitOut | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  const [editando, setEditando] = useState<CircuitOut | null>(null);
+  const [formEdit, setFormEdit] = useState(FORM_EDIT_VAZIO);
+  const [erroEdit, setErroEdit] = useState<string | null>(null);
 
   const num = (v: string) => (v === "" ? null : Number(v));
+
+  function abrirEdicao(c: CircuitOut) {
+    setFormEdit({
+      organization_id: String(c.organization_id),
+      site_id: String(c.site_id),
+      access_device_id: String(c.access_device_id),
+      access_port: c.access_port,
+      edge_device_id: String(c.edge_device_id),
+      backup_edge_device_id: c.backup_edge_device_id === null ? "" : String(c.backup_edge_device_id),
+      stack: c.stack as "ipv4" | "ipv6" | "dual",
+      vlan_mode: c.vlan_mode as "unica" | "separada",
+      qinq: c.qinq,
+      vrf: c.vrf ?? "",
+      mtu: c.mtu === null ? "" : String(c.mtu),
+      bandwidth: c.bandwidth ?? "",
+      bfd: c.bfd,
+      p2p_v4_len: String(c.p2p_v4_len) as "30" | "31",
+      description: c.description ?? "",
+      notes: c.notes ?? "",
+      edge_trunk: c.edge_trunk ?? "",
+    });
+    setErroEdit(null);
+    setEditando(c);
+  }
+
+  async function salvarEdicao(e: FormEvent) {
+    e.preventDefault();
+    if (!editando) return;
+    setErroEdit(null);
+    try {
+      await atualizar.mutateAsync({
+        id: editando.id,
+        organization_id: Number(formEdit.organization_id),
+        site_id: Number(formEdit.site_id),
+        access_device_id: Number(formEdit.access_device_id),
+        access_port: formEdit.access_port,
+        edge_device_id: Number(formEdit.edge_device_id),
+        backup_edge_device_id: formEdit.backup_edge_device_id === "" ? null : Number(formEdit.backup_edge_device_id),
+        stack: formEdit.stack,
+        vlan_mode: formEdit.vlan_mode,
+        qinq: formEdit.qinq,
+        vrf: formEdit.vrf || null,
+        mtu: num(formEdit.mtu),
+        bandwidth: formEdit.bandwidth || null,
+        bfd: formEdit.bfd,
+        p2p_v4_len: Number(formEdit.p2p_v4_len) as 30 | 31,
+        description: formEdit.description || null,
+        notes: formEdit.notes || null,
+        edge_trunk: formEdit.edge_trunk || null,
+      });
+      setEditando(null);
+    } catch (err) {
+      setErroEdit(err instanceof ApiError ? err.message : "Falha ao salvar o circuito.");
+    }
+  }
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -203,17 +282,24 @@ export default function Circuits() {
         linhas={data ?? []}
         carregando={isLoading}
         erro={error instanceof ApiError ? error.message : error ? "Falha ao carregar os registros." : undefined}
-        acoes={(c) =>
-          podeEscrever && c.admin_status ? (
-            <button type="button" onClick={() => setDesativando(c)}>
-              Desativar
-            </button>
-          ) : podeEscrever ? (
-            <button type="button" onClick={() => setReativando(c)}>
-              Reativar
-            </button>
-          ) : null
-        }
+        acoes={(c) => (
+          <>
+            {podeEscrever && (
+              <button type="button" onClick={() => abrirEdicao(c)}>
+                Editar
+              </button>
+            )}
+            {podeEscrever && c.admin_status ? (
+              <button type="button" onClick={() => setDesativando(c)}>
+                Desativar
+              </button>
+            ) : podeEscrever ? (
+              <button type="button" onClick={() => setReativando(c)}>
+                Reativar
+              </button>
+            ) : null}
+          </>
+        )}
       />
       <ConfirmDialog
         aberto={desativando !== null}
@@ -243,6 +329,107 @@ export default function Circuits() {
         onCancelar={() => setReativando(null)}
         confirmando={atualizar.isPending}
       />
+      {editando && (
+        <Modal aberto titulo={`Editar ${editando.code}`} onFechar={() => setEditando(null)}>
+          <form onSubmit={salvarEdicao} className="grid-form">
+            <FormField label="Organização *">
+              <select value={formEdit.organization_id} onChange={(e) => setFormEdit({ ...formEdit, organization_id: e.target.value })} required>
+                <option value="">—</option>
+                {(organizations ?? []).map((o) => (
+                  <option key={o.id} value={o.id}>{o.name}</option>
+                ))}
+              </select>
+            </FormField>
+            <FormField label="Site *">
+              <select value={formEdit.site_id} onChange={(e) => setFormEdit({ ...formEdit, site_id: e.target.value })} required>
+                <option value="">—</option>
+                {(sites ?? []).map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            </FormField>
+            <FormField label="Equipamento de acesso *">
+              <select value={formEdit.access_device_id} onChange={(e) => setFormEdit({ ...formEdit, access_device_id: e.target.value })} required>
+                <option value="">—</option>
+                {(devices ?? []).map((d) => (
+                  <option key={d.id} value={d.id}>{d.name}</option>
+                ))}
+              </select>
+            </FormField>
+            <FormField label="Porta de acesso *">
+              <input value={formEdit.access_port} onChange={(e) => setFormEdit({ ...formEdit, access_port: e.target.value })} required />
+            </FormField>
+            <FormField label="Edge *">
+              <select value={formEdit.edge_device_id} onChange={(e) => setFormEdit({ ...formEdit, edge_device_id: e.target.value })} required>
+                <option value="">—</option>
+                {(devices ?? []).map((d) => (
+                  <option key={d.id} value={d.id}>{d.name}</option>
+                ))}
+              </select>
+            </FormField>
+            <FormField label="Edge de contingência">
+              <select value={formEdit.backup_edge_device_id} onChange={(e) => setFormEdit({ ...formEdit, backup_edge_device_id: e.target.value })}>
+                <option value="">—</option>
+                {(devices ?? []).map((d) => (
+                  <option key={d.id} value={d.id}>{d.name}</option>
+                ))}
+              </select>
+            </FormField>
+            <FormField label="Stack">
+              <select value={formEdit.stack} onChange={(e) => setFormEdit({ ...formEdit, stack: e.target.value as "ipv4" | "ipv6" | "dual" })}>
+                <option value="ipv4">ipv4</option>
+                <option value="ipv6">ipv6</option>
+                <option value="dual">dual</option>
+              </select>
+            </FormField>
+            <FormField label="VLAN">
+              <select value={formEdit.vlan_mode} onChange={(e) => setFormEdit({ ...formEdit, vlan_mode: e.target.value as "unica" | "separada" })}>
+                <option value="unica">única</option>
+                <option value="separada">separada</option>
+              </select>
+            </FormField>
+            <FormField label="QinQ">
+              <input type="checkbox" checked={formEdit.qinq} onChange={(e) => setFormEdit({ ...formEdit, qinq: e.target.checked })} />
+            </FormField>
+            <FormField label="VRF">
+              <input value={formEdit.vrf} onChange={(e) => setFormEdit({ ...formEdit, vrf: e.target.value })} />
+            </FormField>
+            <FormField label="MTU">
+              <input type="number" value={formEdit.mtu} onChange={(e) => setFormEdit({ ...formEdit, mtu: e.target.value })} />
+            </FormField>
+            <FormField label="Banda">
+              <input value={formEdit.bandwidth} onChange={(e) => setFormEdit({ ...formEdit, bandwidth: e.target.value })} />
+            </FormField>
+            <FormField label="BFD">
+              <input type="checkbox" checked={formEdit.bfd} onChange={(e) => setFormEdit({ ...formEdit, bfd: e.target.checked })} />
+            </FormField>
+            <FormField label="Len /30 ou /31">
+              <select value={formEdit.p2p_v4_len} onChange={(e) => setFormEdit({ ...formEdit, p2p_v4_len: e.target.value as "30" | "31" })}>
+                <option value="31">/31</option>
+                <option value="30">/30</option>
+              </select>
+            </FormField>
+            <FormField label="Descrição">
+              <input value={formEdit.description} onChange={(e) => setFormEdit({ ...formEdit, description: e.target.value })} />
+            </FormField>
+            <FormField label="Observações">
+              <input value={formEdit.notes} onChange={(e) => setFormEdit({ ...formEdit, notes: e.target.value })} />
+            </FormField>
+            <FormField label="Eth-Trunk do edge">
+              <input value={formEdit.edge_trunk} onChange={(e) => setFormEdit({ ...formEdit, edge_trunk: e.target.value })} />
+            </FormField>
+            <div className="dialog-actions">
+              <button type="button" onClick={() => setEditando(null)} disabled={atualizar.isPending}>
+                Cancelar
+              </button>
+              <button className="primary" type="submit" disabled={atualizar.isPending}>
+                {atualizar.isPending ? "Salvando…" : "Salvar"}
+              </button>
+            </div>
+          </form>
+          {erroEdit && <p role="alert">{erroEdit}</p>}
+        </Modal>
+      )}
     </main>
   );
 }

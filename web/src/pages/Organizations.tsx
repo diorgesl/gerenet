@@ -8,6 +8,7 @@ import { FormField } from "@/components/FormField";
 import { StatusBadge } from "@/components/StatusBadge";
 import { PageHeader } from "@/components/PageHeader";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { Modal } from "@/components/Modal";
 import type { OrganizationOut } from "@/api/types";
 
 const FORM_VAZIO = { name: "", legal_name: "", kind: "downstream" as "downstream" | "parceiro", asn: "", irr_as_set: "", notes: "" };
@@ -22,6 +23,42 @@ export default function Organizations() {
   const [desativando, setDesativando] = useState<OrganizationOut | null>(null);
   const [reativando, setReativando] = useState<OrganizationOut | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  const [editando, setEditando] = useState<OrganizationOut | null>(null);
+  const [formEdit, setFormEdit] = useState(FORM_VAZIO);
+  const [erroEdit, setErroEdit] = useState<string | null>(null);
+
+  function abrirEdicao(o: OrganizationOut) {
+    setFormEdit({
+      name: o.name,
+      legal_name: o.legal_name ?? "",
+      kind: o.kind as "downstream" | "parceiro",
+      asn: o.asn === null ? "" : String(o.asn),
+      irr_as_set: o.irr_as_set ?? "",
+      notes: o.notes ?? "",
+    });
+    setErroEdit(null);
+    setEditando(o);
+  }
+
+  async function salvarEdicao(e: FormEvent) {
+    e.preventDefault();
+    if (!editando) return;
+    setErroEdit(null);
+    try {
+      await atualizar.mutateAsync({
+        id: editando.id,
+        name: formEdit.name,
+        legal_name: formEdit.legal_name || null,
+        kind: formEdit.kind,
+        asn: formEdit.asn === "" ? null : Number(formEdit.asn),
+        irr_as_set: formEdit.irr_as_set || null,
+        notes: formEdit.notes || null,
+      });
+      setEditando(null);
+    } catch (err) {
+      setErroEdit(err instanceof ApiError ? err.message : "Falha ao salvar a organização.");
+    }
+  }
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -97,17 +134,24 @@ export default function Organizations() {
         linhas={data ?? []}
         carregando={isLoading}
         erro={error instanceof ApiError ? error.message : error ? "Falha ao carregar os registros." : undefined}
-        acoes={(o) =>
-          podeEscrever && o.admin_status ? (
-            <button type="button" onClick={() => setDesativando(o)}>
-              Desativar
-            </button>
-          ) : podeEscrever ? (
-            <button type="button" onClick={() => setReativando(o)}>
-              Reativar
-            </button>
-          ) : null
-        }
+        acoes={(o) => (
+          <>
+            {podeEscrever && (
+              <button type="button" onClick={() => abrirEdicao(o)}>
+                Editar
+              </button>
+            )}
+            {podeEscrever && o.admin_status ? (
+              <button type="button" onClick={() => setDesativando(o)}>
+                Desativar
+              </button>
+            ) : podeEscrever ? (
+              <button type="button" onClick={() => setReativando(o)}>
+                Reativar
+              </button>
+            ) : null}
+          </>
+        )}
       />
       <ConfirmDialog
         aberto={desativando !== null}
@@ -137,6 +181,45 @@ export default function Organizations() {
         onCancelar={() => setReativando(null)}
         confirmando={atualizar.isPending}
       />
+      {editando && (
+        <Modal aberto titulo={`Editar ${editando.name}`} onFechar={() => setEditando(null)}>
+          <form onSubmit={salvarEdicao} className="grid-form">
+            <FormField label="Nome *">
+              <input value={formEdit.name} onChange={(e) => setFormEdit({ ...formEdit, name: e.target.value })} required />
+            </FormField>
+            <FormField label="Razão social">
+              <input value={formEdit.legal_name} onChange={(e) => setFormEdit({ ...formEdit, legal_name: e.target.value })} />
+            </FormField>
+            <FormField label="Tipo">
+              <select
+                value={formEdit.kind}
+                onChange={(e) => setFormEdit({ ...formEdit, kind: e.target.value as "downstream" | "parceiro" })}
+              >
+                <option value="downstream">downstream</option>
+                <option value="parceiro">parceiro</option>
+              </select>
+            </FormField>
+            <FormField label="ASN">
+              <input type="number" value={formEdit.asn} onChange={(e) => setFormEdit({ ...formEdit, asn: e.target.value })} />
+            </FormField>
+            <FormField label="IRR AS-SET">
+              <input value={formEdit.irr_as_set} onChange={(e) => setFormEdit({ ...formEdit, irr_as_set: e.target.value })} />
+            </FormField>
+            <FormField label="Observações">
+              <input value={formEdit.notes} onChange={(e) => setFormEdit({ ...formEdit, notes: e.target.value })} />
+            </FormField>
+            <div className="dialog-actions">
+              <button type="button" onClick={() => setEditando(null)} disabled={atualizar.isPending}>
+                Cancelar
+              </button>
+              <button className="primary" type="submit" disabled={atualizar.isPending}>
+                {atualizar.isPending ? "Salvando…" : "Salvar"}
+              </button>
+            </div>
+          </form>
+          {erroEdit && <p role="alert">{erroEdit}</p>}
+        </Modal>
+      )}
     </main>
   );
 }

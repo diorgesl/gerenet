@@ -25,6 +25,30 @@ export default function Users() {
   const [erro, setErro] = useState<string | null>(null);
   const [resetando, setResetando] = useState<UserOut | null>(null); // alvo do diálogo de redefinição
   const [senhaReset, setSenhaReset] = useState("");
+  const [editando, setEditando] = useState<UserOut | null>(null);
+  const [formEdit, setFormEdit] = useState<{ username: string; role: UserOut["role"] }>({
+    username: "",
+    role: "operador",
+  });
+  const [erroEdit, setErroEdit] = useState<string | null>(null);
+
+  function abrirEdicao(u: UserOut) {
+    setFormEdit({ username: u.username, role: u.role });
+    setErroEdit(null);
+    setEditando(u);
+  }
+
+  async function salvarEdicao(e: FormEvent) {
+    e.preventDefault();
+    if (!editando) return;
+    setErroEdit(null);
+    try {
+      await atualizar.mutateAsync({ id: editando.id, username: formEdit.username, role: formEdit.role });
+      setEditando(null);
+    } catch (err) {
+      setErroEdit(err instanceof ApiError ? err.message : "Falha ao salvar o usuário.");
+    }
+  }
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -84,6 +108,11 @@ export default function Users() {
         erro={error ? (error instanceof ApiError ? error.message : "Falha ao carregar os usuários.") : undefined}
         acoes={(u) => (
           <>
+            {u.id !== usuario?.id && (
+              <button type="button" onClick={() => abrirEdicao(u)}>
+                Editar
+              </button>
+            )}
             <button
               type="button"
               onClick={() => {
@@ -134,6 +163,34 @@ export default function Users() {
               {senha.isPending ? "Aguarde…" : "Redefinir"}
             </button>
           </div>
+        </Modal>
+      )}
+      {editando && (
+        <Modal aberto titulo={`Editar ${editando.username}`} onFechar={() => setEditando(null)}>
+          <form onSubmit={salvarEdicao} className="form-inline">
+            <FormField label="Usuário">
+              <input value={formEdit.username} onChange={(e) => setFormEdit({ ...formEdit, username: e.target.value })} required />
+            </FormField>
+            <FormField label="Perfil">
+              <select
+                value={formEdit.role}
+                onChange={(e) => setFormEdit({ ...formEdit, role: e.target.value as UserOut["role"] })}
+              >
+                {ROLES.map((r) => (
+                  <option key={r} value={r}>{r}</option>
+                ))}
+              </select>
+            </FormField>
+            <div className="dialog-actions">
+              <button type="button" onClick={() => setEditando(null)} disabled={atualizar.isPending}>
+                Cancelar
+              </button>
+              <button className="primary" type="submit" disabled={atualizar.isPending}>
+                {atualizar.isPending ? "Salvando…" : "Salvar"}
+              </button>
+            </div>
+          </form>
+          {erroEdit && <p role="alert">{erroEdit}</p>}
         </Modal>
       )}
     </main>

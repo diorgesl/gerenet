@@ -8,6 +8,7 @@ import { FormField } from "@/components/FormField";
 import { StatusBadge } from "@/components/StatusBadge";
 import { PageHeader } from "@/components/PageHeader";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { Modal } from "@/components/Modal";
 import type { SiteOut } from "@/api/types";
 
 const FORM_VAZIO = { name: "", city: "", uf: "", p2p_ipv4_block: "", p2p_ipv6_base: "" };
@@ -22,6 +23,40 @@ export default function Sites() {
   const [desativando, setDesativando] = useState<SiteOut | null>(null);
   const [reativando, setReativando] = useState<SiteOut | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  const [editando, setEditando] = useState<SiteOut | null>(null);
+  const [formEdit, setFormEdit] = useState(FORM_VAZIO);
+  const [erroEdit, setErroEdit] = useState<string | null>(null);
+
+  function abrirEdicao(s: SiteOut) {
+    setFormEdit({
+      name: s.name,
+      city: s.city ?? "",
+      uf: s.uf ?? "",
+      p2p_ipv4_block: s.p2p_ipv4_block ?? "",
+      p2p_ipv6_base: s.p2p_ipv6_base ?? "",
+    });
+    setErroEdit(null);
+    setEditando(s);
+  }
+
+  async function salvarEdicao(e: FormEvent) {
+    e.preventDefault();
+    if (!editando) return;
+    setErroEdit(null);
+    try {
+      await atualizar.mutateAsync({
+        id: editando.id,
+        name: formEdit.name,
+        city: formEdit.city || null,
+        uf: formEdit.uf || null,
+        p2p_ipv4_block: formEdit.p2p_ipv4_block || null,
+        p2p_ipv6_base: formEdit.p2p_ipv6_base || null,
+      });
+      setEditando(null);
+    } catch (err) {
+      setErroEdit(err instanceof ApiError ? err.message : "Falha ao salvar o site.");
+    }
+  }
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -90,19 +125,24 @@ export default function Sites() {
         linhas={data ?? []}
         carregando={isLoading}
         erro={error instanceof ApiError ? error.message : error ? "Falha ao carregar os registros." : undefined}
-        acoes={(s) =>
-          podeEscrever && s.admin_status ? (
-            <>
+        acoes={(s) => (
+          <>
+            {podeEscrever && (
+              <button type="button" onClick={() => abrirEdicao(s)}>
+                Editar
+              </button>
+            )}
+            {podeEscrever && s.admin_status ? (
               <button type="button" onClick={() => setDesativando(s)}>
                 Desativar
               </button>
-            </>
-          ) : podeEscrever ? (
-            <button type="button" onClick={() => setReativando(s)}>
-              Reativar
-            </button>
-          ) : null
-        }
+            ) : podeEscrever ? (
+              <button type="button" onClick={() => setReativando(s)}>
+                Reativar
+              </button>
+            ) : null}
+          </>
+        )}
       />
       <ConfirmDialog
         aberto={desativando !== null}
@@ -132,6 +172,36 @@ export default function Sites() {
         onCancelar={() => setReativando(null)}
         confirmando={atualizar.isPending}
       />
+      {editando && (
+        <Modal aberto titulo={`Editar ${editando.name}`} onFechar={() => setEditando(null)}>
+          <form onSubmit={salvarEdicao} className="grid-form">
+            <FormField label="Nome *">
+              <input value={formEdit.name} onChange={(e) => setFormEdit({ ...formEdit, name: e.target.value })} required />
+            </FormField>
+            <FormField label="Cidade">
+              <input value={formEdit.city} onChange={(e) => setFormEdit({ ...formEdit, city: e.target.value })} />
+            </FormField>
+            <FormField label="UF">
+              <input value={formEdit.uf} onChange={(e) => setFormEdit({ ...formEdit, uf: e.target.value })} />
+            </FormField>
+            <FormField label="Bloco IPv4 p2p">
+              <input value={formEdit.p2p_ipv4_block} onChange={(e) => setFormEdit({ ...formEdit, p2p_ipv4_block: e.target.value })} />
+            </FormField>
+            <FormField label="Base IPv6 p2p">
+              <input value={formEdit.p2p_ipv6_base} onChange={(e) => setFormEdit({ ...formEdit, p2p_ipv6_base: e.target.value })} />
+            </FormField>
+            <div className="dialog-actions">
+              <button type="button" onClick={() => setEditando(null)} disabled={atualizar.isPending}>
+                Cancelar
+              </button>
+              <button className="primary" type="submit" disabled={atualizar.isPending}>
+                {atualizar.isPending ? "Salvando…" : "Salvar"}
+              </button>
+            </div>
+          </form>
+          {erroEdit && <p role="alert">{erroEdit}</p>}
+        </Modal>
+      )}
     </main>
   );
 }

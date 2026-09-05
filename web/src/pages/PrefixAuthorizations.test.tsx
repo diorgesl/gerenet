@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeAll, describe, expect, it, vi } from "vitest";
@@ -59,5 +59,25 @@ describe("PrefixAuthorizations", () => {
       expect(patch).toBeTruthy();
       expect(JSON.parse(String(patch![1].body))).toEqual({ admin_status: false });
     });
+  });
+
+  it("Editar desativa a atual e cria outra com os valores novos", async () => {
+    renderPage();
+    await screen.findByText("200.200.1.0/24");
+    await userEvent.click(screen.getByRole("button", { name: "Editar" }));
+    const prefixo = within(screen.getByRole("dialog")).getByLabelText("Prefixo *");
+    await waitFor(() => expect(prefixo).toHaveValue("200.200.1.0/24"));
+    await userEvent.clear(prefixo);
+    await userEvent.type(prefixo, "198.51.100.0/24");
+    await userEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    const chamadas = (fetch as ReturnType<typeof vi.fn>).mock.calls as [
+      string,
+      RequestInit | undefined,
+    ][];
+    await waitFor(() => {
+      expect(chamadas.some((c) => c[1]?.method === "PATCH" && String(c[1].body).includes("admin_status"))).toBe(true);
+      expect(chamadas.some((c) => c[1]?.method === "POST" && String(c[1].body).includes("198.51.100.0/24"))).toBe(true);
+    });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 });

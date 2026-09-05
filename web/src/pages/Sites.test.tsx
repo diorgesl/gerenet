@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
@@ -102,5 +102,25 @@ describe("Sites", () => {
         ),
       ).toBe(true);
     });
+  });
+
+  it("Editar preenche o modal, envia PATCH e fecha", async () => {
+    renderSites();
+    await screen.findByText("SPO");
+    await userEvent.click(screen.getByRole("button", { name: "Editar" }));
+    const nome = within(screen.getByRole("dialog")).getByLabelText("Nome *");
+    await waitFor(() => expect(nome).toHaveValue("SPO"));
+    await userEvent.clear(nome);
+    await userEvent.type(nome, "SPO-2");
+    await userEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    await waitFor(() => {
+      const chamadas = vi.mocked(fetch).mock.calls;
+      expect(
+        chamadas.some(
+          (c) => c[1]?.method === "PATCH" && c[1]?.body && String(c[1].body).includes("SPO-2"),
+        ),
+      ).toBe(true);
+    });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 });

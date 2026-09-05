@@ -16,6 +16,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { TimeAgo } from "@/components/TimeAgo";
 import { PageHeader } from "@/components/PageHeader";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { Modal } from "@/components/Modal";
 import type { DeviceOut } from "@/api/types";
 
 const FORM_VAZIO = {
@@ -29,6 +30,8 @@ const FORM_VAZIO = {
   tags: "",
   site_id: "",
 };
+
+const FORM_EDIT_VAZIO = { ssh_port: "", model: "", family: "", role: "", site_id: "", asn: "", tags: "" };
 
 export default function Devices() {
   const { podeEscrever } = useAuth();
@@ -44,6 +47,9 @@ export default function Devices() {
   const [desativando, setDesativando] = useState<DeviceOut | null>(null);
   const [reativando, setReativando] = useState<DeviceOut | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  const [editando, setEditando] = useState<DeviceOut | null>(null);
+  const [formEdit, setFormEdit] = useState(FORM_EDIT_VAZIO);
+  const [erroEdit, setErroEdit] = useState<string | null>(null);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -63,6 +69,41 @@ export default function Devices() {
       setForm(FORM_VAZIO);
     } catch (err) {
       setErro(err instanceof ApiError ? err.message : "Falha ao cadastrar equipamento.");
+    }
+  }
+
+  function abrirEdicao(d: DeviceOut) {
+    setFormEdit({
+      ssh_port: d.ssh_port === null ? "" : String(d.ssh_port),
+      model: d.model ?? "",
+      family: d.family ?? "",
+      role: d.role ?? "",
+      site_id: d.site_id === null ? "" : String(d.site_id),
+      asn: d.asn === null ? "" : String(d.asn),
+      tags: d.tags.join(", "),
+    });
+    setErroEdit(null);
+    setEditando(d);
+  }
+
+  async function salvarEdicao(e: FormEvent) {
+    e.preventDefault();
+    if (!editando) return;
+    setErroEdit(null);
+    try {
+      await atualizar.mutateAsync({
+        id: editando.id,
+        ssh_port: formEdit.ssh_port === "" ? null : Number(formEdit.ssh_port),
+        model: formEdit.model || null,
+        family: formEdit.family || null,
+        role: formEdit.role || null,
+        site_id: formEdit.site_id === "" ? null : Number(formEdit.site_id),
+        asn: formEdit.asn === "" ? null : Number(formEdit.asn),
+        tags: formEdit.tags.split(",").map((t) => t.trim()).filter(Boolean),
+      });
+      setEditando(null);
+    } catch (err) {
+      setErroEdit(err instanceof ApiError ? err.message : "Falha ao salvar o equipamento.");
     }
   }
 
@@ -143,6 +184,11 @@ export default function Devices() {
         acoes={(d) => (
           <>
             {podeEscrever && (
+              <button type="button" onClick={() => abrirEdicao(d)}>
+                Editar
+              </button>
+            )}
+            {podeEscrever && (
               <button
                 type="button"
                 onClick={() => void coletar.mutateAsync(d.id).then(() => navigate(`/jobs?device_id=${d.id}`))}
@@ -185,6 +231,49 @@ export default function Devices() {
         onCancelar={() => setReativando(null)}
         confirmando={atualizar.isPending}
       />
+      {editando && (
+        <Modal aberto titulo={`Editar ${editando.name}`} onFechar={() => setEditando(null)}>
+          <form onSubmit={salvarEdicao} className="grid-form">
+            <FormField label="Porta SSH">
+              <input type="number" value={formEdit.ssh_port} onChange={(e) => setFormEdit({ ...formEdit, ssh_port: e.target.value })} />
+            </FormField>
+            <FormField label="Modelo">
+              <input value={formEdit.model} onChange={(e) => setFormEdit({ ...formEdit, model: e.target.value })} />
+            </FormField>
+            <FormField label="Família">
+              <input value={formEdit.family} onChange={(e) => setFormEdit({ ...formEdit, family: e.target.value })} />
+            </FormField>
+            <FormField label="Função">
+              <input value={formEdit.role} onChange={(e) => setFormEdit({ ...formEdit, role: e.target.value })} />
+            </FormField>
+            <FormField label="Site">
+              <select value={formEdit.site_id} onChange={(e) => setFormEdit({ ...formEdit, site_id: e.target.value })}>
+                <option value="">—</option>
+                {(sites ?? []).map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+            <FormField label="ASN">
+              <input type="number" value={formEdit.asn} onChange={(e) => setFormEdit({ ...formEdit, asn: e.target.value })} />
+            </FormField>
+            <FormField label="Tags (separadas por vírgula)">
+              <input value={formEdit.tags} onChange={(e) => setFormEdit({ ...formEdit, tags: e.target.value })} />
+            </FormField>
+            <div className="dialog-actions">
+              <button type="button" onClick={() => setEditando(null)} disabled={atualizar.isPending}>
+                Cancelar
+              </button>
+              <button className="primary" type="submit" disabled={atualizar.isPending}>
+                {atualizar.isPending ? "Salvando…" : "Salvar"}
+              </button>
+            </div>
+          </form>
+          {erroEdit && <p role="alert">{erroEdit}</p>}
+        </Modal>
+      )}
     </main>
   );
 }

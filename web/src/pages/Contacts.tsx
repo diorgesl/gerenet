@@ -8,6 +8,7 @@ import { FormField } from "@/components/FormField";
 import { StatusBadge } from "@/components/StatusBadge";
 import { PageHeader } from "@/components/PageHeader";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { Modal } from "@/components/Modal";
 import type { ContactOut } from "@/api/types";
 
 const FORM_VAZIO = { organization_id: "", name: "", email: "", phone: "", kind: "tecnico" as "tecnico" | "noc" | "admin" };
@@ -23,6 +24,40 @@ export default function Contacts() {
   const [desativando, setDesativando] = useState<ContactOut | null>(null);
   const [reativando, setReativando] = useState<ContactOut | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  const [editando, setEditando] = useState<ContactOut | null>(null);
+  const [formEdit, setFormEdit] = useState(FORM_VAZIO);
+  const [erroEdit, setErroEdit] = useState<string | null>(null);
+
+  function abrirEdicao(c: ContactOut) {
+    setFormEdit({
+      organization_id: String(c.organization_id),
+      name: c.name,
+      email: c.email ?? "",
+      phone: c.phone ?? "",
+      kind: c.kind,
+    });
+    setErroEdit(null);
+    setEditando(c);
+  }
+
+  async function salvarEdicao(e: FormEvent) {
+    e.preventDefault();
+    if (!editando) return;
+    setErroEdit(null);
+    try {
+      await atualizar.mutateAsync({
+        id: editando.id,
+        organization_id: Number(formEdit.organization_id),
+        name: formEdit.name,
+        email: formEdit.email || null,
+        phone: formEdit.phone || null,
+        kind: formEdit.kind,
+      });
+      setEditando(null);
+    } catch (err) {
+      setErroEdit(err instanceof ApiError ? err.message : "Falha ao salvar o contato.");
+    }
+  }
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -110,17 +145,24 @@ export default function Contacts() {
         linhas={data ?? []}
         carregando={isLoading}
         erro={error instanceof ApiError ? error.message : error ? "Falha ao carregar os registros." : undefined}
-        acoes={(c) =>
-          podeEscrever && c.admin_status ? (
-            <button type="button" onClick={() => setDesativando(c)}>
-              Desativar
-            </button>
-          ) : podeEscrever ? (
-            <button type="button" onClick={() => setReativando(c)}>
-              Reativar
-            </button>
-          ) : null
-        }
+        acoes={(c) => (
+          <>
+            {podeEscrever && (
+              <button type="button" onClick={() => abrirEdicao(c)}>
+                Editar
+              </button>
+            )}
+            {podeEscrever && c.admin_status ? (
+              <button type="button" onClick={() => setDesativando(c)}>
+                Desativar
+              </button>
+            ) : podeEscrever ? (
+              <button type="button" onClick={() => setReativando(c)}>
+                Reativar
+              </button>
+            ) : null}
+          </>
+        )}
       />
       <ConfirmDialog
         aberto={desativando !== null}
@@ -150,6 +192,54 @@ export default function Contacts() {
         onCancelar={() => setReativando(null)}
         confirmando={atualizar.isPending}
       />
+      {editando && (
+        <Modal aberto titulo={`Editar ${editando.name}`} onFechar={() => setEditando(null)}>
+          <form onSubmit={salvarEdicao} className="grid-form">
+            <FormField label="Organização *">
+              <select
+                value={formEdit.organization_id}
+                onChange={(e) => setFormEdit({ ...formEdit, organization_id: e.target.value })}
+                required
+              >
+                <option value="">—</option>
+                {(organizations ?? []).map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.name}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+            <FormField label="Nome *">
+              <input value={formEdit.name} onChange={(e) => setFormEdit({ ...formEdit, name: e.target.value })} required />
+            </FormField>
+            <FormField label="E-mail">
+              <input type="email" value={formEdit.email} onChange={(e) => setFormEdit({ ...formEdit, email: e.target.value })} />
+            </FormField>
+            <FormField label="Telefone">
+              <input value={formEdit.phone} onChange={(e) => setFormEdit({ ...formEdit, phone: e.target.value })} />
+            </FormField>
+            <FormField label="Tipo">
+              <select
+                value={formEdit.kind}
+                onChange={(e) => setFormEdit({ ...formEdit, kind: e.target.value as "tecnico" | "noc" | "admin" })}
+              >
+                <option value="tecnico">tecnico</option>
+                <option value="noc">noc</option>
+                <option value="admin">admin</option>
+              </select>
+            </FormField>
+            <div className="dialog-actions">
+              <button type="button" onClick={() => setEditando(null)} disabled={atualizar.isPending}>
+                Cancelar
+              </button>
+              <button className="primary" type="submit" disabled={atualizar.isPending}>
+                {atualizar.isPending ? "Salvando…" : "Salvar"}
+              </button>
+            </div>
+          </form>
+          {erroEdit && <p role="alert">{erroEdit}</p>}
+        </Modal>
+      )}
     </main>
   );
 }

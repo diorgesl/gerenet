@@ -13,6 +13,7 @@ import { FormField } from "@/components/FormField";
 import { StatusBadge } from "@/components/StatusBadge";
 import { PageHeader } from "@/components/PageHeader";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { Modal } from "@/components/Modal";
 import type { PrefixAuthorizationOut } from "@/api/types";
 
 const FORM_VAZIO = { organization_id: "", family: "ipv4" as "ipv4" | "ipv6", prefix: "", notes: "" };
@@ -28,6 +29,39 @@ export default function PrefixAuthorizations() {
   const [desativando, setDesativando] = useState<PrefixAuthorizationOut | null>(null);
   const [reativando, setReativando] = useState<PrefixAuthorizationOut | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  const [editando, setEditando] = useState<PrefixAuthorizationOut | null>(null);
+  const [formEdit, setFormEdit] = useState(FORM_VAZIO);
+  const [erroEdit, setErroEdit] = useState<string | null>(null);
+
+  function abrirEdicao(z: PrefixAuthorizationOut) {
+    setFormEdit({
+      organization_id: String(z.organization_id),
+      family: z.family,
+      prefix: z.prefix,
+      notes: z.notes ?? "",
+    });
+    setErroEdit(null);
+    setEditando(z);
+  }
+
+  async function salvarEdicao(e: FormEvent) {
+    e.preventDefault();
+    if (!editando) return;
+    setErroEdit(null);
+    try {
+      // Mudar dado = desativar a atual + criar outra (decisão C3 2026-09-05).
+      await desativar.mutateAsync({ id: editando.id, admin_status: false });
+      await criar.mutateAsync({
+        organization_id: Number(formEdit.organization_id),
+        family: formEdit.family,
+        prefix: formEdit.prefix,
+        notes: formEdit.notes || null,
+      });
+      setEditando(null);
+    } catch (err) {
+      setErroEdit(err instanceof ApiError ? err.message : "Falha ao salvar a autorização.");
+    }
+  }
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -96,17 +130,24 @@ export default function PrefixAuthorizations() {
         linhas={data ?? []}
         carregando={isLoading}
         erro={error instanceof ApiError ? error.message : error ? "Falha ao carregar os registros." : undefined}
-        acoes={(z) =>
-          podeEscrever && z.admin_status ? (
-            <button type="button" onClick={() => setDesativando(z)}>
-              Desativar
-            </button>
-          ) : podeEscrever ? (
-            <button type="button" onClick={() => setReativando(z)}>
-              Reativar
-            </button>
-          ) : null
-        }
+        acoes={(z) => (
+          <>
+            {podeEscrever && (
+              <button type="button" onClick={() => abrirEdicao(z)}>
+                Editar
+              </button>
+            )}
+            {podeEscrever && z.admin_status ? (
+              <button type="button" onClick={() => setDesativando(z)}>
+                Desativar
+              </button>
+            ) : podeEscrever ? (
+              <button type="button" onClick={() => setReativando(z)}>
+                Reativar
+              </button>
+            ) : null}
+          </>
+        )}
       />
       <ConfirmDialog
         aberto={desativando !== null}
@@ -136,6 +177,41 @@ export default function PrefixAuthorizations() {
         onCancelar={() => setReativando(null)}
         confirmando={desativar.isPending}
       />
+      {editando && (
+        <Modal aberto titulo={`Editar ${editando.prefix}`} onFechar={() => setEditando(null)}>
+          <form onSubmit={salvarEdicao} className="grid-form">
+            <FormField label="Organização *">
+              <select value={formEdit.organization_id} onChange={(e) => setFormEdit({ ...formEdit, organization_id: e.target.value })} required>
+                <option value="">—</option>
+                {(organizations ?? []).map((o) => (
+                  <option key={o.id} value={o.id}>{o.name}</option>
+                ))}
+              </select>
+            </FormField>
+            <FormField label="Família">
+              <select value={formEdit.family} onChange={(e) => setFormEdit({ ...formEdit, family: e.target.value as "ipv4" | "ipv6" })}>
+                <option value="ipv4">ipv4</option>
+                <option value="ipv6">ipv6</option>
+              </select>
+            </FormField>
+            <FormField label="Prefixo *">
+              <input value={formEdit.prefix} onChange={(e) => setFormEdit({ ...formEdit, prefix: e.target.value })} required />
+            </FormField>
+            <FormField label="Observações">
+              <input value={formEdit.notes} onChange={(e) => setFormEdit({ ...formEdit, notes: e.target.value })} />
+            </FormField>
+            <div className="dialog-actions">
+              <button type="button" onClick={() => setEditando(null)} disabled={desativar.isPending || criar.isPending}>
+                Cancelar
+              </button>
+              <button className="primary" type="submit" disabled={desativar.isPending || criar.isPending}>
+                {desativar.isPending || criar.isPending ? "Salvando…" : "Salvar"}
+              </button>
+            </div>
+          </form>
+          {erroEdit && <p role="alert">{erroEdit}</p>}
+        </Modal>
+      )}
     </main>
   );
 }
