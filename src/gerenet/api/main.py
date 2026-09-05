@@ -6,6 +6,7 @@ from gerenet.api import auth, dashboard, jobs, users, wiki
 from gerenet.api.routers import (
     audit_events,
     bgp_sessions,
+    change_requests,
     circuits,
     communities,
     contacts,
@@ -40,6 +41,7 @@ def create_app() -> FastAPI:
     app.include_router(organizations.downstreams_router)
     app.include_router(contacts.router)
     app.include_router(circuits.router)
+    app.include_router(change_requests.router)
     app.include_router(bgp_sessions.router)
     app.include_router(communities.router)
     app.include_router(reconciliation.router)
