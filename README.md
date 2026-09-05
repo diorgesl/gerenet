@@ -62,7 +62,7 @@ Após o build da SPA (ou no dev com a API rodando), o operador autenticado acess
 `/wiki` (menu "Ajuda") para ler a documentação operacional; a sidebar agrupa as
 páginas por seção e marca com "(em breve)" as que ainda não têm recurso
 disponível. O conteúdo vive em `docs/wiki/` (10 páginas) e é editado via PR
-(renderização server-side com `markdown` + sanitização `nh3`; nenhum conteúdo do
-cliente é renderizado no browser). Cada página usa frontmatter
+(renderização server-side com `markdown` + sanitização `nh3` — o HTML vem
+sanitizado do servidor; nenhum markdown é renderizado no cliente). Cada página usa frontmatter
 `title`/`secao`/`order`/`em_breve` — `em_breve: true` mostra o aviso
 "Recurso planejado — não disponível ainda." no topo da página.

@@ -1,6 +1,6 @@
 # Fumos e2e da interface web (Playwright)
 
-Os 5 fumos (3 de login + 2 de smoke) exercitam a SPA real contra o backend
+Os 6 fumos (3 de login + 3 de smoke) exercitam a SPA real contra o backend
 real (FastAPI + PostgreSQL) — sem mocks. Rodam tudo por um único comando:
 
 ```bash
@@ -84,7 +84,9 @@ default (`postgresql+psycopg://gerenet:gerenet@localhost:5432/gerenet`).
   inválidos."; logout → volta ao `/login`. Cada teste roda em contexto limpo.
 - `smoke.spec.ts` — criar e desativar um site pela UI; abrir a Reconciliação
   com o device seedado `ne8000-01` e conferir que a superfície renderiza
-  (aviso `role="status"`, tabela ou "Nenhuma divergência encontrada.").
+  (aviso `role="status"`, tabela ou "Nenhuma divergência encontrada."); abrir
+  o wiki pelo menu Ajuda (rota `/wiki`) e conferir o tooltip de um campo de
+  formulário.
 
 Relatório: `playwright-report/` (html) e artefatos em `test-results/`
 (ambos ignorados pelo git).

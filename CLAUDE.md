@@ -153,5 +153,5 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   (`marcar_executando` — docstring anota que o enqueue na fila `gerenet-change`
   é plugado depois); não há worker/fila da mudança, e a UI web do fluxo de
   mudanças ainda não existe.
-- Convenções previstas no `.gitignore`: Python com venv e pytest (`.venv/`, `.pytest_cache/`), deploy via Docker Compose em `deploy/` com `.env` ignorado, `config.yaml` local com segredos **fora do repositório**, logs em `logs/` ignorados.
+- Convenções previstas no `.gitignore`: Python com venv e pytest (`.venv/`, `.pytest_cache/`), deploy via Docker Compose (`compose.yaml` na raiz) com `.env` ignorado (o `.gitignore` ainda prevê `deploy/docker/.env`), `config.yaml` local com segredos **fora do repositório**, logs em `logs/` ignorados.
 - `.claude/settings.local.json` contém token e aponta o harness para uma API externa: é arquivo local — não versionar nem alterar.
