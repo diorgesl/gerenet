@@ -45,7 +45,9 @@ define os blocos: `p2p_ipv4_block` (padrão `100.64.0.0/10`) e `p2p_ipv6_base`
 
 Exemplo (spec §25.8): IPv4 `100.110.0.73` → octetos 2–4 `110.0.73` → dígitos
 `110073` → hextets `1100:73` → local `2804:194C:1000::1100:73:1/126`, remota
-`2804:194C:1000::1100:73:2/126`.
+`2804:194C:1000::1100:73:2/126`. O `/126` identifica o enlace no gerenet: na
+[sessão BGP](/wiki/roteamento) informe apenas o endereço da ponta, sem o `/126`
+(no v4, idem, sem `/31`/`/30`).
 
 Em circuito `ipv6` puro, o alocador também reserva um par IPv4 interno (só para
 derivar o sufixo — não vai para a interface).

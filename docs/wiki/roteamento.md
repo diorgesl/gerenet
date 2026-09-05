@@ -20,8 +20,10 @@ Regras de negócio:
 - `asn_local` padrão = ASN do equipamento; `asn_remote` padrão = ASN da
   organização; ambos podem ser informados explicitamente (o remoto não pode
   divergir do ASN da organização).
-- Endereços: v4 sem máscara; v6 com `/126` — use as pontas do
-  [enlace reservado](/wiki/circuitos).
+- Endereços: **v4 e v6 sem máscara** — use as pontas do
+  [enlace reservado](/wiki/circuitos) informando apenas o endereço da ponta: a
+  máscara identifica o enlace reservado, e na sessão BGP o endereço entra
+  sozinho (no v6, sem o `/126`; no v4, sem o `/31`/`/30`).
 
 Campos de política da sessão: `import_profile_id` / `export_profile_id`,
 `maximum_prefix` + limiar (0–100 %), `local_preference`, `med`, `prepend`
@@ -39,7 +41,9 @@ As autorizações definem o que o cliente pode anunciar, por família. Regras:
 
 - Prefixo em CIDR, da **organização** dona; a organização desativada não recebe
   autorizações.
-- Sem sobreposição entre autorizações **ativas** da mesma família.
+- Sem sobreposição entre autorizações **ativas** da mesma família de
+  **organizações diferentes** (a mesma organização pode listar blocos
+  contíguos/sobrepostos — a regra protege um cliente contra o outro).
 - Hoje a origem é `manual`; IRR/RPKI entram na Fase 5 (políticas avançadas).
 
 A **prefix-list de entrada** é derivada das autorizações **ativas** somente:

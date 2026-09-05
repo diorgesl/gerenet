@@ -35,7 +35,7 @@ coleta) e fingerprint da host key SSH (registrada por
 |---|---|
 | `unknown` | Nunca coletado (valor inicial). |
 | `ok` | A última coleta trouxe recursos (mesmo que alguns tenham falhado). |
-| `fail` | A última coleta não trouxe nenhum recurso — fração entre falhas consecutivas (`consecutive_failures`). |
+| `fail` | A última coleta não trouxe nenhum recurso — contador que cresce a cada tentativa sem recurso (`consecutive_failures`). |
 
 A última coleta com sucesso atualiza `last_collected_at`, `vrp_version` e
 `uptime`.
@@ -73,7 +73,7 @@ Estados de job:
 
 | Estado | Significado | O que fazer |
 |---|---|---|
-| `queued` | Na fila aguardando o worker. | Aguardar. |
+| `queued` | Na fila do RQ aguardando o worker — **invisível na tela**: o registro no banco nasce já `running` quando o worker executa. | Aguardar. |
 | `running` | Executando no equipamento. | Aguardar. |
 | `success` | Todos os recursos coletados. | Conferir snapshot. |
 | `partial` | Parte dos recursos falhou (o snapshot tem `errors` por recurso). | Ver `JobDetail`/snapshot → `errors`. |

@@ -57,9 +57,10 @@ autorizações. A aprovação e a execução de mudanças fazem parte do fluxo d
    botão "Coletar agora", ou pela CLI:
    `gerenet collect run --device <id|nome>` (ou `--all`). A coleta vai para a
    fila de jobs; um job por equipamento, com lock garantindo uma coleta por vez.
-5. **Acompanhe o job** — em Jobs, o registro caminha por
-   `queued → running → success/partial/error`; em `error`, o motivo aparece na
-   coluna Motivo.
+5. **Acompanhe o job** — o registro aparece na tela Jobs como `running` assim
+   que o worker executa (enquanto o job está na fila do RQ ele ainda não existe
+   no banco) e termina em `success`, `partial` ou `error`; em `error`, o motivo
+   aparece na coluna Motivo.
 6. **Veja o snapshot** — o resultado estruturado da coleta (recursos coletados
    e erros por recurso) está na página Snapshots; os backups brutos dos
    comandos ficam guardados por coleta.
