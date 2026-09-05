@@ -438,6 +438,23 @@ class CommunityOut(BaseModel):
     id: int
     name: str
     notes: str | None = None
+    admin_status: bool
+
+
+class CommunityUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+    notes: str | None = None
+    admin_status: bool | None = None  # PATCH puro {"admin_status": false} roteia ao disable (Ruling 1)
+
+
+class PolicyProfileUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+    label: str | None = Field(default=None, min_length=1, max_length=64)
+    direction: str | None = None  # validado no serviço contra models.DIRECTION
+    kind: str | None = None  # validado no serviço contra models.PROFILE_KIND
+    prefixes: list[str] | None = None
+    notes: str | None = None
+    admin_status: bool | None = None
 
 
 class BlocoOut(BaseModel):
