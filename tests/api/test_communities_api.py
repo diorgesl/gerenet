@@ -1,4 +1,4 @@
-"""Communities (catálogo read-only) e associações sessão ↔ community (spec §8)."""
+"""Communities — catálogo com PATCH de ativação (desativar/reativar) desde o C3; associações sessão ↔ community (spec §8)."""
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select

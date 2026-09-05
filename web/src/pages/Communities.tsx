@@ -15,6 +15,7 @@ export default function Communities() {
   const { podeEscrever } = useAuth();
   const [incluirInativos, setIncluirInativos] = useState(false);
   const [reativando, setReativando] = useState<CommunityOut | null>(null);
+  const [desativando, setDesativando] = useState<CommunityOut | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [detalhe, setDetalhe] = useState<CommunityOut | null>(null);
   const [editando, setEditando] = useState<CommunityOut | null>(null);
@@ -72,6 +73,11 @@ export default function Communities() {
                 Editar
               </button>
             )}
+            {podeEscrever && c.admin_status && (
+              <button type="button" onClick={() => setDesativando(c)}>
+                Desativar
+              </button>
+            )}
             {podeEscrever && !c.admin_status && (
               <button type="button" onClick={() => setReativando(c)}>
                 Reativar
@@ -79,6 +85,20 @@ export default function Communities() {
             )}
           </>
         )}
+      />
+      <ConfirmDialog
+        aberto={desativando !== null}
+        titulo={`Desativar ${desativando?.name ?? ""}?`}
+        mensagem="A community fica indisponível para novos cadastros; o registro permanece."
+        onConfirmar={() => {
+          if (desativando)
+            void atualizar
+              .mutateAsync({ id: desativando.id, admin_status: false })
+              .then(() => setDesativando(null))
+              .catch((err) => setErro(err instanceof ApiError ? err.message : "Falha ao desativar a community."));
+        }}
+        onCancelar={() => setDesativando(null)}
+        confirmando={atualizar.isPending}
       />
       <ConfirmDialog
         aberto={reativando !== null}

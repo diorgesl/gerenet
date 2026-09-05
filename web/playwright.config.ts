@@ -15,8 +15,8 @@ export default defineConfig({
   // Seed idempotente (usuário admin + site/device/org/circuito/autorização)
   // antes dos specs — run-book em e2e/README.md (Task 12).
   globalSetup: "./e2e/setup.ts",
-  // O webServer sobe o build da SPA + o uvicorn se a porta estiver livre
-  // (reuseExistingServer) — ver e2e/README.md (Task 12).
+  // O webServer sobe o build da SPA + o uvicorn; porta 8000 ocupada é falha
+  // dura no boot (reuseExistingServer: false) — ver e2e/README.md.
   webServer: {
     command:
       'bash -c "npm run build && cd .. && uv run uvicorn gerenet.api.main:create_app --factory --port 8000"',

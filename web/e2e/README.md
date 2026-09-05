@@ -74,7 +74,7 @@ default (`postgresql+psycopg://gerenet:gerenet@localhost:5432/gerenet`).
 | --- | --- |
 | `Executable doesn't exist at ...` | rodar o passo 2 (`playwright install chromium`); se o download falhar (`Download failure, code=1`), o CDN do Playwright está inacessível na rede — instalar o Google Chrome do sistema e rodar com `GERENET_E2E_CHANNEL=chrome` (o config só usa o canal "chrome" com essa env) |
 | `Error: reuseExistingServer` / port 8000 ocupada | outro processo já escuta na 8000 (uvicorn de dev, IDE…) — **pare-o** e rode de novo; o webServer agora falha duro, sem reutilizar |
-| `Timed out waiting 60000ms from config.webServer` | subiu com o banco fora do ar ou a porta 8000 ocupada por outro processo sem `uvicorn` sendo servido — verificar `docker compose ps` e o que está na 8000 |
+| `Timed out waiting 60000ms from config.webServer` | subiu com o banco fora do ar — verificar `docker compose ps` (porta 8000 ocupada hoje é falha dura no boot: ver `Error: reuseExistingServer` acima) |
 | login falha com "Usuário ou senha inválidos" | o `admin` do banco `gerenet_e2e` tem senha de outra execução — resetar com `GERENET_DATABASE_URL="postgresql+psycopg://gerenet:gerenet@localhost:5432/gerenet_e2e" uv run gerenet users set-password admin` (com a env! sem ela o reset cai no banco de dev) e usar o mesmo valor de `E2E_PASSWORD` |
 | testes passam mas o seed parece vazio | conferir `GERENET_DATABASE_URL` apontando para `gerenet_e2e` no mesmo comando |
 

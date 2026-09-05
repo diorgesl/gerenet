@@ -17,6 +17,7 @@ export default function PolicyProfiles() {
   const [direcao, setDirecao] = useState("");
   const [incluirInativos, setIncluirInativos] = useState(false);
   const [reativando, setReativando] = useState<PolicyProfileOut | null>(null);
+  const [desativando, setDesativando] = useState<PolicyProfileOut | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [editando, setEditando] = useState<PolicyProfileOut | null>(null);
   const [formEdit, setFormEdit] = useState({ name: "", label: "", direction: "import" as "import" | "export", kind: "produto", prefixes: "", notes: "" });
@@ -101,6 +102,11 @@ export default function PolicyProfiles() {
                 Editar
               </button>
             )}
+            {podeEscrever && p.admin_status && (
+              <button type="button" onClick={() => setDesativando(p)}>
+                Desativar
+              </button>
+            )}
             {podeEscrever && !p.admin_status ? (
               <button type="button" onClick={() => setReativando(p)}>
                 Reativar
@@ -108,6 +114,20 @@ export default function PolicyProfiles() {
             ) : null}
           </>
         )}
+      />
+      <ConfirmDialog
+        aberto={desativando !== null}
+        titulo={`Desativar ${desativando?.name ?? ""}?`}
+        mensagem="O perfil fica indisponível para novos cadastros; o registro permanece."
+        onConfirmar={() => {
+          if (desativando)
+            void atualizar
+              .mutateAsync({ id: desativando.id, admin_status: false })
+              .then(() => setDesativando(null))
+              .catch((err) => setErro(err instanceof ApiError ? err.message : "Falha ao desativar o perfil."));
+        }}
+        onCancelar={() => setDesativando(null)}
+        confirmando={atualizar.isPending}
       />
       <ConfirmDialog
         aberto={reativando !== null}
