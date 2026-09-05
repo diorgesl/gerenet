@@ -1,3 +1,5 @@
+import { Modal } from "@/components/Modal";
+
 export function ConfirmDialog({
   aberto,
   titulo,
@@ -13,21 +15,18 @@ export function ConfirmDialog({
   onCancelar: () => void;
   confirmando?: boolean;
 }) {
-  if (!aberto) return null;
+  // API preservada (spec S2.1): a implementação passa a ser o Modal com a11y.
   return (
-    <div role="dialog" aria-modal="true" aria-label={titulo} className="dialog-backdrop">
-      <div className="dialog">
-        <h2>{titulo}</h2>
-        <p>{mensagem}</p>
-        <div className="dialog-actions">
-          <button onClick={onCancelar} disabled={confirmando}>
-            Cancelar
-          </button>
-          <button className="danger" onClick={onConfirmar} disabled={confirmando}>
-            {confirmando ? "Aguarde…" : "Confirmar"}
-          </button>
-        </div>
+    <Modal aberto={aberto} titulo={titulo} onFechar={onCancelar}>
+      <p>{mensagem}</p>
+      <div className="dialog-actions">
+        <button onClick={onCancelar} disabled={confirmando}>
+          Cancelar
+        </button>
+        <button className="danger" onClick={onConfirmar} disabled={confirmando}>
+          {confirmando ? "Aguarde…" : "Confirmar"}
+        </button>
       </div>
-    </div>
+    </Modal>
   );
 }

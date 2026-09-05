@@ -5,6 +5,7 @@ import { ApiError } from "@/api/client";
 import { useUserAtualizar, useUserCriar, useUserSenha, useUsers } from "@/api/hooks";
 import { DataTable } from "@/components/DataTable";
 import { FormField } from "@/components/FormField";
+import { Modal } from "@/components/Modal";
 import { StatusBadge } from "@/components/StatusBadge";
 import { PageHeader } from "@/components/PageHeader";
 import type { UserOut } from "@/api/types";
@@ -93,8 +94,11 @@ export default function Users() {
       />
       {atualizar.error && <p role="alert">{String(atualizar.error?.message ?? "Falha ao atualizar.")}</p>}
       {resetando && (
-        <div role="dialog" aria-modal="true" aria-label={`Redefinir senha de ${resetando.username}`}>
-          <h2>Redefinir senha de {resetando.username}</h2>
+        <Modal
+          aberto
+          titulo={`Redefinir senha de ${resetando.username}`}
+          onFechar={() => setResetando(null)}
+        >
           <FormField label="Nova senha">
             <input
               type="password"
@@ -104,17 +108,24 @@ export default function Users() {
             />
           </FormField>
           {senha.error && <p role="alert">{String(senha.error.message ?? "Falha ao redefinir.")}</p>}
-          <button
-            className="danger"
-            disabled={senha.isPending || senhaReset.length === 0}
-            onClick={() =>
-              void senha.mutateAsync({ id: resetando.id, password: senhaReset }).then(() => setResetando(null))
-            }
-          >
-            Redefinir
-          </button>
-          <button onClick={() => setResetando(null)}>Cancelar</button>
-        </div>
+          <div className="dialog-actions">
+            <button onClick={() => setResetando(null)} disabled={senha.isPending}>
+              Cancelar
+            </button>
+            <button
+              className="primary"
+              disabled={senha.isPending || senhaReset.length === 0}
+              onClick={() =>
+                void senha
+                  .mutateAsync({ id: resetando.id, password: senhaReset })
+                  .then(() => setResetando(null))
+                  .catch(() => undefined)
+              }
+            >
+              {senha.isPending ? "Aguarde…" : "Redefinir"}
+            </button>
+          </div>
+        </Modal>
       )}
     </main>
   );
