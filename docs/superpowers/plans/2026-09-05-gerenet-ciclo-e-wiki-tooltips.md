@@ -268,8 +268,7 @@ Expected: limpo.
 
 ```bash
 git add pyproject.toml uv.lock src/gerenet/config.py src/gerenet/api/wiki.py src/gerenet/api/main.py tests/api/test_wiki.py
-git commit -m "feat(api): wiki operacional — índice e página renderizados no servidor (ciclo E)
-```
+git commit -m "feat(api): wiki operacional — índice e página renderizados no servidor (ciclo E)"
 ```
 
 (Lembre de fechar a mensagem com a linha Co-Authored-By: Claude Code <noreply@anthropic.com>)
@@ -1075,14 +1074,25 @@ Cada uma com `secao: Em breve`, `em_breve: true`, e estrutura:
 - `mpls.md` (`order: 2`): L2VC (VC-ID único, pontas A/B) e VSI (peers LDP, ACs) — planejado; consulte o item do roadmap §22 F4.
 - `upstreams.md` (`order: 3`): trânsito/IX/PNI, full routes, communities de TE, prepend/blackhole, IRR/RPKI — planejado.
 
-- [ ] **Step 9: Validar renderização e remoção no índice**
+- [ ] **Step 9: Validar renderização e índice**
 
 Run:
 ```bash
 uv run pytest tests/api/test_wiki.py -v
-uv run uvicorn gerenet.api.main:create_app --factory --port 8000
+uv run python - <<'PY'
+from pathlib import Path
+from gerenet.api.wiki import listar_wiki, pagina_wiki
+paginas = listar_wiki(Path("docs/wiki"))
+slugs = [p["slug"] for p in paginas]
+assert len(paginas) == 10, slugs
+assert sum(1 for p in paginas if p["em_breve"]) == 3, slugs
+assert "index" in slugs and "mpls" in slugs and "upstreams" in slugs, slugs
+corpo = pagina_wiki("index", Path("docs/wiki"))
+assert corpo and "<h1>" in corpo["html"]
+print("OK:", [p["slug"] for p in paginas])
+PY
 ```
-Em outra aba: `curl -s localhost:8000/api/v1/wiki | python -m json.tool` — deve listar as 10 páginas (7 com `em_breve: false`, 3 com `true`). Verifique também `curl -s localhost:8000/api/v1/wiki/mpls`.
+Expected: `OK: ['index', 'comecar', 'equipamentos', 'organizacao', 'circuitos', 'roteamento', 'operacao', 'mudancas-controladas', 'mpls', 'upstreams']` — sem servidor (nada ocupa a porta 8000, que o e2e da Task 9 exige livre).
 
 - [ ] **Step 10: Commit**
 
