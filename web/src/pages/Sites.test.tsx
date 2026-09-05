@@ -61,8 +61,8 @@ describe("Sites", () => {
   it("lista sites e cria novo pela API", async () => {
     renderSites();
     expect(await screen.findByText("SPO")).toBeInTheDocument();
-    await userEvent.type(screen.getByLabelText("Nome *"), "REC");
-    await userEvent.type(screen.getByLabelText("Cidade"), "Recife");
+    await userEvent.type(screen.getByLabelText(/^Nome \*/), "REC");
+    await userEvent.type(screen.getByLabelText(/^Cidade.*\?$/), "Recife");
     await userEvent.click(screen.getByRole("button", { name: "Cadastrar" }));
     await waitFor(() => {
       const chamadas = vi.mocked(fetch).mock.calls;
@@ -108,7 +108,7 @@ describe("Sites", () => {
     renderSites();
     await screen.findByText("SPO");
     await userEvent.click(screen.getByRole("button", { name: "Editar" }));
-    const nome = within(screen.getByRole("dialog")).getByLabelText("Nome *");
+    const nome = within(screen.getByRole("dialog")).getByLabelText(/^Nome \*/);
     await waitFor(() => expect(nome).toHaveValue("SPO"));
     await userEvent.clear(nome);
     await userEvent.type(nome, "SPO-2");

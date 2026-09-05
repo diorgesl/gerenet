@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import { useAuth } from "@/auth/auth-context";
 import { ApiError } from "@/api/client";
 import { useSiteAtualizar, useSiteCriar, useSites } from "@/api/hooks";
+import { help } from "@/help";
 import { DataTable } from "@/components/DataTable";
 import { FormField } from "@/components/FormField";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -88,19 +89,19 @@ export default function Sites() {
       </label>
       {podeEscrever && (
         <form onSubmit={onSubmit} className="grid-form">
-          <FormField label="Nome *">
+          <FormField label="Nome *" help={help("site.nome")}>
             <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
           </FormField>
-          <FormField label="Cidade">
+          <FormField label="Cidade" help={help("site.city")}>
             <input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} />
           </FormField>
-          <FormField label="UF">
+          <FormField label="UF" help={help("site.uf")}>
             <input value={form.uf} onChange={(e) => setForm({ ...form, uf: e.target.value })} />
           </FormField>
-          <FormField label="Bloco IPv4 p2p">
+          <FormField label="Bloco IPv4 p2p" help={help("site.p2p_ipv4_block")}>
             <input value={form.p2p_ipv4_block} onChange={(e) => setForm({ ...form, p2p_ipv4_block: e.target.value })} />
           </FormField>
-          <FormField label="Base IPv6 p2p">
+          <FormField label="Base IPv6 p2p" help={help("site.p2p_ipv6_base")}>
             <input value={form.p2p_ipv6_base} onChange={(e) => setForm({ ...form, p2p_ipv6_base: e.target.value })} />
           </FormField>
           <button className="primary" type="submit" disabled={criar.isPending}>
@@ -175,19 +176,19 @@ export default function Sites() {
       {editando && (
         <Modal aberto titulo={`Editar ${editando.name}`} onFechar={() => setEditando(null)}>
           <form onSubmit={salvarEdicao} className="grid-form">
-            <FormField label="Nome *">
+            <FormField label="Nome *" help={help("site.nome")}>
               <input value={formEdit.name} onChange={(e) => setFormEdit({ ...formEdit, name: e.target.value })} required />
             </FormField>
-            <FormField label="Cidade">
+            <FormField label="Cidade" help={help("site.city")}>
               <input value={formEdit.city} onChange={(e) => setFormEdit({ ...formEdit, city: e.target.value })} />
             </FormField>
-            <FormField label="UF">
+            <FormField label="UF" help={help("site.uf")}>
               <input value={formEdit.uf} onChange={(e) => setFormEdit({ ...formEdit, uf: e.target.value })} />
             </FormField>
-            <FormField label="Bloco IPv4 p2p">
+            <FormField label="Bloco IPv4 p2p" help={help("site.p2p_ipv4_block")}>
               <input value={formEdit.p2p_ipv4_block} onChange={(e) => setFormEdit({ ...formEdit, p2p_ipv4_block: e.target.value })} />
             </FormField>
-            <FormField label="Base IPv6 p2p">
+            <FormField label="Base IPv6 p2p" help={help("site.p2p_ipv6_base")}>
               <input value={formEdit.p2p_ipv6_base} onChange={(e) => setFormEdit({ ...formEdit, p2p_ipv6_base: e.target.value })} />
             </FormField>
             <div className="dialog-actions">
