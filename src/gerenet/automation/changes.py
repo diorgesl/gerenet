@@ -57,6 +57,25 @@ def _peer_remote(comandos: list[str]) -> str | None:
     return None
 
 
+def _peer_asn(comandos: list[str]) -> int | None:
+    """ASN do par no bloco (`peer <ip> as-number <x>`), ou None se não constar."""
+    for cmd in comandos:
+        partes = cmd.split()
+        for i, p in enumerate(partes):
+            if p == "as-number" and i + 1 < len(partes):
+                return int(partes[i + 1])
+    return None
+
+
+def _peer_familia(comandos: list[str]) -> str | None:
+    """AFI do bloco (`ipv4-family unicast`/`ipv6-family unicast`), ou None."""
+    if any(c.startswith("ipv6-family") for c in comandos):
+        return "ipv6"
+    if any(c.startswith("ipv4-family") for c in comandos):
+        return "ipv4"
+    return None
+
+
 def _ja_existe(bloco: render.BlocoRender, recursos: dict, texto: str) -> bool:
     """§5.1 passo 3 — bloco cujos comandos já constam do encontrado (skip)."""
     if bloco.tipo == "subinterface":
@@ -75,10 +94,22 @@ def _ja_existe(bloco: render.BlocoRender, recursos: dict, texto: str) -> bool:
         return False
     if bloco.tipo == "bgp_peer":
         remote = _peer_remote(bloco.comandos)
-        return remote is not None and any(
-            linha.get("peer") == remote for linha in recursos.get("bgp_peers", [])
-        )
-    return False
+        if remote is None:
+            return False
+        asn = _peer_asn(bloco.comandos)
+        familia = _peer_familia(bloco.comandos)
+        for linha in recursos.get("bgp_peers", []):
+            if linha.get("peer") != remote:
+                continue
+            if familia is not None and linha.get("afi") != familia:
+                continue
+            # §5.1.3: o bloco só consta do encontrado se o ASN também bater —
+            # mesma chave (afi, peer) e mesma semântica do reconcile
+            # (reconcile.py marca `peer.asn` como crítica nesse caso).
+            if asn is None or linha.get("asn") is None:
+                return False  # asn não confirmado: conservador, não pula
+            return asn == linha.get("asn")
+        return False
 
 
 def plan_provision(session: Session, circuito: models.Circuit) -> list[PlanoDevice]:

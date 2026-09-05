@@ -76,8 +76,12 @@ def _sessao(db_session, circ, amb, *, perfil_full=True):
     )
 
 
-def _snapshot_encontrado(db_session, amb, tmp_path: Path):
-    """Snapshot cujo estado ENCONTRADO é exatamente o desejado (render aplicado)."""
+def _snapshot_encontrado(db_session, amb, tmp_path: Path, *, asn_peer=64512):
+    """Snapshot cujo estado ENCONTRADO é exatamente o desejado (render aplicado).
+
+    `asn_peer` permite divergir o ASN do peer encontrado (negative control do
+    skip §5.1.3: mesmo IP com ASN diferente NÃO consta do encontrado).
+    """
     r = render.render_desejado(db_session, amb["dev"].id)
     arquivo = tmp_path / "cfg.txt"
     arquivo.write_text(r.texto + "\n", encoding="utf-8")
@@ -89,7 +93,7 @@ def _snapshot_encontrado(db_session, amb, tmp_path: Path):
                 for b in r.blocos if b.tipo == "subinterface"
             ],
             "bgp_peers": [
-                {"afi": "ipv4", "peer": b.comandos[1].split()[1], "asn": 64512}
+                {"afi": "ipv4", "peer": b.comandos[1].split()[1], "asn": asn_peer}
                 for b in r.blocos if b.tipo == "bgp_peer"
             ],
         },
@@ -135,6 +139,19 @@ def test_plan_provision_ignora_comentarios(db_session, tmp_path):
     # Simular dívida: política é estável; o filtro `b.tipo != "comentario"` é o alvo.
     plano = changes.plan_provision(db_session, circ)
     assert all(b["tipo"] != "comentario" for p in plano for b in p.blocos)
+
+
+def test_plan_provision_nao_pula_peer_com_asn_divergente(db_session, tmp_path):
+    """§5.1.3: mesmo IP com ASN diferente NÃO consta do encontrado — o bloco do
+    peer permanece no plano (mesmo recurso/chave em que reconcile marca
+    `peer.asn` como crítica)."""
+    amb = _ambiente(db_session)
+    circ = _circuito(db_session, amb)
+    _sessao(db_session, circ, amb)
+    _snapshot_encontrado(db_session, amb, tmp_path, asn_peer=64513)
+    plano = changes.plan_provision(db_session, circ)
+    assert [b["tipo"] for b in plano[0].blocos] == ["bgp_peer"]
+    assert all(b["acao"] == "create" for b in plano[0].blocos)
 
 
 def test_plan_remocao_usa_ordem_inversa_do_encontrado(db_session, tmp_path):
