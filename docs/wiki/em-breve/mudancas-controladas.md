@@ -41,9 +41,11 @@ Elementos previstos:
 
 ## Onde já existe base
 
-O **domínio** do fluxo já existe no backend (serviço de change requests com
-estados, aprovação e rollback), mas **sem interface/API de execução e sem
-execução real em equipamento**. O que já é consultável hoje:
+O fluxo está **em construção** no backend: o serviço e a API de change
+requests já existem (criar, enviar, aprovar, cancelar, executar e rollback),
+mas a **execução real em equipamento** (fila + worker que aplica comandos)
+**ainda não** — o `executar` atual apenas marca o estado da solicitação. O que
+já é consultável hoje:
 
 - A [configuração desejada](/wiki/operacao) (render da intenção em comandos VRP
   por equipamento).
