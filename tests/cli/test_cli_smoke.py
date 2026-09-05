@@ -357,6 +357,31 @@ def test_cli_policy_profiles_lista(db_session: Session) -> None:
     assert "Erro:" in invalida.output
 
 
+def test_cli_policy_profiles_update(db_session: Session) -> None:
+    perfil = models.PolicyProfile(
+        name="cli-c3-perfil", label="Perfil CLI", direction="export", kind="produto", prefixes=None
+    )
+    db_session.add(perfil)
+    db_session.commit()
+    try:
+        r = runner.invoke(
+            app,
+            ["policy-profiles", "update", str(perfil.id), "--label", "Perfil CLI 2", "--prefixes", "192.0.2.0/24,198.51.100.0/24"],
+        )
+        assert r.exit_code == 0, r.output
+        db_session.expire_all()  # CLI grava em outra sessão; expira o mapa de identidade antes de reler
+        persistido = db_session.scalar(
+            select(models.PolicyProfile).where(models.PolicyProfile.id == perfil.id)
+        )
+        assert persistido.label == "Perfil CLI 2"
+        assert persistido.prefixes == ["192.0.2.0/24", "198.51.100.0/24"]
+    finally:
+        perfil = db_session.get(models.PolicyProfile, perfil.id)
+        if perfil is not None:
+            db_session.delete(perfil)
+            db_session.commit()
+
+
 def test_cli_prefix_authorizations_family_invalida() -> None:
     invalida = runner.invoke(app, ["prefix-authorizations", "list", "--family", "foo"])
     assert invalida.exit_code == 1
@@ -401,6 +426,26 @@ def test_cli_communities_lista(db_session: Session) -> None:
     assert lista.exit_code == 0, lista.output
     assert "blackhole" in lista.output
     assert "no-export" in lista.output
+
+
+def test_cli_communities_update(db_session: Session) -> None:
+    com = models.Community(name="cli-c3-com", notes="antes")
+    db_session.add(com)
+    db_session.commit()
+    try:
+        r = runner.invoke(app, ["communities", "update", str(com.id), "--name", "cli-c3-novo", "--notes", "depois"])
+        assert r.exit_code == 0, r.output
+        assert "cli-c3-novo" in r.output
+        db_session.expire_all()  # CLI grava em outra sessão; expira o mapa de identidade antes de reler
+        persistido = db_session.scalar(
+            select(models.Community).where(models.Community.id == com.id)
+        )
+        assert persistido.name == "cli-c3-novo" and persistido.notes == "depois"
+    finally:
+        com = db_session.get(models.Community, com.id)
+        if com is not None:
+            db_session.delete(com)
+            db_session.commit()
 
 
 def test_cli_bgp_sessions_community_add_remove(db_session: Session) -> None:
