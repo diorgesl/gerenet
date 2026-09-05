@@ -533,3 +533,58 @@ class JobRunOut(BaseModel):
     duration_ms: int
     snapshot_id: int | None
     error: str | None = None  # motivo da falha (falha pré-snapshot: grupo, lock, segredo…)
+
+
+class ChangeRequestCreate(BaseModel):
+    circuit_id: int
+    acao: Literal["provision", "remove"] = "provision"
+    criticidade: Literal["baixa", "media", "alta"] = "media"
+    motivo: str = Field(min_length=1, max_length=2000)
+    ticket: str | None = Field(default=None, max_length=64)
+
+
+class ApprovalIn(BaseModel):
+    decisao: Literal["aprovar", "rejeitar"]
+    comentario: str | None = Field(default=None, max_length=1000)
+
+
+class ApprovalOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    user_id: int
+    decisao: str
+    comentario: str | None
+    created_at: datetime
+
+
+class ChangeStepOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    device_id: int
+    status: str
+    plano_json: list
+    aviso: str | None
+    baseline_snapshot_id: int | None
+    backup_snapshot_id: int | None
+    post_check_json: dict | None
+    erro: str | None
+    finished_at: datetime | None
+
+
+class ChangeRequestOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    circuit_id: int
+    acao: str
+    criticidade: str
+    motivo: str
+    ticket: str | None
+    solicitante_id: int | None
+    status: str
+    rollback_de: int | None
+    created_at: datetime
+    steps: list[ChangeStepOut] = []
+    approvals: list[ApprovalOut] = []
