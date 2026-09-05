@@ -5993,3 +5993,24 @@ Expected: lint e testes verdes; build gera `web/dist`.
 - **Buraco encontrado na revisão do estado**: `reconciliation.py`/`communities.py` em `require_api_key` — coberto na **T1** (falla se a web for usar cookie).
 - **Placeholders**: nenhum TODO/TBD — os esboços curtos (Task 7 e 8) indicam campos exatos do schema e o padrão do teste, que o implementer segue à risca (as telas derivam mecanicamente).
 - **Consistência**: client sempre `apiFetch`; todas as rotas sob `RequireAuth`; **`useJobPoll` definido uma vez na Task 6** (`enabled` + refetchInterval 3s até status terminal `success/partial/error` — `JOB_STATUS` de models.py:22) e consumido nas Tasks 10 e 11 com o mesmo nome; tipos `*Out` conferidos nesta revisão contra models/schemas (`COMM_STATUS`, `SNAPSHOT_STATUS`, `JOB_STATUS`) e `verify_password` (users.py:46) / `_valida_senha` (users.py:63) / `create_user` (keyword-only) confirmados no código real.
+
+---
+
+## Cortes registrados na revisão final (T13, 2026-09-04)
+
+A revisão final de branch (gate anterior ao merge) apontou 5 achados Important.
+Quatro foram corrigidos nesta plan (loop de 401, poll de erro, erros de lista
+engolidos, invalidação do `has_password`); para o quinto — **edição de entidades
+e reativação** — a decisão é registrada aqui:
+
+- **Edição/reativação de entidades (spec §12.5 pede "listagem + criação +
+  edição + desativação"; o plano T7-T9 aprovou o padrão criar+desativar)**:
+  corte registrado como **follow-up de ciclo** (próximo ciclo web: `include_disabled`
+  nos GETs, formulários de edição, reativação). O botão "Reativar" morto em
+  `Users.tsx` e o link "Coletar" duplicado do Dashboard saíram já nesta revisão.
+- Outros cortes/adjudicações de follow-up: `.catch` de mutações por página
+  (rejeições não tratadas em ConfirmDialog/logout), a11y de dialog (foco/escape/
+  backdrop), cards do dashboard com `by_comm_status`/`snapshot_age_seconds`
+  (spec §6.3), guard de falha dura no webServer do Playwright (hoje
+  `reuseExistingServer` com aviso no run-book), e a pasta de Minors de polimento
+  de testes de T1-T9 (contida no ledger SDD — revisão nunca bloqueou por eles).
