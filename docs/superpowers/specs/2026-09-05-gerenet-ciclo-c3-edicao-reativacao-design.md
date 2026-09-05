@@ -58,9 +58,11 @@ via seed).
 ### 2.1 Backend/API
 
 - **PATCH de edição já existe** para: devices, sites, organizations, contacts,
-  circuits, bgp-sessions, prefix-authorizations e users — todos com padrão
-  `exclude_unset`, erros 404/400 (NotFoundError/ValidationError) e auditoria
-  `registrar(...)` com `antes`/`depois`.
+  circuits, bgp-sessions e users — todos com padrão `exclude_unset`, erros
+  404/400 (NotFoundError/ValidationError) e auditoria `registrar(...)` com
+  `antes`/`depois`. **Exceção**: prefix-authorizations aceita só
+  `{"admin_status": false}` (ruling 2 — mudar dado = desativar + criar; a web
+  reaproveita esse fluxo no botão Editar, ver §5 S2.3).
 - **`include_disabled` nos GET** já existe em: users, sites, devices, organizations,
   circuits, bgp-sessions, prefix-authorizations, communities e policy-profiles.
   **Falta apenas contacts** (routers/contacts.py + service `list_contacts`).
@@ -101,8 +103,10 @@ via seed).
 
 - e2e (`web/e2e`): `reuseExistingServer` ligado com aviso no run-book (item
   registrado como follow-up para virar falha dura).
-- `tests/api/test_static_spa.py:9`: `DIST = Path("/tmp/gerenet-spa-fake")` morto.
-- CLI `gerenet users list --all` (o restante do CLI já usa `--include-disabled`).
+- `tests/api/test_static_spa.py`: o `DIST` morto **já foi removido** (a fixture
+  usa `tmp_path`; commit 9d2962e) — registrado como sem-trabalho no C3.
+- CLI `gerenet users list`: **já tem** `--include-disabled` e `--all`
+  (`cli/users.py`) — registrado como sem-trabalho no C3.
 
 ## 3. Decisões de design (aprovadas em 2026-09-05 no brainstorm)
 
@@ -142,8 +146,10 @@ via seed).
 10. **Playwright**: `reuseExistingServer: false` (falha dura se a porta :8000
     estiver ocupada; nunca reusa o uvicorn de dev com banco errado) + run-book
     ajustado.
-11. **CLI**: alias `--include-disabled` para `gerenet users list --all` (sem
-    remover `--all`); remover `DIST` morto em `test_static_spa.py:9`.
+11. **Limpezas**: alias `--include-disabled`/`--all` do `gerenet users list` e
+    remoção do `DIST` morto em `test_static_spa.py` — **ambos já resolvidos** na
+    revisão final do C2 (cli/users.py já tem os dois flags; a fixture do
+    test_static_spa usa `tmp_path`) — registrados como sem-trabalho no C3.
 
 ## 4. Backend/API (S1)
 
@@ -163,8 +169,11 @@ True` por default).
   repetição → sem transição (ruling 5). Requerem `require_actor` (já têm como
   dependency).
 - CLI (`cli/communities.py`, `cli/policy_profiles.py`): comando `update`.
-- Schemas: `CommunityUpdate` (name?, notes?), `PolicyProfileUpdate` (name?,
-  label?, direction?, kind?, prefixes?).
+- Schemas: `CommunityUpdate` (name?, notes?, admin_status?), `PolicyProfileUpdate`
+  (name?, label?, direction?, kind?, prefixes?, notes?, admin_status?) —
+  `admin_status` entra no schema para o PATCH puro `{"admin_status": false}`
+  rotear ao `disable_*` (ruling 1; mesmo desenho do `ContactUpdate`).
+  `CommunityOut` ganha `admin_status` (a web precisa do badge de inativo).
 
 **S1.3 — reativação com evento dedicado (devices)**: no PATCH de devices, quando a
 mudança pura for `admin_status: true` (e o device estiver desativado), chamar
@@ -175,7 +184,7 @@ genérico `device.update`. Nas demais entidades, manter `*.update` (documentado 
 **S1.4 — rate limit de login**: novo `src/gerenet/api/rate_limit.py`:
 - `permitir(redis, ip, username) -> bool` (conta falhas ativas < 5);
 - `registrar_falha(redis, ip, username)` (INCR + EXPIRE 300);
-- `limpar_redes(redis, ip, username)` (sucesso zera).
+- `limpar(redis, ip, username)` (sucesso zera).
 - Em `api/auth.py` no fluxo de login: consulta antes do scrypt; falha → registrar
   e `HTTPException 429` com header `Retry-After`; sucesso → limpar.
 - Falha de Redis → log de aviso e seguir (fail-open), com teste documentando.
@@ -207,7 +216,10 @@ os valores atuais (mesmas `FormField`), submit → `mutateAsync` do hook
 `useXxxAtualizar` (existente), `isPending` desabilita, erro renderizado dentro do
 dialog (`role="alert"`), sucesso fecha + refetch (invalidates do react-query). Em
 bgp-sessions, o modal edita os campos do PATCH — as ações especiais (communities,
-password) permanecem onde estão hoje.
+password) permanecem onde estão hoje. Em prefix-authorizations, o Editar abre os
+campos preenchidos e, ao salvar, **desativa a autorização atual e cria outra** com
+os valores editados (decisão do operador em 2026-09-05: honra o ruling 2 sem
+backend novo — um clique, dois eventos de auditoria).
 
 **S2.4 — cards do dashboard**: usando o retorno já existente de
 `GET /api/v1/dashboard`: card/bloco "Equipamentos" com total e
