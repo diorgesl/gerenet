@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { useAuth } from "@/auth/auth-context";
 import { ApiError } from "@/api/client";
 import { useCircuitAtualizar, useCircuitCriar, useCircuits, useDevices, useOrganizations, useSites } from "@/api/hooks";
+import { help } from "@/help";
 import { DataTable } from "@/components/DataTable";
 import { FormField } from "@/components/FormField";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -170,10 +171,10 @@ export default function Circuits() {
       </label>
       {podeEscrever && (
         <form onSubmit={onSubmit} className="grid-form">
-          <FormField label="Código *">
+          <FormField label="Código *" help={help("circuit.code")}>
             <input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} required />
           </FormField>
-          <FormField label="Organização *">
+          <FormField label="Organização *" help={help("circuit.organization_id")}>
             <select value={form.organization_id} onChange={(e) => setForm({ ...form, organization_id: e.target.value })} required>
               <option value="">—</option>
               {(organizations ?? []).map((o) => (
@@ -181,7 +182,7 @@ export default function Circuits() {
               ))}
             </select>
           </FormField>
-          <FormField label="Site *">
+          <FormField label="Site *" help={help("circuit.site_id")}>
             <select value={form.site_id} onChange={(e) => setForm({ ...form, site_id: e.target.value })} required>
               <option value="">—</option>
               {(sites ?? []).map((s) => (
@@ -189,7 +190,7 @@ export default function Circuits() {
               ))}
             </select>
           </FormField>
-          <FormField label="Equipamento de acesso *">
+          <FormField label="Equipamento de acesso *" help={help("circuit.access_device_id")}>
             <select value={form.access_device_id} onChange={(e) => setForm({ ...form, access_device_id: e.target.value })} required>
               <option value="">—</option>
               {(devices ?? []).map((d) => (
@@ -197,10 +198,10 @@ export default function Circuits() {
               ))}
             </select>
           </FormField>
-          <FormField label="Porta de acesso *">
+          <FormField label="Porta de acesso *" help={help("circuit.access_port")}>
             <input value={form.access_port} onChange={(e) => setForm({ ...form, access_port: e.target.value })} required />
           </FormField>
-          <FormField label="Edge *">
+          <FormField label="Edge *" help={help("circuit.edge_device_id")}>
             <select value={form.edge_device_id} onChange={(e) => setForm({ ...form, edge_device_id: e.target.value })} required>
               <option value="">—</option>
               {(devices ?? []).map((d) => (
@@ -208,7 +209,7 @@ export default function Circuits() {
               ))}
             </select>
           </FormField>
-          <FormField label="Edge de contingência">
+          <FormField label="Edge de contingência" help={help("circuit.backup_edge_device_id")}>
             <select value={form.backup_edge_device_id} onChange={(e) => setForm({ ...form, backup_edge_device_id: e.target.value })}>
               <option value="">—</option>
               {(devices ?? []).map((d) => (
@@ -216,47 +217,47 @@ export default function Circuits() {
               ))}
             </select>
           </FormField>
-          <FormField label="Stack">
+          <FormField label="Stack" help={help("circuit.stack")}>
             <select value={form.stack} onChange={(e) => setForm({ ...form, stack: e.target.value as "ipv4" | "ipv6" | "dual" })}>
               <option value="ipv4">ipv4</option>
               <option value="ipv6">ipv6</option>
               <option value="dual">dual</option>
             </select>
           </FormField>
-          <FormField label="VLAN">
+          <FormField label="VLAN" help={help("circuit.vlan_mode")}>
             <select value={form.vlan_mode} onChange={(e) => setForm({ ...form, vlan_mode: e.target.value as "unica" | "separada" })}>
               <option value="unica">única</option>
               <option value="separada">separada</option>
             </select>
           </FormField>
-          <FormField label="QinQ">
+          <FormField label="QinQ" help={help("circuit.qinq")}>
             <input type="checkbox" checked={form.qinq} onChange={(e) => setForm({ ...form, qinq: e.target.checked })} />
           </FormField>
-          <FormField label="VRF">
+          <FormField label="VRF" help={help("circuit.vrf")}>
             <input value={form.vrf} onChange={(e) => setForm({ ...form, vrf: e.target.value })} />
           </FormField>
-          <FormField label="MTU">
+          <FormField label="MTU" help={help("circuit.mtu")}>
             <input type="number" value={form.mtu} onChange={(e) => setForm({ ...form, mtu: e.target.value })} />
           </FormField>
-          <FormField label="Banda">
+          <FormField label="Banda" help={help("circuit.bandwidth")}>
             <input value={form.bandwidth} onChange={(e) => setForm({ ...form, bandwidth: e.target.value })} />
           </FormField>
-          <FormField label="BFD">
+          <FormField label="BFD" help={help("circuit.bfd")}>
             <input type="checkbox" checked={form.bfd} onChange={(e) => setForm({ ...form, bfd: e.target.checked })} />
           </FormField>
-          <FormField label="Len /30 ou /31">
+          <FormField label="Len /30 ou /31" help={help("circuit.p2p_v4_len")}>
             <select value={form.p2p_v4_len} onChange={(e) => setForm({ ...form, p2p_v4_len: e.target.value as "30" | "31" })}>
               <option value="31">/31</option>
               <option value="30">/30</option>
             </select>
           </FormField>
-          <FormField label="Descrição">
+          <FormField label="Descrição" help={help("circuit.description")}>
             <input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
           </FormField>
-          <FormField label="Observações">
+          <FormField label="Observações" help={help("circuit.notes")}>
             <input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
           </FormField>
-          <FormField label="Eth-Trunk do edge">
+          <FormField label="Eth-Trunk do edge" help={help("circuit.edge_trunk")}>
             <input value={form.edge_trunk} onChange={(e) => setForm({ ...form, edge_trunk: e.target.value })} />
           </FormField>
           <button className="primary" type="submit" disabled={criar.isPending}>
@@ -332,7 +333,7 @@ export default function Circuits() {
       {editando && (
         <Modal aberto titulo={`Editar ${editando.code}`} onFechar={() => setEditando(null)}>
           <form onSubmit={salvarEdicao} className="grid-form">
-            <FormField label="Organização *">
+            <FormField label="Organização *" help={help("circuit.organization_id")}>
               <select value={formEdit.organization_id} onChange={(e) => setFormEdit({ ...formEdit, organization_id: e.target.value })} required>
                 <option value="">—</option>
                 {(organizations ?? []).map((o) => (
@@ -340,7 +341,7 @@ export default function Circuits() {
                 ))}
               </select>
             </FormField>
-            <FormField label="Site *">
+            <FormField label="Site *" help={help("circuit.site_id")}>
               <select value={formEdit.site_id} onChange={(e) => setFormEdit({ ...formEdit, site_id: e.target.value })} required>
                 <option value="">—</option>
                 {(sites ?? []).map((s) => (
@@ -348,7 +349,7 @@ export default function Circuits() {
                 ))}
               </select>
             </FormField>
-            <FormField label="Equipamento de acesso *">
+            <FormField label="Equipamento de acesso *" help={help("circuit.access_device_id")}>
               <select value={formEdit.access_device_id} onChange={(e) => setFormEdit({ ...formEdit, access_device_id: e.target.value })} required>
                 <option value="">—</option>
                 {(devices ?? []).map((d) => (
@@ -356,10 +357,10 @@ export default function Circuits() {
                 ))}
               </select>
             </FormField>
-            <FormField label="Porta de acesso *">
+            <FormField label="Porta de acesso *" help={help("circuit.access_port")}>
               <input value={formEdit.access_port} onChange={(e) => setFormEdit({ ...formEdit, access_port: e.target.value })} required />
             </FormField>
-            <FormField label="Edge *">
+            <FormField label="Edge *" help={help("circuit.edge_device_id")}>
               <select value={formEdit.edge_device_id} onChange={(e) => setFormEdit({ ...formEdit, edge_device_id: e.target.value })} required>
                 <option value="">—</option>
                 {(devices ?? []).map((d) => (
@@ -367,7 +368,7 @@ export default function Circuits() {
                 ))}
               </select>
             </FormField>
-            <FormField label="Edge de contingência">
+            <FormField label="Edge de contingência" help={help("circuit.backup_edge_device_id")}>
               <select value={formEdit.backup_edge_device_id} onChange={(e) => setFormEdit({ ...formEdit, backup_edge_device_id: e.target.value })}>
                 <option value="">—</option>
                 {(devices ?? []).map((d) => (
@@ -375,47 +376,47 @@ export default function Circuits() {
                 ))}
               </select>
             </FormField>
-            <FormField label="Stack">
+            <FormField label="Stack" help={help("circuit.stack")}>
               <select value={formEdit.stack} onChange={(e) => setFormEdit({ ...formEdit, stack: e.target.value as "ipv4" | "ipv6" | "dual" })}>
                 <option value="ipv4">ipv4</option>
                 <option value="ipv6">ipv6</option>
                 <option value="dual">dual</option>
               </select>
             </FormField>
-            <FormField label="VLAN">
+            <FormField label="VLAN" help={help("circuit.vlan_mode")}>
               <select value={formEdit.vlan_mode} onChange={(e) => setFormEdit({ ...formEdit, vlan_mode: e.target.value as "unica" | "separada" })}>
                 <option value="unica">única</option>
                 <option value="separada">separada</option>
               </select>
             </FormField>
-            <FormField label="QinQ">
+            <FormField label="QinQ" help={help("circuit.qinq")}>
               <input type="checkbox" checked={formEdit.qinq} onChange={(e) => setFormEdit({ ...formEdit, qinq: e.target.checked })} />
             </FormField>
-            <FormField label="VRF">
+            <FormField label="VRF" help={help("circuit.vrf")}>
               <input value={formEdit.vrf} onChange={(e) => setFormEdit({ ...formEdit, vrf: e.target.value })} />
             </FormField>
-            <FormField label="MTU">
+            <FormField label="MTU" help={help("circuit.mtu")}>
               <input type="number" value={formEdit.mtu} onChange={(e) => setFormEdit({ ...formEdit, mtu: e.target.value })} />
             </FormField>
-            <FormField label="Banda">
+            <FormField label="Banda" help={help("circuit.bandwidth")}>
               <input value={formEdit.bandwidth} onChange={(e) => setFormEdit({ ...formEdit, bandwidth: e.target.value })} />
             </FormField>
-            <FormField label="BFD">
+            <FormField label="BFD" help={help("circuit.bfd")}>
               <input type="checkbox" checked={formEdit.bfd} onChange={(e) => setFormEdit({ ...formEdit, bfd: e.target.checked })} />
             </FormField>
-            <FormField label="Len /30 ou /31">
+            <FormField label="Len /30 ou /31" help={help("circuit.p2p_v4_len")}>
               <select value={formEdit.p2p_v4_len} onChange={(e) => setFormEdit({ ...formEdit, p2p_v4_len: e.target.value as "30" | "31" })}>
                 <option value="31">/31</option>
                 <option value="30">/30</option>
               </select>
             </FormField>
-            <FormField label="Descrição">
+            <FormField label="Descrição" help={help("circuit.description")}>
               <input value={formEdit.description} onChange={(e) => setFormEdit({ ...formEdit, description: e.target.value })} />
             </FormField>
-            <FormField label="Observações">
+            <FormField label="Observações" help={help("circuit.notes")}>
               <input value={formEdit.notes} onChange={(e) => setFormEdit({ ...formEdit, notes: e.target.value })} />
             </FormField>
-            <FormField label="Eth-Trunk do edge">
+            <FormField label="Eth-Trunk do edge" help={help("circuit.edge_trunk")}>
               <input value={formEdit.edge_trunk} onChange={(e) => setFormEdit({ ...formEdit, edge_trunk: e.target.value })} />
             </FormField>
             <div className="dialog-actions">

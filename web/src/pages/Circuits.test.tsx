@@ -54,12 +54,12 @@ describe("Circuits", () => {
   it("lista circuitos e cria novo pela API", async () => {
     renderCircuits();
     expect(await screen.findByText("CIRC-01")).toBeInTheDocument();
-    await userEvent.type(screen.getByLabelText("Código *"), "CIRC-02");
-    await userEvent.selectOptions(screen.getByLabelText("Organização *"), "1");
-    await userEvent.selectOptions(screen.getByLabelText("Site *"), "1");
-    await userEvent.selectOptions(screen.getByLabelText("Equipamento de acesso *"), "1");
-    await userEvent.type(screen.getByLabelText("Porta de acesso *"), "GE0/0/2");
-    await userEvent.selectOptions(screen.getByLabelText("Edge *"), "2");
+    await userEvent.type(screen.getByLabelText(/^Código \*/), "CIRC-02");
+    await userEvent.selectOptions(screen.getByLabelText(/^Organização \*/), "1");
+    await userEvent.selectOptions(screen.getByLabelText(/^Site \*/), "1");
+    await userEvent.selectOptions(screen.getByLabelText(/^Equipamento de acesso \*/), "1");
+    await userEvent.type(screen.getByLabelText(/^Porta de acesso \*/), "GE0/0/2");
+    await userEvent.selectOptions(screen.getByLabelText(/^Edge \*/), "2");
     await userEvent.click(screen.getByRole("button", { name: "Cadastrar" }));
     await waitFor(() => {
       const chamadas = vi.mocked(fetch).mock.calls as unknown as [string, RequestInit][];

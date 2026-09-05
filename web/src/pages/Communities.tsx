@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useAuth } from "@/auth/auth-context";
 import { ApiError } from "@/api/client";
 import { useCommunities, useCommunityAtualizar } from "@/api/hooks";
+import { help } from "@/help";
 import { DataTable } from "@/components/DataTable";
 import { FormField } from "@/components/FormField";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -125,10 +126,10 @@ export default function Communities() {
       {editando && (
         <Modal aberto titulo={`Editar ${editando.name}`} onFechar={() => setEditando(null)}>
           <form onSubmit={salvarEdicao} className="grid-form">
-            <FormField label="Nome *">
+            <FormField label="Nome *" help={help("community.name")}>
               <input value={formEdit.name} onChange={(e) => setFormEdit({ ...formEdit, name: e.target.value })} required />
             </FormField>
-            <FormField label="Observações">
+            <FormField label="Observações" help={help("community.notes")}>
               <input value={formEdit.notes} onChange={(e) => setFormEdit({ ...formEdit, notes: e.target.value })} />
             </FormField>
             <div className="dialog-actions">

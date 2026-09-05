@@ -39,8 +39,8 @@ describe("PrefixAuthorizations", () => {
   it("lista e cadastra autorização pela API", async () => {
     renderPage();
     expect(await screen.findByText("200.200.1.0/24")).toBeInTheDocument();
-    await userEvent.selectOptions(screen.getByLabelText("Organização *"), "1");
-    await userEvent.type(screen.getByLabelText("Prefixo *"), "200.200.2.0/24");
+    await userEvent.selectOptions(screen.getByLabelText(/^Organização \*/), "1");
+    await userEvent.type(screen.getByLabelText(/^Prefixo \*/), "200.200.2.0/24");
     await userEvent.click(screen.getByRole("button", { name: "Cadastrar" }));
     await waitFor(() => {
       const chamadas = vi.mocked(fetch).mock.calls as unknown as [string, RequestInit][];
@@ -65,7 +65,7 @@ describe("PrefixAuthorizations", () => {
     renderPage();
     await screen.findByText("200.200.1.0/24");
     await userEvent.click(screen.getByRole("button", { name: "Editar" }));
-    const prefixo = within(screen.getByRole("dialog")).getByLabelText("Prefixo *");
+    const prefixo = within(screen.getByRole("dialog")).getByLabelText(/^Prefixo \*/);
     await waitFor(() => expect(prefixo).toHaveValue("200.200.1.0/24"));
     await userEvent.clear(prefixo);
     await userEvent.type(prefixo, "198.51.100.0/24");

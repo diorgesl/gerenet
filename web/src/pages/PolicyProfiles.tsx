@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import { useAuth } from "@/auth/auth-context";
 import { ApiError } from "@/api/client";
 import { usePolicyProfiles, usePolicyProfileAtualizar } from "@/api/hooks";
+import { help } from "@/help";
 import { DataTable } from "@/components/DataTable";
 import { FormField } from "@/components/FormField";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -146,13 +147,13 @@ export default function PolicyProfiles() {
       {editando && (
         <Modal aberto titulo={`Editar ${editando.name}`} onFechar={() => setEditando(null)}>
           <form onSubmit={salvarEdicao} className="grid-form">
-            <FormField label="Nome *">
+            <FormField label="Nome *" help={help("policy.name")}>
               <input value={formEdit.name} onChange={(e) => setFormEdit({ ...formEdit, name: e.target.value })} required />
             </FormField>
-            <FormField label="Produto">
+            <FormField label="Produto" help={help("policy.product")}>
               <input value={formEdit.label} onChange={(e) => setFormEdit({ ...formEdit, label: e.target.value })} required />
             </FormField>
-            <FormField label="Direção">
+            <FormField label="Direção" help={help("policy.direction")}>
               <select
                 value={formEdit.direction}
                 onChange={(e) => setFormEdit({ ...formEdit, direction: e.target.value as "import" | "export" })}
@@ -161,19 +162,19 @@ export default function PolicyProfiles() {
                 <option value="export">export</option>
               </select>
             </FormField>
-            <FormField label="Tipo">
+            <FormField label="Tipo" help={help("policy.kind")}>
               <select value={formEdit.kind} onChange={(e) => setFormEdit({ ...formEdit, kind: e.target.value })}>
                 <option value="produto">produto</option>
               </select>
             </FormField>
-            <FormField label="Prefixos">
+            <FormField label="Prefixos" help={help("policy.prefixes")}>
               <textarea
                 value={formEdit.prefixes}
                 onChange={(e) => setFormEdit({ ...formEdit, prefixes: e.target.value })}
                 rows={5}
               />
             </FormField>
-            <FormField label="Observações">
+            <FormField label="Observações" help={help("policy.notes")}>
               <input value={formEdit.notes} onChange={(e) => setFormEdit({ ...formEdit, notes: e.target.value })} />
             </FormField>
             <div className="dialog-actions">

@@ -8,6 +8,7 @@ import {
   usePrefixAuthorizationDesativar,
   usePrefixAuthorizations,
 } from "@/api/hooks";
+import { help } from "@/help";
 import { DataTable } from "@/components/DataTable";
 import { FormField } from "@/components/FormField";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -91,7 +92,7 @@ export default function PrefixAuthorizations() {
       </label>
       {podeEscrever && (
         <form onSubmit={onSubmit} className="grid-form">
-          <FormField label="Organização *">
+          <FormField label="Organização *" help={help("prefix.organization_id")}>
             <select value={form.organization_id} onChange={(e) => setForm({ ...form, organization_id: e.target.value })} required>
               <option value="">—</option>
               {(organizations ?? []).map((o) => (
@@ -99,16 +100,16 @@ export default function PrefixAuthorizations() {
               ))}
             </select>
           </FormField>
-          <FormField label="Família">
+          <FormField label="Família" help={help("prefix.family")}>
             <select value={form.family} onChange={(e) => setForm({ ...form, family: e.target.value as "ipv4" | "ipv6" })}>
               <option value="ipv4">ipv4</option>
               <option value="ipv6">ipv6</option>
             </select>
           </FormField>
-          <FormField label="Prefixo *">
+          <FormField label="Prefixo *" help={help("prefix.prefix")}>
             <input value={form.prefix} onChange={(e) => setForm({ ...form, prefix: e.target.value })} required />
           </FormField>
-          <FormField label="Observações">
+          <FormField label="Observações" help={help("prefix.notes")}>
             <input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
           </FormField>
           <button className="primary" type="submit" disabled={criar.isPending}>
@@ -161,7 +162,7 @@ export default function PrefixAuthorizations() {
       {editando && (
         <Modal aberto titulo={`Editar ${editando.prefix}`} onFechar={() => setEditando(null)}>
           <form onSubmit={salvarEdicao} className="grid-form">
-            <FormField label="Organização *">
+            <FormField label="Organização *" help={help("prefix.organization_id")}>
               <select value={formEdit.organization_id} onChange={(e) => setFormEdit({ ...formEdit, organization_id: e.target.value })} required>
                 <option value="">—</option>
                 {(organizations ?? []).map((o) => (
@@ -169,16 +170,16 @@ export default function PrefixAuthorizations() {
                 ))}
               </select>
             </FormField>
-            <FormField label="Família">
+            <FormField label="Família" help={help("prefix.family")}>
               <select value={formEdit.family} onChange={(e) => setFormEdit({ ...formEdit, family: e.target.value as "ipv4" | "ipv6" })}>
                 <option value="ipv4">ipv4</option>
                 <option value="ipv6">ipv6</option>
               </select>
             </FormField>
-            <FormField label="Prefixo *">
+            <FormField label="Prefixo *" help={help("prefix.prefix")}>
               <input value={formEdit.prefix} onChange={(e) => setFormEdit({ ...formEdit, prefix: e.target.value })} required />
             </FormField>
-            <FormField label="Observações">
+            <FormField label="Observações" help={help("prefix.notes")}>
               <input value={formEdit.notes} onChange={(e) => setFormEdit({ ...formEdit, notes: e.target.value })} />
             </FormField>
             <div className="dialog-actions">
