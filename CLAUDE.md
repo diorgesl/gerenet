@@ -126,7 +126,15 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   é relativo ao CWD; e o globalSetup `web/e2e/setup.ts` roda o seed idempotente;
   run-book em `web/e2e/README.md`). Os e2e exigem o banco **dedicado**
   `gerenet_e2e` (criado e migrado à parte — nunca o default `gerenet`); com
-  `reuseExistingServer` ligado, **não deixe o uvicorn de dev ativo na :8000**
-  durante o `npm run test:e2e`, senão o seed toca o banco de dev.
+  `reuseExistingServer: false` (desde o C3), porta 8000 ocupada = **falha dura no
+  boot** — nunca reusa o uvicorn de dev.
+- Web (ciclo C3): edição/reativação de todas as entidades com página web
+  (ver desativados + Editar/Reativar em dialogs acessíveis — `Modal`); catálogos
+  (communities, policy-profiles) passaram a ter update/PATCH/CLI `update` (criação
+  continua apenas via seed); login tem rate limit por IP+username no Redis
+  (5 falhas → 429 + Retry-After; fail-open se o Redis cair) e desativar usuário
+  revoga as sessões; dashboard usa `by_comm_status` e `snapshot_age_seconds`;
+  `npm run test:e2e` tem guard com `reuseExistingServer: false` (porta 8000
+  ocupada = falha dura).
 - Convenções previstas no `.gitignore`: Python com venv e pytest (`.venv/`, `.pytest_cache/`), deploy via Docker Compose em `deploy/` com `.env` ignorado, `config.yaml` local com segredos **fora do repositório**, logs em `logs/` ignorados.
 - `.claude/settings.local.json` contém token e aponta o harness para uma API externa: é arquivo local — não versionar nem alterar.
