@@ -1,6 +1,7 @@
 """API do fluxo de mudança (spec §8): contratos, papéis e transições."""
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from gerenet.api.main import create_app
@@ -228,13 +229,19 @@ def test_criar_provision_sem_sessoes_rejeita_422(client: TestClient, db_session:
         headers=_auth(),
     )
     assert resp.status_code == 422
-    assert "sem sessões" in resp.json()["detail"].lower()
+    body = resp.json()["detail"].lower()
+    assert "sem sessões" in body
+    assert "cadastre" in body
     # nada órfão: a rejeição é anterior à criação (pre-check por sessões ativas)
     assert client.get("/api/v1/change-requests", headers=_auth()).json() == []
 
 
 def test_rollback_sem_baseline_rejeita_422(client: TestClient, db_session: Session) -> None:
-    """Nota mandatória T4: filho sem steps (sem baseline) = rollback não automático."""
+    """Nota mandatória T4: filho sem steps (sem baseline) = rollback não automático.
+
+    A rejeição acontece no serviço ANTES do commit — nenhum filho órfão
+    persiste (revisão T5).
+    """
     cid = _cria_cenario(db_session)
     cr = _cria_cr(client, cid)
     modelo = db_session.get(models.ChangeRequest, cr["id"])
@@ -242,7 +249,12 @@ def test_rollback_sem_baseline_rejeita_422(client: TestClient, db_session: Sessi
     modelo.steps[0].status = "aplicado"
     modelo.steps[0].baseline_snapshot_id = None
     db_session.commit()
+    antes = len(db_session.scalars(select(models.ChangeRequest)).all())
     resp = client.post(f"/api/v1/change-requests/{cr['id']}/rollback", headers=_auth())
     assert resp.status_code == 422
     assert "baseline" in resp.json()["detail"].lower()
     assert "manual" in resp.json()["detail"].lower()
+    # sem CR filho: rollback_de em outro objeto, sequência id inalterada
+    filhos = db_session.scalars(select(models.ChangeRequest).where(models.ChangeRequest.rollback_de == cr["id"])).all()
+    assert filhos == []
+    assert len(db_session.scalars(select(models.ChangeRequest)).all()) == antes

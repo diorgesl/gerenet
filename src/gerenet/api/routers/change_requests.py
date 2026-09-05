@@ -13,7 +13,12 @@ from gerenet.api.deps import Actor, SessionDep, require_actor, require_papel
 from gerenet.domain.schemas import ApprovalIn, ChangeRequestCreate, ChangeRequestOut
 from gerenet.domain.services import change_requests as svc
 from gerenet.domain.services.bgp_sessions import list_sessions
-from gerenet.domain.services.errors import ConflictError, NotFoundError, ValidationError
+from gerenet.domain.services.errors import (
+    ConflictError,
+    NotFoundError,
+    PlanoRollbackVazio,
+    ValidationError,
+)
 
 router = APIRouter(
     prefix="/api/v1/change-requests",
@@ -24,14 +29,7 @@ router = APIRouter(
 ApproverDep = Annotated[Actor, Depends(require_papel("aprovador", "administrador"))]
 ExecutorDep = Annotated[Actor, Depends(require_papel("executor", "administrador"))]
 
-_MSG_SEM_SESSOES = (
-    "Circuito sem sessões ativas — colete as sessões do circuito "
-    "antes de planejar a criação."
-)
-_MSG_SEM_BASELINE = (
-    "Sem steps aplicados com baseline — rollback automático indisponível; "
-    "faça manualmente."
-)
+_MSG_SEM_SESSOES = "Circuito sem sessões ativas — cadastre sessões do circuito antes de planejar."
 
 
 @router.post("", response_model=ChangeRequestOut, status_code=201)
@@ -133,20 +131,19 @@ def executar(cr_id: int, session: SessionDep, executor: ExecutorDep) -> object:
 @router.post("/{cr_id}/rollback", response_model=ChangeRequestOut)
 def rollback(cr_id: int, session: SessionDep, actor: Annotated[Actor, Depends(require_actor)]) -> object:
     """Novo CR inverso em aguardando_aprovacao. Nota T4 review: filho sem steps
-    (nenhum step aplicado com baseline) ≠ rollback automático — 422, sem
-    inventar comandos (§5.2)."""
+    (nenhum step aplicado com baseline) ≠ rollback automático — o serviço
+    rejeita antes do commit (sem CR órfã); 422, sem inventar comandos (§5.2)."""
     try:
-        filho = svc.gerar_rollback(
+        return svc.gerar_rollback(
             session,
             cr_id,
             ator_id=actor.usuario.id if actor.usuario is not None else None,
             actor=actor.nome,
         )
-        if not filho.steps:
-            raise HTTPException(status_code=422, detail=_MSG_SEM_BASELINE)
-        return filho
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PlanoRollbackVazio as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

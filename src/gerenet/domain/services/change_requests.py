@@ -13,7 +13,11 @@ from gerenet.automation import changes, removal
 from gerenet.domain import models, schemas
 from gerenet.domain.audit import registrar
 from gerenet.domain.services.circuits import get_circuit
-from gerenet.domain.services.errors import ConflictError, ValidationError
+from gerenet.domain.services.errors import (
+    ConflictError,
+    PlanoRollbackVazio,
+    ValidationError,
+)
 
 TRANSICOES: dict[str, set[str]] = {
     "rascunho": {"aguardando_aprovacao", "cancelado"},
@@ -251,6 +255,13 @@ def gerar_rollback(
                 plano_json=item.blocos, baseline_snapshot_id=item.baseline_snapshot_id,
                 aviso=item.aviso,
             ))
+    if not filho.steps:
+        # Tudo pulado por baseline ausente (§5.2): NADA persiste — sem CR
+        # órfã (a sessão descartada pelo get_db descarta o filho non-commitado).
+        raise PlanoRollbackVazio(
+            "Sem steps aplicados com baseline — rollback automático indisponível; "
+            "faça manualmente."
+        )
     registrar(
         session, tipo="change.rollback_created", ator=actor, objeto="change_request",
         objeto_id=cr.id, depois={"filho": filho.id, "acao": filho.acao},
