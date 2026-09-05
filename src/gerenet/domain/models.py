@@ -32,6 +32,13 @@ DIRECTION = ("import", "export")
 PROFILE_KIND = ("produto",)
 AUTH_ORIGIN = ("manual",)
 USER_ROLES = ("visualizador", "operador", "aprovador", "executor", "administrador")
+CHANGE_ACTION = ("provision", "remove")
+CHANGE_CRITICALITY = ("baixa", "media", "alta")
+# Terminais: aplicado, com_divergencia, rejeitado, cancelado (spec §4.1).
+CHANGE_STATUS = ("rascunho", "aguardando_aprovacao", "aprovado", "executando",
+                 "aplicado", "com_divergencia", "parcial", "erro", "rejeitado", "cancelado")
+CHANGE_STEP_STATUS = ("pendente", "aplicado", "pulado", "falhou", "rollback")
+APPROVAL_DECISION = ("aprovar", "rejeitar")
 
 
 class Device(Base):
@@ -460,3 +467,83 @@ class UserSession(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class ChangeRequest(Base):
+    """Mudança controlada sobre um circuito (§12) — aprovação e execução registradas."""
+
+    __tablename__ = "change_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    circuit_id: Mapped[int] = mapped_column(ForeignKey("circuits.id"), nullable=False)
+    acao: Mapped[str] = mapped_column(Enum(*CHANGE_ACTION, name="change_action"), nullable=False)
+    criticidade: Mapped[str] = mapped_column(
+        Enum(*CHANGE_CRITICALITY, name="change_criticality"), default="media", nullable=False
+    )
+    motivo: Mapped[str] = mapped_column(Text(), nullable=False)
+    ticket: Mapped[str | None] = mapped_column(String(64))
+    solicitante_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    status: Mapped[str] = mapped_column(
+        Enum(*CHANGE_STATUS, name="change_status"), default="rascunho", nullable=False
+    )
+    rollback_de: Mapped[int | None] = mapped_column(ForeignKey("change_requests.id"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    circuito: Mapped[Circuit] = relationship()
+    solicitante: Mapped[User | None] = relationship()
+    steps: Mapped[list["ChangeStep"]] = relationship(
+        back_populates="change_request", order_by="ChangeStep.id", cascade="all, delete-orphan"
+    )
+    approvals: Mapped[list["Approval"]] = relationship(
+        back_populates="change_request", order_by="Approval.id", cascade="all, delete-orphan"
+    )
+
+
+class ChangeStep(Base):
+    """Plano + resultado por equipamento afetado por uma mudança."""
+
+    __tablename__ = "change_steps"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    change_request_id: Mapped[int] = mapped_column(ForeignKey("change_requests.id"), nullable=False)
+    device_id: Mapped[int] = mapped_column(ForeignKey("devices.id"), nullable=False)
+    status: Mapped[str] = mapped_column(
+        Enum(*CHANGE_STEP_STATUS, name="change_step_status"), default="pendente", nullable=False
+    )
+    # [{tipo, objeto, objeto_id, acao: create|delete, comandos:[str]}] — plano congelado.
+    plano_json: Mapped[list] = mapped_column(JSON, default=list)
+    aviso: Mapped[str | None] = mapped_column(Text())  # §5.1: sem recursos p/ diff de skip
+    baseline_snapshot_id: Mapped[int | None] = mapped_column(ForeignKey("device_snapshots.id"))
+    backup_snapshot_id: Mapped[int | None] = mapped_column(ForeignKey("device_snapshots.id"))
+    post_check_json: Mapped[dict | None] = mapped_column(JSON)
+    erro: Mapped[str | None] = mapped_column(Text())
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    change_request: Mapped[ChangeRequest] = relationship(back_populates="steps")
+    device: Mapped[Device] = relationship()
+
+
+class Approval(Base):
+    """Decisão de aprovação registrada na trilha (1 por mudança no MVP)."""
+
+    __tablename__ = "approvals"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    change_request_id: Mapped[int] = mapped_column(ForeignKey("change_requests.id"), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    decisao: Mapped[str] = mapped_column(Enum(*APPROVAL_DECISION, name="approval_decision"), nullable=False)
+    comentario: Mapped[str | None] = mapped_column(Text())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    change_request: Mapped[ChangeRequest] = relationship(back_populates="approvals")
+    user: Mapped[User] = relationship()
