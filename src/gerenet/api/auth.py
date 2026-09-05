@@ -8,6 +8,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
+from gerenet.api import rate_limit
 from gerenet.api.deps import SESSION_COOKIE, SessionDep
 from gerenet.config import Settings, get_settings
 from gerenet.domain import models
@@ -32,12 +33,24 @@ def _usuario_atual(request: Request, session: SessionDep) -> models.User:
 @router.post("/login", response_model=UserOut)
 def login(
     data: UserLoginIn,
+    request: Request,
     response: Response,
     session: SessionDep,
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> models.User:
+    ip = request.client.host if request.client is not None else "?"
+    redis = rate_limit.conectar(settings)
+    # Consulta ANTES do scrypt: tentativa bloqueada custa quase nada e a
+    # mensagem 429 é genérica (não revela existência de usuário).
+    if not rate_limit.permitir(redis, ip, data.username):
+        raise HTTPException(
+            status_code=429,
+            headers={"Retry-After": str(rate_limit.JANELA_SEGUNDOS)},
+            detail="Muitas tentativas de login. Tente novamente em alguns minutos.",
+        )
     usuario = svc.autenticar(session, data.username, data.password)
     if usuario is None:
+        rate_limit.registrar_falha(redis, ip, data.username)
         registrar(
             session, tipo="auth.login_failed", ator=data.username, objeto="auth", objeto_id=0
         )
@@ -45,6 +58,7 @@ def login(
         # da falha precisa ser gravado antes (trilha imutável — §18).
         session.commit()
         raise HTTPException(status_code=401, detail="Usuário ou senha inválidos.")
+    rate_limit.limpar(redis, ip, data.username)
     token = svc.iniciar_sessao(session, usuario, settings=settings)
     usuario.last_login_at = datetime.now(UTC)
     registrar(
