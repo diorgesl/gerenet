@@ -448,6 +448,22 @@ def test_cli_communities_update(db_session: Session) -> None:
             db_session.commit()
 
 
+def test_cli_communities_update_sem_opcoes_da_erro(db_session: Session) -> None:
+    com = models.Community(name="cli-c3-com-sem-opcoes")
+    db_session.add(com)
+    db_session.commit()
+    try:
+        r = runner.invoke(app, ["communities", "update", str(com.id)])
+        assert r.exit_code == 1
+        assert "Nenhum campo informado." in r.output
+        assert com.name == "cli-c3-com-sem-opcoes"  # linha intacta, sem mentira de sucesso
+    finally:
+        com = db_session.get(models.Community, com.id)
+        if com is not None:
+            db_session.delete(com)
+            db_session.commit()
+
+
 def test_cli_bgp_sessions_community_add_remove(db_session: Session) -> None:
     from sqlalchemy import select
 

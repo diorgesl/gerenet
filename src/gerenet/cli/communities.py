@@ -32,6 +32,9 @@ def atualizar(
         dados["name"] = name
     if notes is not None:
         dados["notes"] = notes
+    if not dados:
+        typer.echo("Nenhum campo informado.", err=True)
+        raise typer.Exit(1)
     with get_session() as session:
         try:
             com = svc.update_community(session, community_id, CommunityUpdate(**dados), actor="cli")

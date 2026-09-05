@@ -6,7 +6,7 @@ from gerenet.domain.schemas import PolicyProfileUpdate
 from gerenet.domain.services import policy_profiles as svc
 from gerenet.domain.services.errors import GerenetError
 
-app = typer.Typer(help="Produtos de roteamento (catálogo somente leitura).")
+app = typer.Typer(help="Produtos de roteamento (catálogo).")
 
 
 @app.command("list")
@@ -51,6 +51,9 @@ def atualizar(
         dados["prefixes"] = [p.strip() for p in prefixes.split(",") if p.strip()]
     if notes is not None:
         dados["notes"] = notes
+    if not dados:
+        typer.echo("Nenhum campo informado.", err=True)
+        raise typer.Exit(1)
     with get_session() as session:
         try:
             perfil = svc.update_policy_profile(
