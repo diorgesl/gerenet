@@ -45,6 +45,20 @@ from gerenet.domain.services import users as svc
 from gerenet.domain.services.errors import ConflictError, NotFoundError, ValidationError
 
 
+def test_verify_password_nao_string_retorna_false() -> None:
+    assert svc.verify_password("qualquer", None) is False
+    assert svc.verify_password("qualquer", 123) is False
+    assert svc.verify_password("qualquer", "rotulo-quebrado") is False
+    assert svc.verify_password("qualquer", "md5$ajs8db") is False  # prefixo errado
+
+
+def test_senha_acima_de_128_rejeitada_no_servico(db_session) -> None:
+    with pytest.raises(ValidationError):
+        svc.create_user(
+            db_session, username="user-longo", password="x" * 129, role="visualizador", actor="cli"
+        )
+
+
 def test_hash_password_formato_salt_unico() -> None:
     h1 = svc.hash_password("senha-super-8")
     h2 = svc.hash_password("senha-super-8")

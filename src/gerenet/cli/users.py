@@ -54,7 +54,11 @@ def set_password(username: str = typer.Argument(..., help="Nome de usuário.")) 
 
 
 @app.command("list")
-def listar(include_disabled: bool = typer.Option(False, "--all", help="Inclui desativados.")) -> None:
+def listar(
+    include_disabled: bool = typer.Option(
+        False, "--include-disabled", "--all", help="Inclui desativados."
+    ),
+) -> None:
     """Lista usuários."""
     with get_session() as session:
         for u in svc.list_users(session, include_disabled=include_disabled):

@@ -62,6 +62,19 @@ def test_criar_audita_listar_com_include_disabled(client: TestClient, db_session
     assert client.get("/api/v1/users?include_disabled=true").status_code == 200
 
 
+def test_create_user_senha_longa_422(client: TestClient, db_session) -> None:
+    _admin(db_session)
+    _login(client)
+    # 422 do corpo (Pydantic max_length=128); com a chave sozinha o 403 de
+    # require_admin curto-circuita a validação do body, então o admin loga
+    # primeiro (padrão dos demais testes de /users).
+    r = client.post(
+        "/api/v1/users",
+        json={"username": "tamanho", "password": "x" * 129, "role": "operador"},
+    )
+    assert r.status_code == 422
+
+
 def test_patch_regras(client: TestClient, db_session) -> None:
     _admin(db_session)
     _login(client)

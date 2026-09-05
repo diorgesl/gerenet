@@ -19,3 +19,9 @@ Fase 1: inventário e coleta read-only.
 - A interface web (`web/`, ciclo C2) é servida pelo próprio FastAPI a partir de
   `web/dist`; em desenvolvimento, `cd web && npm install && npm run dev` proxya
   `/api` → :8000.
+
+## Interface web — dev e build
+
+- **Dev** (hot reload, dois processos): API `uv run uvicorn gerenet.api.main:create_app --factory --port 8000` + SPA `cd web && npm run dev` (Vite proxia `/api` → :8000).
+- **Prod/local completo**: `cd web && npm run build` → `web/dist` servido pelo próprio FastAPI (fallback SPA; sem build, as rotas da aplicação não são atendidas). Servir o FastAPI sob HTTPS em produção: `GERENET_COOKIE_SECURE=true` (ver autenticação acima).
+- **Testes**: `cd web && npm run test` (Vitest, componentes). Fumos end-to-end: `cd web && npm run test:e2e` (Playwright — sobe build + uvicorn, roda o seed automático e idempotente; ver `web/e2e/README.md`).

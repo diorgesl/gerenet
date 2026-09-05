@@ -16,7 +16,7 @@
 - **Mensagens de erro idênticas às da API** (não re-escrever): 401 login → "Usuário ou senha inválidos."; 401 geral → "Chave de API ausente ou inválida." (o front redireciona e **não** exibe essa); 403 "Usuário desativado."; 403 "Perfil Visualizador permite apenas leitura."; 403 "Somente administradores."; 403 "Não é possível alterar a própria conta."; falha de rede → "Servidor indisponível. Tente novamente."; 404 "Job não encontrado."; 422 → erros por campo (mensagens do `detail` da validação, em PT-BR).
 - **Nenhum segredo no browser**: senha nunca persiste em `localStorage`/`sessionStorage` nem em log; token só no cookie HttpOnly; payload de login nunca é logado. O front **nunca** recebe a API key.
 - **Sem framework de UI de terceiros**: componentes próprios (DataTable, FormField, StatusBadge, SeverityBadge, ConfirmDialog), CSS vars tokenizadas, dark-first com light por `prefers-color-scheme`.
-- **Dependências node pinadas** (exatas, sem `^` em versão congelada usada nos testes): `react@18`, `react-dom@18`, `react-router-dom@7`, `@tanstack/react-query@5`; dev: `vite@5`, `typescript@5`, `vitest@2`, `jsdom@2x`, `@testing-library/react@16`, `@testing-library/jest-dom@6`, `@testing-library/user-event@14`, `@playwright/test@1`, `eslint@9`, `typescript-eslint@8`, `prettier@3`.
+- **Dependências node** (resolvidas na T2 — se divergirem do brief, a T2 é a autoridade e o desvio fica documentado): `react@18`, `react-dom@18`, `react-router-dom@7`, `@tanstack/react-query@5`; dev: `vite@6` (resolvido 6.4.x), `typescript@5` (5.9.x), **`vitest@3`** (o brief pedia 2.1.x, mas vitest 2 peer-depende de vite 5 e quebra a augmentação de config sob TS 5.9 — bump aprovado no review da T2), `jsdom@25`, `@testing-library/react@16`, `@testing-library/jest-dom@6`, `@testing-library/user-event@14`, `@playwright/test@1`, `eslint@9`, `@eslint/js`, `typescript-eslint@8`, `prettier@3`, `@types/node`.
 - **`.gitignore`**: adicionar `web/node_modules/`, `web/dist/`, `web/playwright-report/`, `web/test-results/`. O `.claude/settings.local.json` e `config.yaml` permanecem fora do git (já ignorados) — **nunca** alterar/comitar.
 - **Testes backend**: pytest verde sem editar testes existentes (a troca `require_api_key` → `require_actor` nos routers do B2 deve manter API key funcionando — os testes atuais usam a chave).
 - **Commits**: mensagem em PT-BR, escopo (feat/fix/chore/docs), trailer `Co-Authored-By: Claude Code <noreply@anthropic.com>`.
@@ -280,11 +280,12 @@ Expected: PASS.
 
 - [ ] **Step 7: Suíte completa + commit**
 
+> **NÃO rodar `alembic upgrade head`** — a cadeia já está aplicada no `gerenet_test_c2` (baseline) e o alembic lê `GERENET_DATABASE_URL` (default = banco dev `gerenet`; ver memória `gerenet-alembic-env-url`). Só pytest roda nesta task.
+
 ```bash
-GERENET_TEST_DATABASE_URL=postgresql+psycopg://gerenet:gerenet@localhost:5432/gerenet_test_c2 uv run alembic upgrade head
 GERENET_TEST_DATABASE_URL=postgresql+psycopg://gerenet:gerenet@localhost:5432/gerenet_test_c2 uv run pytest -q
 ```
-Expected: 349+ passed (nenhum existente quebrado — a troca preserva X-Api-Key).
+Expected: 355 passed (349 baseline + 6 novos; nenhum existente quebrado — a troca preserva X-Api-Key).
 
 ```bash
 git add -A
@@ -819,7 +820,8 @@ export interface JobRunOut {
 export interface CollectResposta {
   queued: boolean;
   message: string;
-  job_id: number;
+  /** id do job RQ (uuid) — NÃO é o JobRun.id da tabela; não usar para navegar a /jobs/{id} */
+  job_id: string;
 }
 ```
 
@@ -1232,24 +1234,121 @@ describe("Login", () => {
 ```
 (ajustar o mock do fetch conforme o client — retorno `Promise<Response>`; o `Response` do jsdom é o do Node 20+, ok.)
 
+`web/src/auth/auth-context.test.tsx` (testes do RequireAuth/RequireAdmin — só matchers base, sem jest-dom; o mock retorna 401 quando role é `null`):
+
+```tsx
+import { render, screen } from "@testing-library/react";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { AuthProvider, RequireAdmin, RequireAuth } from "./auth-context";
+
+const ME_BASE = {
+  id: 1,
+  username: "boss",
+  is_active: true,
+  last_login_at: null,
+  created_at: "2026-09-04T00:00:00Z",
+};
+
+function mockMe(role: string | null) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url !== "/api/v1/auth/me") return new Response(null, { status: 404 });
+      if (role === null) return new Response(null, { status: 401 });
+      return new Response(JSON.stringify({ ...ME_BASE, role }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }),
+  );
+}
+
+describe("RequireAuth/RequireAdmin", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("sem sessão, RequireAuth redireciona para /login", async () => {
+    mockMe(null);
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AuthProvider>
+          <Routes>
+            <Route path="/" element={<RequireAuth><div>seguro</div></RequireAuth>} />
+            <Route path="/login" element={<div>pagina-login</div>} />
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("pagina-login")).toBeTruthy();
+    expect(screen.queryByText("seguro")).toBeNull();
+  });
+
+  it("RequireAdmin bloqueia perfil não administrador", async () => {
+    mockMe("operador");
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <RequireAdmin><div>conteudo-admin</div></RequireAdmin>
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("Somente administradores.")).toBeTruthy();
+    expect(screen.queryByText("conteudo-admin")).toBeNull();
+  });
+
+  it("RequireAdmin libera administrador", async () => {
+    mockMe("administrador");
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <RequireAdmin><div>conteudo-admin</div></RequireAdmin>
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("conteudo-admin")).toBeTruthy();
+  });
+});
+```
+
 - [ ] **Step 3: `App.tsx` com rotas + setOnUnauthorized em `main.tsx`**
 
-`web/src/main.tsx` — adicionar após `const queryClient = ...`:
+`web/src/main.tsx` — arquivo completo (o scaffold da T2 tem `queryClient` + `BrowserRouter` + `App` em `react-dom.createRoot`; o `setOnUnauthorized` precisa do `navigate`, então vive em componente dentro do Router e o `AuthProvider` envolve tudo):
+
 ```tsx
-import { setOnUnauthorized } from "./api/client";
+import React from "react";
+import ReactDOM from "react-dom/client";
+import { useEffect } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { BrowserRouter, useNavigate } from "react-router-dom";
 import { AuthProvider } from "./auth/auth-context";
-import { useNavigate } from "react-router-dom";
+import { setOnUnauthorized } from "./api/client";
 import App from "./App";
-...
-export default function Root() {
+import "./styles/global.css";
+
+const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 1 } } });
+
+function Raiz() {
   const navigate = useNavigate();
   useEffect(() => {
     setOnUnauthorized(() => navigate("/login", { replace: true }));
   }, [navigate]);
   return <App />;
 }
+
+ReactDOM.createRoot(document.getElementById("root")!).render(
+  <React.StrictMode>
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <AuthProvider>
+          <Raiz />
+        </AuthProvider>
+      </BrowserRouter>
+    </QueryClientProvider>
+  </React.StrictMode>,
+);
 ```
-(mover o provider de contexto de navegação: `setOnUnauthorized` precisa do `navigate` — fica em componente dentro do Router.)
 
 `web/src/App.tsx`:
 ```tsx
@@ -1295,7 +1394,7 @@ export default function Dashboard() {
 ```bash
 cd web && npx vitest run
 ```
-Expected: PASS (client.test + Login.test).
+Expected: PASS (client.test + Login.test + auth-context.test).
 
 ```bash
 git add web/src
@@ -1346,13 +1445,27 @@ export function SeverityBadge({ severidade }: { severidade: string }) {
 }
 ```
 
-CSS (em `global.css`):
+CSS (appendar em `global.css`): além das classes abaixo, ajuste de tokens (fecha os minors de design da T2 — o `#fff` hardcoded e o contraste do accent no light): (a) em `:root`, adicionar `--text-on-accent: #fff;`; (b) em `button.primary`, trocar `color: #fff` por `color: var(--text-on-accent);`; (c) no bloco `@media (prefers-color-scheme: light)`, adicionar `--accent: #1f6feb;` (branco sobre `#1f6feb` ≈ 4.6:1 — AA).
+
 ```css
 .badge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 999px; font-size: 0.75rem; border: 1px solid var(--border); }
 .badge-ok { color: var(--ok); }
 .badge-fail, .badge-danger { color: var(--danger); }
 .badge-warn { color: var(--warn); }
 .badge-unknown { color: var(--unknown); }
+.field { display: flex; flex-direction: column; gap: 0.25rem; margin-bottom: 0.8rem; font-size: 0.9rem; }
+.field em { color: var(--danger); font-style: normal; font-size: 0.8rem; }
+.dialog-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); display: flex; align-items: center; justify-content: center; }
+.dialog { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 8px; padding: 1.2rem; max-width: 420px; width: 90%; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem; }
+.mono-block { position: relative; }
+.mono-block pre { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem; overflow-x: auto; white-space: pre-wrap; }
+.mono-block button { position: absolute; top: 0.5rem; right: 0.5rem; }
+.page-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+.page-header h1 { margin: 0; font-size: 1.3rem; }
+.login { max-width: 360px; margin: 15vh auto; padding: 1.5rem; }
+.login h1 { margin-top: 0; }
+.login form { display: flex; flex-direction: column; gap: 0.8rem; }
 ```
 
 - [ ] **Step 2: `DataTable`**
@@ -1532,6 +1645,8 @@ import { SeverityBadge } from "./SeverityBadge";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { TimeAgo } from "./TimeAgo";
 import { MonoCode } from "./MonoCode";
+import { FormField } from "./FormField";
+import { PageHeader } from "./PageHeader";
 
 describe("kit", () => {
   it("StatusBadge mapeia ok/success/ativo → badge-ok", () => {
@@ -1590,6 +1705,22 @@ describe("kit", () => {
     await userEvent.click(screen.getByRole("button", { name: "Copiar" }));
     expect(writeText).toHaveBeenCalledWith("display version");
     expect(screen.getByText("Copiado ✓")).toBeInTheDocument();
+  });
+
+  it("FormField mostra erro com role alert", () => {
+    render(
+      <FormField label="Nome" erro="Obrigatório.">
+        <input />
+      </FormField>,
+    );
+    expect(screen.getByText("Obrigatório.")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toBeTruthy();
+  });
+
+  it("PageHeader mostra título e ações", () => {
+    render(<PageHeader titulo="Devices" acoes={<button>Novo</button>} />);
+    expect(screen.getByRole("heading", { name: "Devices" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Novo" })).toBeTruthy();
   });
 });
 ```
@@ -1918,11 +2049,169 @@ export default function App() {
 }
 ```
 
+CSS a appendar em `global.css` (classes usadas por estas duas telas):
+
+```css
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem; margin-bottom: 1.2rem; }
+.card { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 8px; padding: 0.9rem; font-size: 0.9rem; }
+.card strong { display: block; font-size: 1.5rem; }
+.form-inline { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.6rem; margin-bottom: 1rem; }
+```
+
 - [ ] **Step 5: testes**
 
-`web/src/pages/Users.test.tsx`: render com `AuthProvider` + `QueryClientProvider` + mock fetch com `/api/v1/users` → lista, clicar "Desativar" → PATCH enviado (assert fetch chamado com método PATCH e body `{is_active:false}`), e conta própria sem botão.
+`web/src/pages/Users.test.tsx`:
 
-`web/src/pages/Dashboard.test.tsx`: mock fetch com `/api/v1/dashboard` → cards renderizados, links presentes.
+```tsx
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import Users from "./Users";
+import { AuthProvider } from "@/auth/auth-context";
+
+const ME_ADMIN = {
+  id: 1,
+  username: "boss",
+  role: "administrador",
+  is_active: true,
+  last_login_at: null,
+  created_at: "2026-09-04T00:00:00Z",
+};
+
+const USUARIOS = [
+  ME_ADMIN,
+  {
+    id: 2,
+    username: "operador1",
+    role: "operador",
+    is_active: true,
+    last_login_at: null,
+    created_at: "2026-09-04T00:00:00Z",
+  },
+];
+
+function mockFetch() {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/v1/auth/me") {
+        return new Response(JSON.stringify(ME_ADMIN), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url === "/api/v1/users" && (init?.method === undefined || init.method === "GET")) {
+        return new Response(JSON.stringify(USUARIOS), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url === "/api/v1/users/2" && init?.method === "PATCH") {
+        return new Response(JSON.stringify({ ...USUARIOS[1], is_active: false }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ detail: "Não encontrado." }), { status: 404, headers: { "Content-Type": "application/json" } });
+    }),
+  );
+}
+
+function renderUsers() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <AuthProvider>
+        <Users />
+      </AuthProvider>
+    </QueryClientProvider>,
+  );
+}
+
+describe("Users", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("lista usuários e a conta própria não tem botão de ativar/desativar", async () => {
+    mockFetch();
+    renderUsers();
+    expect(await screen.findByText("operador1")).toBeTruthy();
+    const botoes = screen.getAllByRole("button", { name: /desativar/i });
+    expect(botoes).toHaveLength(1);
+  });
+
+  it("desativar dispara PATCH is_active:false", async () => {
+    mockFetch();
+    renderUsers();
+    await screen.findByText("operador1");
+    await userEvent.click(screen.getAllByRole("button", { name: /desativar/i })[0]);
+    await waitFor(() => {
+      const chamadas = vi.mocked(fetch).mock.calls as unknown as [string, RequestInit][];
+      const patch = chamadas.find(([u, i]) => u === "/api/v1/users/2" && i.method === "PATCH");
+      expect(patch).toBeTruthy();
+      expect(JSON.parse(String(patch![1].body))).toEqual({ is_active: false });
+    });
+  });
+});
+```
+
+`web/src/pages/Dashboard.test.tsx`:
+
+```tsx
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import Dashboard from "./Dashboard";
+
+const DASH = {
+  devices: { total: 3, active: 2, with_snapshot: 1, by_comm_status: { unknown: 1, ok: 1, fail: 1 } },
+  per_device: [
+    {
+      device_id: 1,
+      name: "ne8000-01",
+      site_id: null,
+      site_name: null,
+      comm_status: "ok",
+      last_collected_at: null,
+      snapshot_age_seconds: null,
+      latest_snapshot: null,
+      active_job: null,
+    },
+  ],
+  bgp_sessions: { total: 4, active: 3, shutdown: 1 },
+  circuits: { total: 2, active: 1 },
+  vlans: { reserved: 5, freed: 0 },
+  ip_prefixes: { reserved: 7, freed: 0 },
+  recent_audit: [{ id: 1, type: "coleta", actor: "boss", details: {}, created_at: "2026-09-04T00:00:00Z" }],
+};
+
+describe("Dashboard", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("renderiza cards, per_device e auditoria recente", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url === "/api/v1/dashboard") {
+          return new Response(JSON.stringify(DASH), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        return new Response(null, { status: 404 });
+      }),
+    );
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <Dashboard />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText("ne8000-01")).toBeTruthy();
+    expect(screen.getByText(/^3 equipamentos$/)).toBeTruthy();
+    expect(screen.getByText("coleta")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Reconciliar" })).toBeTruthy();
+  });
+});
+```
 
 Run: `cd web && npx vitest run`.
 Expected: PASS.
@@ -2183,7 +2472,7 @@ export default function Devices() {
             {podeEscrever && (
               <button
                 type="button"
-                onClick={() => void coletar.mutate(d.id).then((r) => navigate(`/jobs/${r.job_id}`))}
+                onClick={() => void coletar.mutate(d.id).then(() => navigate(`/jobs?device_id=${d.id}`))}
               >
                 Coletar agora
               </button>
@@ -2312,15 +2601,249 @@ export default function Sites() {
 }
 ```
 
-- [ ] **Step 4: `Organizations.tsx` e `Contacts.tsx`**
+- [ ] **Step 4: `Organizations.tsx` e `Contacts.tsx`** (mesmo padrão de `Sites.tsx`)
 
-Mesmo padrão exato de `Sites.tsx`, com os campos:
+`web/src/pages/Organizations.tsx`:
 
-- **Organizations** — form: `name` (obrigatório), `legal_name`, `kind` (select `downstream`/`parceiro`, default `downstream`), `asn` (number), `irr_as_set`, `notes`; tabela: name, legal_name, kind (badge), asn, irr_as_set, notes.
-- **Contacts** — form: `organization_id` (select: name das organizações — `useOrganizations()`), `name` (obrigatório), `email`, `phone`, `kind` (select `tecnico`/`noc`/`admin`); tabela: name, email, phone, kind, organização.
-- A tela de Organizations usa `useOrganizationCriar`/`useOrganizationAtualizar`; a de Contacts usa `useContactCriar`/`useContactAtualizar`.
+```tsx
+import { useState } from "react";
+import type { FormEvent } from "react";
+import { useAuth } from "@/auth/auth-context";
+import { ApiError } from "@/api/client";
+import { useOrganizationAtualizar, useOrganizationCriar, useOrganizations } from "@/api/hooks";
+import { DataTable } from "@/components/DataTable";
+import { FormField } from "@/components/FormField";
+import { StatusBadge } from "@/components/StatusBadge";
+import { PageHeader } from "@/components/PageHeader";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import type { OrganizationOut } from "@/api/types";
 
-Teste de referência (`web/src/pages/Sites.test.tsx` — os demais seguem igual):
+const FORM_VAZIO = { name: "", legal_name: "", kind: "downstream" as "downstream" | "parceiro", asn: "", irr_as_set: "", notes: "" };
+
+export default function Organizations() {
+  const { podeEscrever } = useAuth();
+  const { data, isLoading } = useOrganizations();
+  const criar = useOrganizationCriar();
+  const atualizar = useOrganizationAtualizar();
+  const [form, setForm] = useState(FORM_VAZIO);
+  const [desativando, setDesativando] = useState<OrganizationOut | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    setErro(null);
+    try {
+      await criar.mutateAsync({
+        name: form.name,
+        legal_name: form.legal_name || null,
+        kind: form.kind,
+        asn: form.asn === "" ? null : Number(form.asn),
+        irr_as_set: form.irr_as_set || null,
+        notes: form.notes || null,
+      });
+      setForm({ ...FORM_VAZIO });
+    } catch (err) {
+      setErro(err instanceof ApiError ? err.message : "Falha ao cadastrar organização.");
+    }
+  }
+
+  return (
+    <main>
+      <PageHeader titulo="Organizações" />
+      {podeEscrever && (
+        <form onSubmit={onSubmit} className="grid-form">
+          <FormField label="Nome *">
+            <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+          </FormField>
+          <FormField label="Razão social">
+            <input value={form.legal_name} onChange={(e) => setForm({ ...form, legal_name: e.target.value })} />
+          </FormField>
+          <FormField label="Tipo">
+            <select
+              value={form.kind}
+              onChange={(e) => setForm({ ...form, kind: e.target.value as "downstream" | "parceiro" })}
+            >
+              <option value="downstream">downstream</option>
+              <option value="parceiro">parceiro</option>
+            </select>
+          </FormField>
+          <FormField label="ASN">
+            <input type="number" value={form.asn} onChange={(e) => setForm({ ...form, asn: e.target.value })} />
+          </FormField>
+          <FormField label="IRR AS-SET">
+            <input value={form.irr_as_set} onChange={(e) => setForm({ ...form, irr_as_set: e.target.value })} />
+          </FormField>
+          <FormField label="Observações">
+            <input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+          </FormField>
+          <button className="primary" type="submit" disabled={criar.isPending}>
+            Cadastrar
+          </button>
+        </form>
+      )}
+      {erro && <p role="alert">{erro}</p>}
+      <DataTable<OrganizationOut>
+        colunas={[
+          { key: "name", title: "Nome" },
+          { key: "legal_name", title: "Razão social", render: (o) => o.legal_name ?? "—" },
+          { key: "kind", title: "Tipo", render: (o) => <StatusBadge estado={o.kind} /> },
+          { key: "asn", title: "ASN", render: (o) => o.asn ?? "—" },
+          { key: "irr_as_set", title: "IRR AS-SET", render: (o) => o.irr_as_set ?? "—" },
+          { key: "notes", title: "Observações", render: (o) => o.notes ?? "—" },
+        ]}
+        linhas={data ?? []}
+        carregando={isLoading}
+        acoes={(o) =>
+          podeEscrever && o.admin_status ? (
+            <button type="button" onClick={() => setDesativando(o)}>
+              Desativar
+            </button>
+          ) : null
+        }
+      />
+      <ConfirmDialog
+        aberto={desativando !== null}
+        titulo={`Desativar ${desativando?.name ?? ""}?`}
+        mensagem="A organização fica indisponível para novos cadastros; o registro permanece."
+        onConfirmar={() => {
+          if (desativando)
+            void atualizar.mutateAsync({ id: desativando.id, admin_status: false }).then(() => setDesativando(null));
+        }}
+        onCancelar={() => setDesativando(null)}
+        confirmando={atualizar.isPending}
+      />
+    </main>
+  );
+}
+```
+
+`web/src/pages/Contacts.tsx`:
+
+```tsx
+import { useState } from "react";
+import type { FormEvent } from "react";
+import { useAuth } from "@/auth/auth-context";
+import { ApiError } from "@/api/client";
+import { useContactAtualizar, useContactCriar, useContacts, useOrganizations } from "@/api/hooks";
+import { DataTable } from "@/components/DataTable";
+import { FormField } from "@/components/FormField";
+import { PageHeader } from "@/components/PageHeader";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import type { ContactOut } from "@/api/types";
+
+const FORM_VAZIO = { organization_id: "", name: "", email: "", phone: "", kind: "tecnico" as "tecnico" | "noc" | "admin" };
+
+export default function Contacts() {
+  const { podeEscrever } = useAuth();
+  const { data, isLoading } = useContacts();
+  const { data: organizations } = useOrganizations();
+  const criar = useContactCriar();
+  const atualizar = useContactAtualizar();
+  const [form, setForm] = useState(FORM_VAZIO);
+  const [desativando, setDesativando] = useState<ContactOut | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    setErro(null);
+    if (form.organization_id === "") return;
+    try {
+      await criar.mutateAsync({
+        organization_id: Number(form.organization_id),
+        name: form.name,
+        email: form.email || null,
+        phone: form.phone || null,
+        kind: form.kind,
+      });
+      setForm({ ...FORM_VAZIO });
+    } catch (err) {
+      setErro(err instanceof ApiError ? err.message : "Falha ao cadastrar contato.");
+    }
+  }
+
+  return (
+    <main>
+      <PageHeader titulo="Contatos" />
+      {podeEscrever && (
+        <form onSubmit={onSubmit} className="grid-form">
+          <FormField label="Organização *">
+            <select
+              value={form.organization_id}
+              onChange={(e) => setForm({ ...form, organization_id: e.target.value })}
+              required
+            >
+              <option value="">—</option>
+              {(organizations ?? []).map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.name}
+                </option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Nome *">
+            <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+          </FormField>
+          <FormField label="E-mail">
+            <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+          </FormField>
+          <FormField label="Telefone">
+            <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+          </FormField>
+          <FormField label="Tipo">
+            <select
+              value={form.kind}
+              onChange={(e) => setForm({ ...form, kind: e.target.value as "tecnico" | "noc" | "admin" })}
+            >
+              <option value="tecnico">tecnico</option>
+              <option value="noc">noc</option>
+              <option value="admin">admin</option>
+            </select>
+          </FormField>
+          <button className="primary" type="submit" disabled={criar.isPending}>
+            Cadastrar
+          </button>
+        </form>
+      )}
+      {erro && <p role="alert">{erro}</p>}
+      <DataTable<ContactOut>
+        colunas={[
+          { key: "name", title: "Nome" },
+          { key: "email", title: "E-mail", render: (c) => c.email ?? "—" },
+          { key: "phone", title: "Telefone", render: (c) => c.phone ?? "—" },
+          { key: "kind", title: "Tipo" },
+          {
+            key: "organization",
+            title: "Organização",
+            render: (c) => organizations?.find((o) => o.id === c.organization_id)?.name ?? "—",
+          },
+        ]}
+        linhas={data ?? []}
+        carregando={isLoading}
+        acoes={(c) =>
+          podeEscrever && c.admin_status ? (
+            <button type="button" onClick={() => setDesativando(c)}>
+              Desativar
+            </button>
+          ) : null
+        }
+      />
+      <ConfirmDialog
+        aberto={desativando !== null}
+        titulo={`Desativar ${desativando?.name ?? ""}?`}
+        mensagem="O contato fica indisponível para novos cadastros; o registro permanece."
+        onConfirmar={() => {
+          if (desativando)
+            void atualizar.mutateAsync({ id: desativando.id, admin_status: false }).then(() => setDesativando(null));
+        }}
+        onCancelar={() => setDesativando(null)}
+        confirmando={atualizar.isPending}
+      />
+    </main>
+  );
+}
+```
+
+Teste de referência (`web/src/pages/Sites.test.tsx`; o de `Devices.test.tsx` está no Step 6 — inclui o fluxo coletar→`/jobs`):
 
 ```tsx
 import { render, screen, waitFor } from "@testing-library/react";
@@ -2387,9 +2910,212 @@ describe("Sites", () => {
 
 > `getByLabelText` depende do `FormField` transformar o label child de modo que o `htmlFor`/wrapper associe ao input. Se o ajuste for necessário, usar `screen.getByPlaceholderText`? Não — preferir `FormField` com `<label>` envolvendo o campo (associação implícita, como no Login.tsx).
 
-- [ ] **Step 5: rotas em `App.tsx`** (padrão `/devices`, `/sites`, `/organizations`, `/contacts` todas sob `RequireAuth`).
+- [ ] **Step 5: rotas em `App.tsx`** (substituir o arquivo inteiro):
 
-- [ ] **Step 6: testes + `npm run build` + lint** e commit.
+```tsx
+import { Route, Routes } from "react-router-dom";
+import Login from "@/auth/Login";
+import { RequireAdmin, RequireAuth } from "@/auth/auth-context";
+import Contacts from "@/pages/Contacts";
+import Dashboard from "@/pages/Dashboard";
+import Devices from "@/pages/Devices";
+import Organizations from "@/pages/Organizations";
+import Sites from "@/pages/Sites";
+import Users from "@/pages/Users";
+
+export default function App() {
+  return (
+    <Routes>
+      <Route path="/login" element={<Login />} />
+      <Route
+        path="/"
+        element={
+          <RequireAuth>
+            <Dashboard />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/users"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <Users />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/devices"
+        element={
+          <RequireAuth>
+            <Devices />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/sites"
+        element={
+          <RequireAuth>
+            <Sites />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/organizations"
+        element={
+          <RequireAuth>
+            <Organizations />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/contacts"
+        element={
+          <RequireAuth>
+            <Contacts />
+          </RequireAuth>
+        }
+      />
+    </Routes>
+  );
+}
+```
+
+- [ ] **Step 6: `Devices.test.tsx` + testes + build + lint + commit**
+
+`web/src/pages/Devices.test.tsx`:
+
+```tsx
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import Devices from "./Devices";
+import { AuthProvider } from "@/auth/auth-context";
+
+const equipamentos = [
+  {
+    id: 1,
+    name: "ne8000-01",
+    management_address: "10.99.0.1",
+    site_id: 1,
+    role: "core",
+    comm_status: "ok",
+    last_collected_at: null,
+    admin_status: true,
+  },
+];
+const sites = [{ id: 1, name: "SPO", city: null, uf: "SP", p2p_ipv4_block: null, p2p_ipv6_base: null, admin_status: true }];
+
+beforeAll(() => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        if (url === "/api/v1/devices/1/collect") {
+          return new Response(JSON.stringify({ queued: true, message: "Coleta enfileirada.", job_id: "rq-abc" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        const body = JSON.parse(String(init.body));
+        return new Response(
+          JSON.stringify({ id: 2, ...body, site_id: null, comm_status: "unknown", last_collected_at: null, admin_status: true }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url === "/api/v1/devices/1" && init?.method === "PATCH") {
+        return new Response(JSON.stringify({ ...equipamentos[0], admin_status: false }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url === "/api/v1/devices") {
+        return new Response(JSON.stringify(equipamentos), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url === "/api/v1/sites") {
+        return new Response(JSON.stringify(sites), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url === "/api/v1/auth/me") {
+        return new Response(
+          JSON.stringify({ id: 1, username: "boss", role: "administrador", is_active: true, last_login_at: null, created_at: "" }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return new Response("null", { status: 404 });
+    }),
+  );
+});
+
+function renderDevices() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={["/devices"]}>
+        <AuthProvider>
+          <Routes>
+            <Route path="/devices" element={<Devices />} />
+            <Route path="/jobs" element={<div>jobs-page</div>} />
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+describe("Devices", () => {
+  it("lista equipamentos e cadastra novo pela API", async () => {
+    renderDevices();
+    expect(await screen.findByText("ne8000-01")).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Nome *"), "ne8000-02");
+    await userEvent.type(screen.getByLabelText("IP de gestão *"), "10.99.0.2");
+    await userEvent.click(screen.getByRole("button", { name: "Cadastrar" }));
+    await waitFor(() => {
+      const chamadas = vi.mocked(fetch).mock.calls;
+      expect(chamadas.some((c) => c[1]?.method === "POST" && String(c[1]?.body).includes("ne8000-02"))).toBe(true);
+    });
+  });
+
+  it("Coletar agora dispara a coleta e navega para /jobs com o device", async () => {
+    renderDevices();
+    await screen.findByText("ne8000-01");
+    await userEvent.click(screen.getByRole("button", { name: "Coletar agora" }));
+    expect(await screen.findByText("jobs-page")).toBeInTheDocument();
+    await waitFor(() => {
+      const chamadas = vi.mocked(fetch).mock.calls;
+      expect(chamadas.some((c) => c[0] === "/api/v1/devices/1/collect" && c[1]?.method === "POST")).toBe(true);
+    });
+  });
+
+  it("Desativar pede confirmação e envia PATCH admin_status:false", async () => {
+    renderDevices();
+    await screen.findByText("ne8000-01");
+    await userEvent.click(screen.getByRole("button", { name: "Desativar" }));
+    expect(screen.getByRole("dialog", { name: "Desativar ne8000-01?" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Confirmar" }));
+    await waitFor(() => {
+      const chamadas = vi.mocked(fetch).mock.calls;
+      const patch = chamadas.find((c) => c[0] === "/api/v1/devices/1" && c[1]?.method === "PATCH");
+      expect(patch).toBeTruthy();
+      expect(JSON.parse(String(patch![1].body))).toEqual({ admin_status: false });
+    });
+  });
+});
+```
+
+Run (na raiz do repositório):
+
+```bash
+cd web && npx vitest run src/pages/Devices.test.tsx src/pages/Sites.test.tsx
+cd web && npm run build
+cd web && npx eslint src
+```
+
+Expected: 5 testes PASS, build sem erro, lint limpo.
+
+- [ ] **Step 7: commit**
 
 ```bash
 git add web/src/pages web/src/App.tsx web/src/api/hooks.ts
@@ -2411,12 +3137,1132 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 - Consumes: Task 7 (padrão CRUD), schemas `CircuitOut/CircuitDetailOut/BgpSessionOut` (Task 3).
 - Produces: circuito com "Reservar recursos" (POST `/circuits/{id}/reserve`) e detalhe (VLANs/prefixos, sessões); sessão BGP com associação de communities (POST/DELETE) e "Definir senha" (POST `/bgp-sessions/{id}/password` — nunca exibe a senha; mostra `has_password`).
 
-- [ ] **Step 1: hooks** — padrão da Task 7 + `useCircuitoReservar(id)` (POST `/circuits/${id}/reserve`), `useSessionCommunity` (POST/DELETE `/bgp-sessions/${id}/communities`), `useSessionSenha` (POST `/bgp-sessions/${id}/password`).
-- [ ] **Step 2: `Circuits.tsx`** — tabela: code, org, site, devices, stack, bfd, admin; form com todos os campos do `CircuitCreate` (code, organization_id, site_id, access_device_id, access_port, edge_device_id, backup_edge_device_id, stack, vlan_mode, qinq, vrf, mtu, bandwidth, bfd, p2p_v4_len, description, notes, edge_trunk).
-- [ ] **Step 3: `CircuitDetail.tsx`** — `GET /circuits/{id}` → `CircuitDetailOut`: pontas V4/V6; botão "Reservar recursos" (POST reserve → atualiza o detail); sessões BGP do circuito (GET `/bgp-sessions?circuit_id=`).
-- [ ] **Step 4: `BgpSessions.tsx`** — tabela: circuit, device, afi, addresses, ASNs, shutdown; form com campos do `BgpSessionCreate`.
-- [ ] **Step 5: `BgpSessionDetail.tsx`** — communities associadas (GET `/bgp-sessions/{id}` + lista de `/communities` + POST/DELETE); "Definir senha" (campo e POST; mostra `has_password`).
-- [ ] **Step 6: testes (mock fetch dos fluxos principais) + `npm run build` + lint + commit** (uma por arquivo de tela, padrão C1: testes de fluxo feliz e erro exibido).
+> **Ruling (lacuna de contrato):** `BgpSessionOut` NÃO carrega as communities associadas (schemas.py:323 só `has_password`); a API só tinha POST/DELETE de associação. A UI precisa de leitura — o Step 0 abaixo adiciona `GET /api/v1/bgp-sessions/{session_id}/communities` (idempotente e auditável, igual ao padrão do router).
+
+- [ ] **Step 0 (backend): `GET /api/v1/bgp-sessions/{session_id}/communities`**
+
+Em `src/gerenet/domain/services/bgp_sessions.py` (após `get_session`, ~linha 172):
+
+```python
+def list_communities(session: Session, session_id: int) -> list[models.Community]:
+    """Communities associadas à sessão, na ordem de associação."""
+    get_session(session, session_id)
+    return list(
+        session.scalars(
+            select(models.Community)
+            .join(
+                models.BgpSessionCommunity,
+                models.BgpSessionCommunity.community_id == models.Community.id,
+            )
+            .where(models.BgpSessionCommunity.session_id == session_id)
+            .order_by(models.BgpSessionCommunity.id)
+        )
+    )
+```
+
+Em `src/gerenet/api/routers/bgp_sessions.py`: adicionar `CommunityOut` ao import de `gerenet.domain.schemas`, e a rota para `listar_communities` (após `definir_senha`):
+
+```python
+@router.get("/{session_id}/communities", response_model=list[CommunityOut])
+def listar_communities(session_id: int, session: SessionDep) -> object:
+    """Communities associadas à sessão, na ordem de associação."""
+    try:
+        return svc.list_communities(session, session_id)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+```
+
+Em `tests/api/test_communities_api.py` (após `test_associacao_inexistente_da_404`):
+
+```python
+def test_lista_communities_da_sessao(client: TestClient, db_session: Session) -> None:
+    sessao_id = _sessao(db_session)
+    comunidade = client.get("/api/v1/communities", headers=_auth()).json()[0]  # blackhole
+    associada = client.post(
+        f"/api/v1/bgp-sessions/{sessao_id}/communities",
+        json={"community_id": comunidade["id"]}, headers=_auth(),
+    )
+    assert associada.status_code == 200
+
+    lista = client.get(f"/api/v1/bgp-sessions/{sessao_id}/communities", headers=_auth())
+    assert lista.status_code == 200, lista.text
+    assert [c["name"] for c in lista.json()] == ["blackhole"]
+
+    assert client.get("/api/v1/bgp-sessions/9999/communities", headers=_auth()).status_code == 404
+```
+
+Run: `uv run pytest -q tests/api/test_communities_api.py`
+Expected: 4 passed.
+
+> **Ruling (pré-dispatch, verificado na implementação):** a linha `Expected: 4 passed` acima é INALCANÇÁVEL até a infra de teste ser tornada independente do `web/dist` que existir na máquina. `montar_spa` (static_spa.py) registra o catch-all quando `web/dist/index.html` EXISTE NO DISCO (não é rastreado; nasce do `vite build` do T2). Com o catch-all ativo, `POST /api/v1/communities` (rota real só-GET) casa com `/{path:path}` (POST) e devolve **404** (contrato documentado "404, não 405"), quebrando o `test_lista_communities_read_only` pré-existente do C1 (escreve 405). Em máquina sem `web/dist`, o teste passa (casa sem catch-all → 405 natural do Starlette). É o minor parkado do C1 "static_dir em fixtures": o `static_dir_inexistente` existe em tests/api/conftest.py mas só é usado por test_static_spa.py. **Correção (infra de teste, não produção, não o teste antigo):** autouse que pina um static_dir inexistente — o teste 405 fica intacto e a suíte volta a ser determinística para qualquer gate backend do ciclo (T8, T13).
+
+- [ ] **Step 0.5 (infra de teste): autouse `spa_sem_build` em tests/api/conftest.py**
+
+```python
+@pytest.fixture(autouse=True)
+def spa_sem_build(static_dir_inexistente: Path) -> Iterator[None]:
+    # Minor C1: os testes de API nunca devem depender do web/dist que existir
+    # na máquina — com o build presente, montar_spa registra o catch-all e
+    # POST/PUT/PATCH/DELETE em rota desconhecida devolvem 404 (contrato
+    # pré-fallback) em vez do 405 natural do Starlette. Pinando um diretório
+    # inexistente, o fallback não é montado; test_static_spa.py sobrepõe pelo
+    # próprio set_settings no fixture client (ordem: autouse corre antes).
+    set_settings(Settings(static_dir=static_dir_inexistente, _env_file=None))
+    yield
+```
+
+(Import: `from collections.abc import Iterator`; `from gerenet.config import Settings, set_settings`.)
+
+- [ ] **Step 1: hooks de circuits/bgp-sessions no `hooks.ts`** (append após os hooks da Task 6/7)
+
+```ts
+export const useCircuits = () => useLista<CircuitOut>("circuits", "/api/v1/circuits");
+export const useCircuitDetail = (id: number) =>
+  useQuery({ queryKey: ["circuit", id], queryFn: () => apiFetch<CircuitDetailOut>(`/api/v1/circuits/${id}`) });
+
+export type CircuitCreateIn = {
+  code: string;
+  organization_id: number;
+  site_id: number;
+  access_device_id: number;
+  access_port: string;
+  edge_device_id: number;
+  backup_edge_device_id?: number | null;
+  stack: "ipv4" | "ipv6" | "dual";
+  vlan_mode: "unica" | "separada";
+  qinq?: boolean;
+  vrf?: string | null;
+  mtu?: number | null;
+  bandwidth?: string | null;
+  bfd?: boolean;
+  p2p_v4_len?: 30 | 31;
+  description?: string | null;
+  notes?: string | null;
+  edge_trunk?: string | null;
+};
+export const useCircuitCriar = () => useCriar<CircuitCreateIn, CircuitOut>("circuits", "/api/v1/circuits");
+export const useCircuitAtualizar = () =>
+  useAtualizar<Partial<CircuitCreateIn> & { admin_status?: boolean }, CircuitOut>("circuits", "/api/v1/circuits");
+export function useCircuitoReservar() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => apiFetch<CircuitDetailOut>(`/api/v1/circuits/${id}/reserve`, { method: "POST" }),
+    onSuccess: (_d, id) => {
+      void qc.invalidateQueries({ queryKey: ["circuit", id] });
+      void qc.invalidateQueries({ queryKey: ["circuits"] });
+      void qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+}
+
+export const useBgpSessions = (filtros?: { circuit_id?: number; device_id?: number }) =>
+  useQuery({
+    queryKey: ["bgp-sessions", filtros],
+    queryFn: () => {
+      const qs = new URLSearchParams();
+      if (filtros?.circuit_id) qs.set("circuit_id", String(filtros.circuit_id));
+      if (filtros?.device_id) qs.set("device_id", String(filtros.device_id));
+      const suf = qs.size > 0 ? `?${qs.toString()}` : "";
+      return apiFetch<BgpSessionOut[]>(`/api/v1/bgp-sessions${suf}`);
+    },
+  });
+export const useBgpSession = (id: number) =>
+  useQuery({ queryKey: ["bgp-session", id], queryFn: () => apiFetch<BgpSessionOut>(`/api/v1/bgp-sessions/${id}`) });
+
+export type BgpSessionCreateIn = {
+  circuit_id: number;
+  device_id: number;
+  afi: "ipv4" | "ipv6";
+  local_address: string;
+  remote_address: string;
+  source_address?: string | null;
+  asn_local?: number | null;
+  asn_remote?: number | null;
+  description?: string | null;
+  import_profile_id?: number | null;
+  export_profile_id?: number | null;
+  maximum_prefix?: number | null;
+  maximum_prefix_threshold?: number | null;
+  local_preference?: number | null;
+  med?: number | null;
+  prepend?: number | null;
+  keepalive?: number | null;
+  holdtime?: number | null;
+  bfd_enabled?: boolean;
+  graceful_restart?: boolean;
+  shutdown?: boolean;
+  allow_default_route?: boolean;
+};
+export const useBgpSessionCriar = () => useCriar<BgpSessionCreateIn, BgpSessionOut>("bgp-sessions", "/api/v1/bgp-sessions");
+export const useBgpSessionAtualizar = () =>
+  useAtualizar<Partial<BgpSessionCreateIn> & { admin_status?: boolean }, BgpSessionOut>("bgp-sessions", "/api/v1/bgp-sessions");
+
+export const useSessionCommunities = (sessionId: number) =>
+  useQuery({
+    queryKey: ["bgp-session-communities", sessionId],
+    queryFn: () => apiFetch<CommunityOut[]>(`/api/v1/bgp-sessions/${sessionId}/communities`),
+  });
+export function useSessionCommunity() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ sessionId, communityId, associa }: { sessionId: number; communityId: number; associa: boolean }) =>
+      associa
+        ? apiFetch<void>( // resposta não usada: a lista é refetched por invalidação; ambos os ramos → Promise<void>
+            `/api/v1/bgp-sessions/${sessionId}/communities`,
+            { method: "POST", body: { community_id: communityId } },
+          )
+        : apiFetch<void>(`/api/v1/bgp-sessions/${sessionId}/communities/${communityId}`, { method: "DELETE" }),
+    onSuccess: (_d, v) => {
+      void qc.invalidateQueries({ queryKey: ["bgp-session-communities", v.sessionId] });
+      void qc.invalidateQueries({ queryKey: ["bgp-session", v.sessionId] });
+    },
+  });
+}
+export function useSessionSenha() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ sessionId, password }: { sessionId: number; password: string }) =>
+      apiFetch<BgpSessionOut>(`/api/v1/bgp-sessions/${sessionId}/password`, { method: "POST", body: { password } }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["bgp-sessions"] }),
+  });
+}
+
+export const usePolicyProfiles = (filtros?: { direction?: string }) =>
+  useQuery({
+    queryKey: ["policy-profiles", filtros],
+    queryFn: () => {
+      const qs = new URLSearchParams();
+      if (filtros?.direction) qs.set("direction", filtros.direction);
+      const suf = qs.size > 0 ? `?${qs.toString()}` : "";
+      return apiFetch<PolicyProfileOut[]>(`/api/v1/policy-profiles${suf}`);
+    },
+  });
+export const useCommunities = () => useLista<CommunityOut>("communities", "/api/v1/communities");
+```
+
+> `usePolicyProfiles`/`useCommunities` nascem aqui (usadas pelo form de sessão e pelo detail); a Task 9 só cria as telas, não os hooks de lista.
+
+- [ ] **Step 2: `Circuits.tsx`**
+
+```tsx
+import { useState } from "react";
+import type { FormEvent } from "react";
+import { Link } from "react-router-dom";
+import { useAuth } from "@/auth/auth-context";
+import { ApiError } from "@/api/client";
+import { useCircuitAtualizar, useCircuitCriar, useCircuits, useDevices, useOrganizations, useSites } from "@/api/hooks";
+import { DataTable } from "@/components/DataTable";
+import { FormField } from "@/components/FormField";
+import { StatusBadge } from "@/components/StatusBadge";
+import { PageHeader } from "@/components/PageHeader";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import type { CircuitOut } from "@/api/types";
+
+const FORM_VAZIO = {
+  code: "",
+  organization_id: "",
+  site_id: "",
+  access_device_id: "",
+  access_port: "",
+  edge_device_id: "",
+  backup_edge_device_id: "",
+  stack: "dual" as "ipv4" | "ipv6" | "dual",
+  vlan_mode: "unica" as "unica" | "separada",
+  qinq: false,
+  vrf: "",
+  mtu: "",
+  bandwidth: "",
+  bfd: false,
+  p2p_v4_len: "31" as "30" | "31",
+  description: "",
+  notes: "",
+  edge_trunk: "",
+};
+
+export default function Circuits() {
+  const { podeEscrever } = useAuth();
+  const { data, isLoading } = useCircuits();
+  const { data: organizations } = useOrganizations();
+  const { data: sites } = useSites();
+  const { data: devices } = useDevices();
+  const criar = useCircuitCriar();
+  const atualizar = useCircuitAtualizar();
+  const [form, setForm] = useState(FORM_VAZIO);
+  const [desativando, setDesativando] = useState<CircuitOut | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  const num = (v: string) => (v === "" ? null : Number(v));
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    setErro(null);
+    try {
+      await criar.mutateAsync({
+        code: form.code,
+        organization_id: Number(form.organization_id),
+        site_id: Number(form.site_id),
+        access_device_id: Number(form.access_device_id),
+        access_port: form.access_port,
+        edge_device_id: Number(form.edge_device_id),
+        backup_edge_device_id: form.backup_edge_device_id === "" ? null : Number(form.backup_edge_device_id),
+        stack: form.stack,
+        vlan_mode: form.vlan_mode,
+        qinq: form.qinq,
+        vrf: form.vrf || null,
+        mtu: num(form.mtu),
+        bandwidth: form.bandwidth || null,
+        bfd: form.bfd,
+        p2p_v4_len: Number(form.p2p_v4_len) as 30 | 31,
+        description: form.description || null,
+        notes: form.notes || null,
+        edge_trunk: form.edge_trunk || null,
+      });
+      setForm(FORM_VAZIO);
+    } catch (err) {
+      setErro(err instanceof ApiError ? err.message : "Falha ao cadastrar circuito.");
+    }
+  }
+
+  return (
+    <main>
+      <PageHeader titulo="Circuitos" />
+      {podeEscrever && (
+        <form onSubmit={onSubmit} className="grid-form">
+          <FormField label="Código *">
+            <input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} required />
+          </FormField>
+          <FormField label="Organização *">
+            <select value={form.organization_id} onChange={(e) => setForm({ ...form, organization_id: e.target.value })} required>
+              <option value="">—</option>
+              {(organizations ?? []).map((o) => (
+                <option key={o.id} value={o.id}>{o.name}</option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Site *">
+            <select value={form.site_id} onChange={(e) => setForm({ ...form, site_id: e.target.value })} required>
+              <option value="">—</option>
+              {(sites ?? []).map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Equipamento de acesso *">
+            <select value={form.access_device_id} onChange={(e) => setForm({ ...form, access_device_id: e.target.value })} required>
+              <option value="">—</option>
+              {(devices ?? []).map((d) => (
+                <option key={d.id} value={d.id}>{d.name}</option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Porta de acesso *">
+            <input value={form.access_port} onChange={(e) => setForm({ ...form, access_port: e.target.value })} required />
+          </FormField>
+          <FormField label="Edge *">
+            <select value={form.edge_device_id} onChange={(e) => setForm({ ...form, edge_device_id: e.target.value })} required>
+              <option value="">—</option>
+              {(devices ?? []).map((d) => (
+                <option key={d.id} value={d.id}>{d.name}</option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Edge de contingência">
+            <select value={form.backup_edge_device_id} onChange={(e) => setForm({ ...form, backup_edge_device_id: e.target.value })}>
+              <option value="">—</option>
+              {(devices ?? []).map((d) => (
+                <option key={d.id} value={d.id}>{d.name}</option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Stack">
+            <select value={form.stack} onChange={(e) => setForm({ ...form, stack: e.target.value as "ipv4" | "ipv6" | "dual" })}>
+              <option value="ipv4">ipv4</option>
+              <option value="ipv6">ipv6</option>
+              <option value="dual">dual</option>
+            </select>
+          </FormField>
+          <FormField label="VLAN">
+            <select value={form.vlan_mode} onChange={(e) => setForm({ ...form, vlan_mode: e.target.value as "unica" | "separada" })}>
+              <option value="unica">única</option>
+              <option value="separada">separada</option>
+            </select>
+          </FormField>
+          <FormField label="QinQ">
+            <input type="checkbox" checked={form.qinq} onChange={(e) => setForm({ ...form, qinq: e.target.checked })} />
+          </FormField>
+          <FormField label="VRF">
+            <input value={form.vrf} onChange={(e) => setForm({ ...form, vrf: e.target.value })} />
+          </FormField>
+          <FormField label="MTU">
+            <input type="number" value={form.mtu} onChange={(e) => setForm({ ...form, mtu: e.target.value })} />
+          </FormField>
+          <FormField label="Banda">
+            <input value={form.bandwidth} onChange={(e) => setForm({ ...form, bandwidth: e.target.value })} />
+          </FormField>
+          <FormField label="BFD">
+            <input type="checkbox" checked={form.bfd} onChange={(e) => setForm({ ...form, bfd: e.target.checked })} />
+          </FormField>
+          <FormField label="Len /30 ou /31">
+            <select value={form.p2p_v4_len} onChange={(e) => setForm({ ...form, p2p_v4_len: e.target.value as "30" | "31" })}>
+              <option value="31">/31</option>
+              <option value="30">/30</option>
+            </select>
+          </FormField>
+          <FormField label="Descrição">
+            <input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+          </FormField>
+          <FormField label="Observações">
+            <input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+          </FormField>
+          <FormField label="Eth-Trunk do edge">
+            <input value={form.edge_trunk} onChange={(e) => setForm({ ...form, edge_trunk: e.target.value })} />
+          </FormField>
+          <button className="primary" type="submit" disabled={criar.isPending}>
+            Cadastrar
+          </button>
+        </form>
+      )}
+      {erro && <p role="alert">{erro}</p>}
+      <DataTable<CircuitOut>
+        colunas={[
+          { key: "code", title: "Código", render: (c) => <Link to={`/circuits/${c.id}`}>{c.code}</Link> },
+          { key: "organization", title: "Organização", render: (c) => organizations?.find((o) => o.id === c.organization_id)?.name ?? "—" },
+          { key: "site", title: "Site", render: (c) => sites?.find((s) => s.id === c.site_id)?.name ?? "—" },
+          {
+            key: "devices",
+            title: "Access → Edge",
+            render: (c) => `${devices?.find((d) => d.id === c.access_device_id)?.name ?? "—"} → ${devices?.find((d) => d.id === c.edge_device_id)?.name ?? "—"}`,
+          },
+          { key: "stack", title: "Stack", render: (c) => <StatusBadge estado={c.stack} /> },
+          { key: "bfd", title: "BFD", render: (c) => (c.bfd ? "Sim" : "—") },
+          { key: "admin_status", title: "Situação", render: (c) => <StatusBadge estado={c.admin_status ? "ativo" : "inativo"} /> },
+        ]}
+        linhas={data ?? []}
+        carregando={isLoading}
+        acoes={(c) =>
+          podeEscrever && c.admin_status ? (
+            <button type="button" onClick={() => setDesativando(c)}>
+              Desativar
+            </button>
+          ) : null
+        }
+      />
+      <ConfirmDialog
+        aberto={desativando !== null}
+        titulo={`Desativar ${desativando?.code ?? ""}?`}
+        mensagem="O circuito não recebe novas sessões; o registro permanece."
+        onConfirmar={() => {
+          if (desativando) void atualizar.mutateAsync({ id: desativando.id, admin_status: false }).then(() => setDesativando(null));
+        }}
+        onCancelar={() => setDesativando(null)}
+        confirmando={atualizar.isPending}
+      />
+    </main>
+  );
+}
+```
+
+- [ ] **Step 3: `CircuitDetail.tsx`**
+
+```tsx
+import { useState } from "react";
+import { Link, useParams } from "react-router-dom";
+import { ApiError } from "@/api/client";
+import { useBgpSessions, useCircuitDetail, useCircuitoReservar, useDevices, useOrganizations, useSites } from "@/api/hooks";
+import { StatusBadge } from "@/components/StatusBadge";
+import { PageHeader } from "@/components/PageHeader";
+
+export default function CircuitDetail() {
+  const { id } = useParams();
+  const circuitId = Number(id);
+  const { data, isLoading } = useCircuitDetail(circuitId);
+  const { data: sessions } = useBgpSessions({ circuit_id: circuitId });
+  const { data: devices } = useDevices();
+  const { data: sites } = useSites();
+  const { data: organizations } = useOrganizations();
+  const reservar = useCircuitoReservar();
+  const [erro, setErro] = useState<string | null>(null);
+
+  if (isLoading) return <p aria-busy="true">Carregando…</p>;
+  if (!data) return <p role="alert">Circuito não encontrado.</p>;
+
+  return (
+    <main>
+      <PageHeader
+        titulo={`Circuito ${data.code}`}
+        acoes={<Link to="/circuits">← Voltar</Link>}
+      />
+      <table>
+        <tbody>
+          <tr><th>Organização</th><td>{organizations?.find((o) => o.id === data.organization_id)?.name ?? "—"}</td></tr>
+          <tr><th>Site</th><td>{sites?.find((s) => s.id === data.site_id)?.name ?? "—"}</td></tr>
+          <tr><th>Access → Edge</th><td>{devices?.find((d) => d.id === data.access_device_id)?.name ?? "—"} → {devices?.find((d) => d.id === data.edge_device_id)?.name ?? "—"}</td></tr>
+          <tr><th>Stack</th><td><StatusBadge estado={data.stack} /></td></tr>
+          <tr><th>VLAN</th><td>{data.vlan_mode}</td></tr>
+          <tr><th>MTU</th><td>{data.mtu ?? "—"}</td></tr>
+          <tr><th>BFD</th><td>{data.bfd ? "Sim" : "—"}</td></tr>
+          {(data.stack === "ipv4" || data.stack === "dual") && (
+            <>
+              <tr><th>Pontas IPv4</th><td>{data.ipv4_local ?? "—"} ↔ {data.ipv4_remote ?? "—"}</td></tr>
+            </>
+          )}
+          {(data.stack === "ipv6" || data.stack === "dual") && (
+            <tr><th>Pontas IPv6</th><td>{data.ipv6_local ?? "—"} ↔ {data.ipv6_remote ?? "—"}</td></tr>
+          )}
+          <tr><th>Descrição</th><td>{data.description ?? "—"}</td></tr>
+        </tbody>
+      </table>
+      <button
+        className="primary"
+        type="button"
+        disabled={reservar.isPending}
+        onClick={() => {
+          setErro(null);
+          void reservar.mutateAsync(circuitId).catch((err) => setErro(err instanceof ApiError ? err.message : "Falha ao reservar recursos."));
+        }}
+      >
+        {reservar.isPending ? "Reservando…" : "Reservar recursos"}
+      </button>
+      {reservar.error && <p role="alert">{String(reservar.error.message ?? "Falha ao reservar recursos.")}</p>}
+      {erro && <p role="alert">{erro}</p>}
+      <h2>Sessões BGP</h2>
+      {sessions && sessions.length === 0 && <p>Nenhuma sessão vinculada.</p>}
+      {sessions?.map((s) => (
+        <p key={s.id}>
+          <Link to={`/bgp-sessions/${s.id}`}>{s.afi}</Link> {s.local_address} ↔ {s.remote_address}
+        </p>
+      ))}
+    </main>
+  );
+}
+```
+
+- [ ] **Step 4: `BgpSessions.tsx`**
+
+```tsx
+import { useState } from "react";
+import type { FormEvent } from "react";
+import { Link } from "react-router-dom";
+import { useAuth } from "@/auth/auth-context";
+import { ApiError } from "@/api/client";
+import {
+  useBgpSessionAtualizar,
+  useBgpSessionCriar,
+  useBgpSessions,
+  useCircuits,
+  useDevices,
+  usePolicyProfiles,
+} from "@/api/hooks";
+import { DataTable } from "@/components/DataTable";
+import { FormField } from "@/components/FormField";
+import { StatusBadge } from "@/components/StatusBadge";
+import { PageHeader } from "@/components/PageHeader";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import type { BgpSessionOut } from "@/api/types";
+
+const FORM_VAZIO = {
+  circuit_id: "",
+  device_id: "",
+  afi: "ipv4" as "ipv4" | "ipv6",
+  local_address: "",
+  remote_address: "",
+  source_address: "",
+  asn_local: "",
+  asn_remote: "",
+  description: "",
+  import_profile_id: "",
+  export_profile_id: "",
+  maximum_prefix: "",
+  maximum_prefix_threshold: "",
+  local_preference: "",
+  med: "",
+  prepend: "",
+  keepalive: "",
+  holdtime: "",
+  bfd_enabled: false,
+  graceful_restart: false,
+  shutdown: false,
+  allow_default_route: false,
+};
+
+export default function BgpSessions() {
+  const { podeEscrever } = useAuth();
+  const { data, isLoading } = useBgpSessions();
+  const { data: circuits } = useCircuits();
+  const { data: devices } = useDevices();
+  const { data: profiles } = usePolicyProfiles();
+  const criar = useBgpSessionCriar();
+  const atualizar = useBgpSessionAtualizar();
+  const [form, setForm] = useState(FORM_VAZIO);
+  const [desativando, setDesativando] = useState<BgpSessionOut | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  const num = (v: string) => (v === "" ? null : Number(v));
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    setErro(null);
+    try {
+      await criar.mutateAsync({
+        circuit_id: Number(form.circuit_id),
+        device_id: Number(form.device_id),
+        afi: form.afi,
+        local_address: form.local_address,
+        remote_address: form.remote_address,
+        source_address: form.source_address || null,
+        asn_local: num(form.asn_local),
+        asn_remote: num(form.asn_remote),
+        description: form.description || null,
+        import_profile_id: form.import_profile_id === "" ? null : Number(form.import_profile_id),
+        export_profile_id: form.export_profile_id === "" ? null : Number(form.export_profile_id),
+        maximum_prefix: num(form.maximum_prefix),
+        maximum_prefix_threshold: num(form.maximum_prefix_threshold),
+        local_preference: num(form.local_preference),
+        med: num(form.med),
+        prepend: num(form.prepend),
+        keepalive: num(form.keepalive),
+        holdtime: num(form.holdtime),
+        bfd_enabled: form.bfd_enabled,
+        graceful_restart: form.graceful_restart,
+        shutdown: form.shutdown,
+        allow_default_route: form.allow_default_route,
+      });
+      setForm(FORM_VAZIO);
+    } catch (err) {
+      setErro(err instanceof ApiError ? err.message : "Falha ao cadastrar sessão BGP.");
+    }
+  }
+
+  return (
+    <main>
+      <PageHeader titulo="Sessões BGP" />
+      {podeEscrever && (
+        <form onSubmit={onSubmit} className="grid-form">
+          <FormField label="Circuito *">
+            <select value={form.circuit_id} onChange={(e) => setForm({ ...form, circuit_id: e.target.value })} required>
+              <option value="">—</option>
+              {(circuits ?? []).map((c) => (
+                <option key={c.id} value={c.id}>{c.code}</option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Equipamento *">
+            <select value={form.device_id} onChange={(e) => setForm({ ...form, device_id: e.target.value })} required>
+              <option value="">—</option>
+              {(devices ?? []).map((d) => (
+                <option key={d.id} value={d.id}>{d.name}</option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Família">
+            <select value={form.afi} onChange={(e) => setForm({ ...form, afi: e.target.value as "ipv4" | "ipv6" })}>
+              <option value="ipv4">ipv4</option>
+              <option value="ipv6">ipv6</option>
+            </select>
+          </FormField>
+          <FormField label="Endereço local *">
+            <input value={form.local_address} onChange={(e) => setForm({ ...form, local_address: e.target.value })} required />
+          </FormField>
+          <FormField label="Endereço remoto *">
+            <input value={form.remote_address} onChange={(e) => setForm({ ...form, remote_address: e.target.value })} required />
+          </FormField>
+          <FormField label="Source address">
+            <input value={form.source_address} onChange={(e) => setForm({ ...form, source_address: e.target.value })} />
+          </FormField>
+          <FormField label="ASN local">
+            <input type="number" value={form.asn_local} onChange={(e) => setForm({ ...form, asn_local: e.target.value })} />
+          </FormField>
+          <FormField label="ASN remoto">
+            <input type="number" value={form.asn_remote} onChange={(e) => setForm({ ...form, asn_remote: e.target.value })} />
+          </FormField>
+          <FormField label="Descrição">
+            <input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+          </FormField>
+          <FormField label="Perfil de importação">
+            <select value={form.import_profile_id} onChange={(e) => setForm({ ...form, import_profile_id: e.target.value })}>
+              <option value="">—</option>
+              {(profiles ?? []).map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Perfil de exportação">
+            <select value={form.export_profile_id} onChange={(e) => setForm({ ...form, export_profile_id: e.target.value })}>
+              <option value="">—</option>
+              {(profiles ?? []).map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Maximum-prefix">
+            <input type="number" value={form.maximum_prefix} onChange={(e) => setForm({ ...form, maximum_prefix: e.target.value })} />
+          </FormField>
+          <FormField label="Limiar (%)">
+            <input type="number" value={form.maximum_prefix_threshold} onChange={(e) => setForm({ ...form, maximum_prefix_threshold: e.target.value })} />
+          </FormField>
+          <FormField label="Local-preference">
+            <input type="number" value={form.local_preference} onChange={(e) => setForm({ ...form, local_preference: e.target.value })} />
+          </FormField>
+          <FormField label="MED">
+            <input type="number" value={form.med} onChange={(e) => setForm({ ...form, med: e.target.value })} />
+          </FormField>
+          <FormField label="Prepend">
+            <input type="number" value={form.prepend} onChange={(e) => setForm({ ...form, prepend: e.target.value })} />
+          </FormField>
+          <FormField label="Keepalive">
+            <input type="number" value={form.keepalive} onChange={(e) => setForm({ ...form, keepalive: e.target.value })} />
+          </FormField>
+          <FormField label="Holdtime">
+            <input type="number" value={form.holdtime} onChange={(e) => setForm({ ...form, holdtime: e.target.value })} />
+          </FormField>
+          <FormField label="BFD">
+            <input type="checkbox" checked={form.bfd_enabled} onChange={(e) => setForm({ ...form, bfd_enabled: e.target.checked })} />
+          </FormField>
+          <FormField label="Graceful restart">
+            <input type="checkbox" checked={form.graceful_restart} onChange={(e) => setForm({ ...form, graceful_restart: e.target.checked })} />
+          </FormField>
+          <FormField label="Shutdown">
+            <input type="checkbox" checked={form.shutdown} onChange={(e) => setForm({ ...form, shutdown: e.target.checked })} />
+          </FormField>
+          <FormField label="Default route">
+            <input type="checkbox" checked={form.allow_default_route} onChange={(e) => setForm({ ...form, allow_default_route: e.target.checked })} />
+          </FormField>
+          <button className="primary" type="submit" disabled={criar.isPending}>
+            Cadastrar
+          </button>
+        </form>
+      )}
+      {erro && <p role="alert">{erro}</p>}
+      <DataTable<BgpSessionOut>
+        colunas={[
+          { key: "circuit", title: "Circuito", render: (s) => circuits?.find((c) => c.id === s.circuit_id)?.code ?? "—" },
+          { key: "device", title: "Equipamento", render: (s) => devices?.find((d) => d.id === s.device_id)?.name ?? "—" },
+          { key: "afi", title: "Família", render: (s) => <StatusBadge estado={s.afi} /> },
+          { key: "addresses", title: "Endereços", render: (s) => `${s.local_address} ↔ ${s.remote_address}` },
+          { key: "asns", title: "ASNs", render: (s) => `${s.asn_local ?? "—"} ↔ ${s.asn_remote ?? "—"}` },
+          { key: "shutdown", title: "Situação", render: (s) => <StatusBadge estado={s.shutdown ? "inativo" : "ativo"} /> },
+        ]}
+        linhas={data ?? []}
+        carregando={isLoading}
+        acoes={(s) => (
+          <>
+            <Link to={`/bgp-sessions/${s.id}`}>Detalhe</Link>{" "}
+            {podeEscrever && s.admin_status && (
+              <button type="button" onClick={() => setDesativando(s)}>
+                Desativar
+              </button>
+            )}
+          </>
+        )}
+      />
+      <ConfirmDialog
+        aberto={desativando !== null}
+        titulo={`Desativar sessão ${desativando?.id ?? ""}?`}
+        mensagem="A sessão fica indisponível para novas configurações; o registro permanece."
+        onConfirmar={() => {
+          if (desativando) void atualizar.mutateAsync({ id: desativando.id, admin_status: false }).then(() => setDesativando(null));
+        }}
+        onCancelar={() => setDesativando(null)}
+        confirmando={atualizar.isPending}
+      />
+    </main>
+  );
+}
+```
+
+- [ ] **Step 5: `BgpSessionDetail.tsx`**
+
+```tsx
+import { useState } from "react";
+import { useParams } from "react-router-dom";
+import { ApiError } from "@/api/client";
+import { useBgpSession, useCommunities, useSessionCommunities, useSessionCommunity, useSessionSenha } from "@/api/hooks";
+import { StatusBadge } from "@/components/StatusBadge";
+import { FormField } from "@/components/FormField";
+import { PageHeader } from "@/components/PageHeader";
+
+export default function BgpSessionDetail() {
+  const { id } = useParams();
+  const sessionId = Number(id);
+  const { data, isLoading } = useBgpSession(sessionId);
+  const { data: comunidades } = useSessionCommunities(sessionId);
+  const { data: catalogo } = useCommunities();
+  const assoc = useSessionCommunity();
+  const senha = useSessionSenha();
+  const [communityId, setCommunityId] = useState("");
+  const [senhaNova, setSenhaNova] = useState("");
+  const [erro, setErro] = useState<string | null>(null);
+
+  if (isLoading) return <p aria-busy="true">Carregando…</p>;
+  if (!data) return <p role="alert">Sessão não encontrada.</p>;
+
+  return (
+    <main>
+      <PageHeader titulo={`Sessão BGP #${data.id}`} />
+      <table>
+        <tbody>
+          <tr><th>Família</th><td><StatusBadge estado={data.afi} /></td></tr>
+          <tr><th>Endereços</th><td>{data.local_address} ↔ {data.remote_address}</td></tr>
+          <tr><th>ASNs</th><td>{data.asn_local ?? "—"} ↔ {data.asn_remote ?? "—"}</td></tr>
+          <tr><th>Maximum-prefix</th><td>{data.maximum_prefix ?? "—"} ({data.maximum_prefix_threshold ?? "—"}%)</td></tr>
+          <tr><th>BFD</th><td>{data.bfd_enabled ? "Sim" : "—"}</td></tr>
+          <tr><th>Descrição</th><td>{data.description ?? "—"}</td></tr>
+          <tr><th>Shutdown</th><td>{data.shutdown ? "Sim" : "Não"}</td></tr>
+        </tbody>
+      </table>
+      <h2>Communities</h2>
+      {comunidades?.map((c) => (
+        <p key={c.id}>
+          {c.name}{" "}
+          <button type="button" onClick={() => void assoc.mutate({ sessionId, communityId: c.id, associa: false })}>
+            Remover
+          </button>
+        </p>
+      ))}
+      <form
+        className="form-inline"
+        onSubmit={(e) => {
+          e.preventDefault();
+          setErro(null);
+          if (communityId === "") return;
+          void assoc
+            .mutateAsync({ sessionId, communityId: Number(communityId), associa: true })
+            .then(() => setCommunityId(""))
+            .catch((err) => setErro(err instanceof ApiError ? err.message : "Falha ao associar community."));
+        }}
+      >
+        <FormField label="Community">
+          <select value={communityId} onChange={(e) => setCommunityId(e.target.value)}>
+            <option value="">—</option>
+            {(catalogo ?? []).map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        </FormField>
+        <button className="primary" type="submit" disabled={assoc.isPending}>
+          Associar
+        </button>
+      </form>
+      {erro && <p role="alert">{erro}</p>}
+      {assoc.error && <p role="alert">{String(assoc.error.message ?? "Falha ao associar community.")}</p>}
+      <h2>Senha MD5</h2>
+      <p>Situação: {data.has_password ? "Sim" : "Não"}</p>
+      <form
+        className="form-inline"
+        onSubmit={(e) => {
+          e.preventDefault();
+          setErro(null);
+          void senha.mutateAsync({ sessionId, password: senhaNova }).then(() => setSenhaNova("")).catch((err) => setErro(err instanceof ApiError ? err.message : "Falha ao definir senha."));
+        }}
+      >
+        <FormField label="Senha MD5">
+          <input
+            type="password"
+            value={senhaNova}
+            onChange={(e) => setSenhaNova(e.target.value)}
+            autoComplete="new-password"
+            required
+          />
+        </FormField>
+        <button className="primary" type="submit" disabled={senha.isPending}>
+          Definir senha
+        </button>
+      </form>
+    </main>
+  );
+}
+```
+
+- [ ] **Step 6: testes `Circuits.test.tsx` e `BgpSessions.test.tsx`**
+
+`web/src/pages/Circuits.test.tsx`:
+
+```tsx
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import Circuits from "./Circuits";
+import { AuthProvider } from "@/auth/auth-context";
+
+const ME = { id: 1, username: "boss", role: "administrador", is_active: true, last_login_at: null, created_at: "" };
+const org = { id: 1, name: "Cliente A", legal_name: null, kind: "downstream", asn: 64512, irr_as_set: null, notes: null, admin_status: true };
+const site = { id: 1, name: "SPO", city: "São Paulo", uf: "SP", p2p_ipv4_block: null, p2p_ipv6_base: null, admin_status: true };
+const dev1 = { id: 1, name: "sw-01", management_address: "10.9.0.1", site_id: 1, model: null, family: "S6730", role: "acesso", asn: null, tags: [], ssh_port: 22, vendor: "Huawei", vrp_version: null, comm_status: "ok", admin_status: true, last_collected_at: null };
+const dev2 = { id: 2, name: "ne-01", management_address: "10.9.0.2", site_id: 1, model: null, family: "NE8000", role: "edge", asn: 64600, tags: [], ssh_port: 22, vendor: "Huawei", vrp_version: null, comm_status: "ok", admin_status: true, last_collected_at: null };
+const circ = { id: 1, code: "CIRC-01", organization_id: 1, site_id: 1, access_device_id: 1, access_port: "GE0/0/1", edge_device_id: 2, backup_edge_device_id: null, stack: "dual", vlan_mode: "unica", qinq: false, vrf: null, mtu: 1500, bandwidth: "1G", bfd: true, p2p_v4_len: 31, description: null, notes: null, edge_trunk: null, admin_status: true };
+
+beforeAll(() => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        const body = JSON.parse(String(init.body));
+        return new Response(JSON.stringify({ id: 2, ...body, admin_status: true }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url === "/api/v1/circuits") return new Response(JSON.stringify([circ]), { status: 200, headers: { "Content-Type": "application/json" } });
+      if (url === "/api/v1/organizations") return new Response(JSON.stringify([org]), { status: 200, headers: { "Content-Type": "application/json" } });
+      if (url === "/api/v1/sites") return new Response(JSON.stringify([site]), { status: 200, headers: { "Content-Type": "application/json" } });
+      if (url === "/api/v1/devices") return new Response(JSON.stringify([dev1, dev2]), { status: 200, headers: { "Content-Type": "application/json" } });
+      if (url === "/api/v1/auth/me") return new Response(JSON.stringify(ME), { status: 200, headers: { "Content-Type": "application/json" } });
+      return new Response("null", { status: 404 });
+    }),
+  );
+});
+
+function renderCircuits() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={["/circuits"]}>
+        <AuthProvider>
+          <Routes>
+            <Route path="/circuits" element={<Circuits />} />
+            <Route path="/circuits/:id" element={<div>detail-page</div>} />
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+describe("Circuits", () => {
+  it("lista circuitos e cria novo pela API", async () => {
+    renderCircuits();
+    expect(await screen.findByText("CIRC-01")).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Código *"), "CIRC-02");
+    await userEvent.selectOptions(screen.getByLabelText("Organização *"), "1");
+    await userEvent.selectOptions(screen.getByLabelText("Site *"), "1");
+    await userEvent.selectOptions(screen.getByLabelText("Equipamento de acesso *"), "1");
+    await userEvent.type(screen.getByLabelText("Porta de acesso *"), "GE0/0/2");
+    await userEvent.selectOptions(screen.getByLabelText("Edge *"), "2");
+    await userEvent.click(screen.getByRole("button", { name: "Cadastrar" }));
+    await waitFor(() => {
+      const chamadas = vi.mocked(fetch).mock.calls as unknown as [string, RequestInit][];
+      expect(chamadas.some((c) => c[1]?.method === "POST" && String(c[1]?.body).includes("CIRC-02"))).toBe(true);
+    });
+  });
+
+  it("permite navegar para o detalhe pelo código", async () => {
+    renderCircuits();
+    await userEvent.click(await screen.findByRole("link", { name: "CIRC-01" }));
+    expect(await screen.findByText("detail-page")).toBeInTheDocument();
+  });
+});
+```
+
+`web/src/pages/BgpSessions.test.tsx`:
+
+```tsx
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import BgpSessions from "./BgpSessions";
+import BgpSessionDetail from "./BgpSessionDetail";
+import { AuthProvider } from "@/auth/auth-context";
+
+const ME = { id: 1, username: "boss", role: "administrador", is_active: true, last_login_at: null, created_at: "" };
+const circ = { id: 1, code: "CIRC-01", organization_id: 1, site_id: 1, access_device_id: 1, access_port: "GE0/0/1", edge_device_id: 2, backup_edge_device_id: null, stack: "dual", vlan_mode: "unica", qinq: false, vrf: null, mtu: 1500, bandwidth: "1G", bfd: true, p2p_v4_len: 31, description: null, notes: null, edge_trunk: null, admin_status: true };
+const dev = { id: 2, name: "ne-01", management_address: "10.9.0.2", site_id: 1, model: null, family: "NE8000", role: "edge", asn: 64600, tags: [], ssh_port: 22, vendor: "Huawei", vrp_version: null, comm_status: "ok", admin_status: true, last_collected_at: null };
+const catalogo = [{ id: 1, name: "blackhole", notes: null }];
+let sessao: Record<string, unknown>;
+let associadas: { id: number; name: string; notes: null }[];
+let hasPassword: boolean;
+
+function opcoes() {
+  return {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  };
+}
+
+beforeAll(() => {
+  sessao = {
+    id: 1, circuit_id: 1, device_id: 2, afi: "ipv4", local_address: "100.64.40.1", remote_address: "100.64.40.2",
+    source_address: null, asn_local: 64600, asn_remote: 64512, description: null, import_profile_id: null,
+    export_profile_id: null, maximum_prefix: 100, maximum_prefix_threshold: 80, local_preference: 100,
+    med: null, prepend: null, keepalive: 30, holdtime: 90, bfd_enabled: true, graceful_restart: false,
+    shutdown: false, allow_default_route: false, has_password: false, admin_status: true,
+  };
+  associadas = [];
+  hasPassword = false;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "POST" && url === "/api/v1/bgp-sessions/1/communities") {
+        const body = JSON.parse(String(init?.body));
+        const com = catalogo.find((c) => c.id === body.community_id);
+        if (com) associadas.push({ ...com });
+        return new Response(JSON.stringify({ session_id: 1, community_id: body.community_id }), opcoes());
+      }
+      if (method === "DELETE" && url === "/api/v1/bgp-sessions/1/communities/1") {
+        associadas = [];
+        return new Response(null, { status: 204 });
+      }
+      if (method === "POST" && url === "/api/v1/bgp-sessions/1/password") {
+        hasPassword = true;
+        return new Response(JSON.stringify({ ...sessao, has_password: true }), opcoes());
+      }
+      if (method === "POST" && url === "/api/v1/bgp-sessions") {
+        const body = JSON.parse(String(init?.body));
+        return new Response(JSON.stringify({ id: 2, ...body, has_password: false, admin_status: true }), { status: 201, headers: { "Content-Type": "application/json" } });
+      }
+      if (url === "/api/v1/bgp-sessions/1/communities") return new Response(JSON.stringify(associadas), opcoes());
+      if (url === "/api/v1/bgp-sessions/1" && method === "GET") return new Response(JSON.stringify({ ...sessao, has_password: hasPassword }), opcoes());
+      if (url === "/api/v1/bgp-sessions") return new Response(JSON.stringify([{ ...sessao, has_password: hasPassword }]), opcoes());
+      if (url === "/api/v1/circuits") return new Response(JSON.stringify([circ]), opcoes());
+      if (url === "/api/v1/devices") return new Response(JSON.stringify([dev]), opcoes());
+      if (url === "/api/v1/policy-profiles") return new Response(JSON.stringify([]), opcoes());
+      if (url === "/api/v1/communities") return new Response(JSON.stringify(catalogo), opcoes());
+      if (url === "/api/v1/auth/me") return new Response(JSON.stringify(ME), opcoes());
+      return new Response("null", { status: 404 });
+    }),
+  );
+});
+
+function renderList() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={["/bgp-sessions"]}>
+        <AuthProvider>
+          <Routes>
+            <Route path="/bgp-sessions" element={<BgpSessions />} />
+            <Route path="/bgp-sessions/:id" element={<BgpSessionDetail />} />
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+function renderDetail() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={["/bgp-sessions/1"]}>
+        <AuthProvider>
+          <Routes>
+            <Route path="/bgp-sessions/:id" element={<BgpSessionDetail />} />
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+describe("BgpSessions", () => {
+  it("lista sessões e cria nova pela API", async () => {
+    renderList();
+    expect(await screen.findByText("100.64.40.1 ↔ 100.64.40.2")).toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByLabelText("Circuito *"), "1");
+    await userEvent.selectOptions(screen.getByLabelText("Equipamento *"), "2");
+    await userEvent.type(screen.getByLabelText("Endereço local *"), "100.64.42.1");
+    await userEvent.type(screen.getByLabelText("Endereço remoto *"), "100.64.42.2");
+    await userEvent.click(screen.getByRole("button", { name: "Cadastrar" }));
+    await waitFor(() => {
+      const chamadas = vi.mocked(fetch).mock.calls as unknown as [string, RequestInit][];
+      expect(chamadas.some((c) => c[1]?.method === "POST" && String(c[1]?.body).includes("100.64.42.1"))).toBe(true);
+    });
+  });
+
+  it("detalhe associa e remove community", async () => {
+    renderDetail();
+    await screen.findByText(/Sessão BGP #1/);
+    await userEvent.selectOptions(screen.getByLabelText("Community"), "1");
+    await userEvent.click(screen.getByRole("button", { name: "Associar" }));
+    // "blackhole" aparece também no <option> do catálogo — assertar pelo botão da linha (sem colisão)
+    expect(await screen.findByRole("button", { name: "Remover" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Remover" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Remover" })).not.toBeInTheDocument());
+  });
+
+  it("define senha MD5 e mostra que há senha", async () => {
+    renderDetail();
+    await screen.findByText(/Sessão BGP #1/);
+    await userEvent.type(screen.getByLabelText("Senha MD5"), "segredo");
+    await userEvent.click(screen.getByRole("button", { name: "Definir senha" }));
+    await waitFor(() => {
+      const chamadas = vi.mocked(fetch).mock.calls as unknown as [string, RequestInit][];
+      expect(chamadas.some((c) => c[0] === "/api/v1/bgp-sessions/1/password" && c[1]?.method === "POST")).toBe(true);
+    });
+  });
+});
+```
+
+Run (na raiz do repositório):
+
+```bash
+cd web && npx vitest run src/pages/Circuits.test.tsx src/pages/BgpSessions.test.tsx
+cd web && npm run build
+cd web && npx eslint src
+```
+
+Expected: 5 testes PASS, build sem erro, lint limpo.
+
+- [ ] **Step 7: rotas em `App.tsx`** — adicionar, junto às existentes:
+
+```tsx
+import CircuitDetail from "@/pages/CircuitDetail";
+import Circuits from "@/pages/Circuits";
+import BgpSessionDetail from "@/pages/BgpSessionDetail";
+import BgpSessions from "@/pages/BgpSessions";
+```
+
+```tsx
+<Route
+  path="/circuits"
+  element={
+    <RequireAuth>
+      <Circuits />
+    </RequireAuth>
+  }
+/>
+<Route
+  path="/circuits/:id"
+  element={
+    <RequireAuth>
+      <CircuitDetail />
+    </RequireAuth>
+  }
+/>
+<Route
+  path="/bgp-sessions"
+  element={
+    <RequireAuth>
+      <BgpSessions />
+    </RequireAuth>
+  }
+/>
+<Route
+  path="/bgp-sessions/:id"
+  element={
+    <RequireAuth>
+      <BgpSessionDetail />
+    </RequireAuth>
+  }
+/>
+```
+
+- [ ] **Step 8: commit** (backend e web em commits separados)
+
+```bash
+git add src/gerenet/domain/services/bgp_sessions.py src/gerenet/api/routers/bgp_sessions.py tests/api/test_communities_api.py tests/api/conftest.py
+git commit -m "feat(api): GET /bgp-sessions/{id}/communities para leitura das associacoes
+
+O mesclado carrega também a infra autouse spa_sem_build: sem ela o gate
+backend depende do web/dist existir na máquina (catch-all → 404 no lugar
+do 405 natural), quebrando test_lista_communities_read_only do C1.
+
+Co-Authored-By: Claude Code <noreply@anthropic.com>"
+```
 
 ```bash
 git add web/src/pages web/src/App.tsx web/src/api/hooks.ts
@@ -2433,13 +4279,431 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 - Create: `web/src/pages/PolicyProfiles.tsx`, `Communities.tsx`, `PrefixAuthorizations.tsx`, `AuditEvents.tsx`
 - Modify: `web/src/App.tsx`, `web/src/api/hooks.ts`
 
-**Interfaces:** Predecessores: Task 7 (padrão). Prefix-auth tem POST/PATCH; policy/communities/audit são GET-only (read-only — frente `podeEscrever` desabilita botões quando visualizador).
+**Interfaces:** Predecessores: Task 7 (padrão) e Task 8 (`usePolicyProfiles`/`useCommunities` já existem — NÃO duplicar). Prefix-auth tem POST/PATCH `{"admin_status": false}` (Literal False — sem reativação pela API; desativar + criar para mudar, ruling 2 do backend); policy/communities/audit são GET-only. Filtro de audit-events: `tipo`, `objeto`, `objeto_id` (não existe filtro por ator — o ator é coluna própria).
 
-- [ ] **Step 1: hooks** de `prefix-authorizations` (lista + criar + ativar/desativar) e `audit-events` (com filtros `tipo`, `objeto`, `objeto_id`) e `policy-profiles`, `communities` (listas).
-- [ ] **Step 2: `PolicyProfiles.tsx` e `Communities.tsx`** — tabela read-only com filtro direction (policy-profiles) / janela de detalhe (communities: name, notes).
-- [ ] **Step 3: `PrefixAuthorizations.tsx`** — form: `organization_id`, `family` (select v4/v6), `prefix`, `notes`; desativar com ConfirmDialog; `origin` mostrado (manual).
-- [ ] **Step 4: `AuditEvents.tsx`** — filtros (tipo/ator/objeto) e tabela `details` expansível (colapsável `<details>`).
-- [ ] **Step 5: testes + build + lint + commit.**
+- [ ] **Step 1: hooks no `hooks.ts`** (append; os de lista de policy/communities vieram da Task 8)
+
+```ts
+export const usePrefixAuthorizations = (filtros?: { organization_id?: number; family?: string; include_disabled?: boolean }) =>
+  useQuery({
+    queryKey: ["prefix-authorizations", filtros],
+    queryFn: () => {
+      const qs = new URLSearchParams();
+      if (filtros?.organization_id) qs.set("organization_id", String(filtros.organization_id));
+      if (filtros?.family) qs.set("family", filtros.family);
+      if (filtros?.include_disabled) qs.set("include_disabled", "true");
+      const suf = qs.size > 0 ? `?${qs.toString()}` : "";
+      return apiFetch<PrefixAuthorizationOut[]>(`/api/v1/prefix-authorizations${suf}`);
+    },
+  });
+export type PrefixAuthorizationCreateIn = {
+  organization_id: number;
+  family: "ipv4" | "ipv6";
+  prefix: string;
+  notes?: string | null;
+};
+export const usePrefixAuthorizationCriar = () =>
+  useCriar<PrefixAuthorizationCreateIn, PrefixAuthorizationOut>("prefix-authorizations", "/api/v1/prefix-authorizations");
+export const usePrefixAuthorizationDesativar = () =>
+  useAtualizar<{ admin_status?: boolean }, PrefixAuthorizationOut>("prefix-authorizations", "/api/v1/prefix-authorizations");
+
+export const useAuditEvents = (filtros?: { tipo?: string; objeto?: string; objeto_id?: number }) =>
+  useQuery({
+    queryKey: ["audit-events", filtros],
+    queryFn: () => {
+      const qs = new URLSearchParams();
+      if (filtros?.tipo) qs.set("tipo", filtros.tipo);
+      if (filtros?.objeto) qs.set("objeto", filtros.objeto);
+      if (filtros?.objeto_id) qs.set("objeto_id", String(filtros.objeto_id));
+      const suf = qs.size > 0 ? `?${qs.toString()}` : "";
+      return apiFetch<AuditEventOut[]>(`/api/v1/audit-events${suf}`);
+    },
+  });
+```
+
+- [ ] **Step 2: `PolicyProfiles.tsx`** — read-only, com filtro de direção:
+
+```tsx
+import { useState } from "react";
+import { usePolicyProfiles } from "@/api/hooks";
+import { DataTable } from "@/components/DataTable";
+import { StatusBadge } from "@/components/StatusBadge";
+import { PageHeader } from "@/components/PageHeader";
+import { MonoCode } from "@/components/MonoCode";
+import type { PolicyProfileOut } from "@/api/types";
+
+export default function PolicyProfiles() {
+  const [direcao, setDirecao] = useState("");
+  const { data, isLoading } = usePolicyProfiles(direcao ? { direction: direcao } : {});
+  return (
+    <main>
+      <PageHeader
+        titulo="Perfis de política"
+        acoes={
+          <select value={direcao} onChange={(e) => setDirecao(e.target.value)} aria-label="Direção">
+            <option value="">todas</option>
+            <option value="import">import</option>
+            <option value="export">export</option>
+          </select>
+        }
+      />
+      <DataTable<PolicyProfileOut>
+        colunas={[
+          { key: "name", title: "Nome" },
+          { key: "label", title: "Produto" },
+          { key: "direction", title: "Direção", render: (p) => <StatusBadge estado={p.direction} /> },
+          { key: "kind", title: "Tipo" },
+          { key: "prefixes", title: "Prefixos", render: (p) => (p.prefixes && p.prefixes.length > 0 ? <MonoCode texto={p.prefixes.join("\n")} /> : "—") },
+          { key: "notes", title: "Observações", render: (p) => p.notes ?? "—" },
+        ]}
+        linhas={data ?? []}
+        carregando={isLoading}
+      />
+    </main>
+  );
+}
+```
+
+- [ ] **Step 3: `Communities.tsx`** — read-only, com janela de detalhe (name, notes):
+
+```tsx
+import { useState } from "react";
+import { useCommunities } from "@/api/hooks";
+import { DataTable } from "@/components/DataTable";
+import { PageHeader } from "@/components/PageHeader";
+import type { CommunityOut } from "@/api/types";
+
+export default function Communities() {
+  const { data, isLoading } = useCommunities();
+  const [detalhe, setDetalhe] = useState<CommunityOut | null>(null);
+  return (
+    <main>
+      <PageHeader titulo="Communities" />
+      <DataTable<CommunityOut>
+        colunas={[
+          { key: "name", title: "Nome" },
+          { key: "notes", title: "Observações", render: (c) => c.notes ?? "—" },
+        ]}
+        linhas={data ?? []}
+        carregando={isLoading}
+        acoes={(c) => (
+          <button type="button" onClick={() => setDetalhe(c)}>
+            Detalhar
+          </button>
+        )}
+      />
+      {detalhe && (
+        <div role="dialog" aria-modal="true" aria-label={`Dados de ${detalhe.name}`}>
+          <h2>{detalhe.name}</h2>
+          <p>{detalhe.notes ?? "Sem observações."}</p>
+          <button onClick={() => setDetalhe(null)}>Fechar</button>
+        </div>
+      )}
+    </main>
+  );
+}
+```
+
+- [ ] **Step 4: `PrefixAuthorizations.tsx`** — form + desativar (origin exibido, só leitura):
+
+```tsx
+import { useState } from "react";
+import type { FormEvent } from "react";
+import { useAuth } from "@/auth/auth-context";
+import { ApiError } from "@/api/client";
+import {
+  useOrganizations,
+  usePrefixAuthorizationCriar,
+  usePrefixAuthorizationDesativar,
+  usePrefixAuthorizations,
+} from "@/api/hooks";
+import { DataTable } from "@/components/DataTable";
+import { FormField } from "@/components/FormField";
+import { PageHeader } from "@/components/PageHeader";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import type { PrefixAuthorizationOut } from "@/api/types";
+
+const FORM_VAZIO = { organization_id: "", family: "ipv4" as "ipv4" | "ipv6", prefix: "", notes: "" };
+
+export default function PrefixAuthorizations() {
+  const { podeEscrever } = useAuth();
+  const { data, isLoading } = usePrefixAuthorizations();
+  const { data: organizations } = useOrganizations();
+  const criar = usePrefixAuthorizationCriar();
+  const desativar = usePrefixAuthorizationDesativar();
+  const [form, setForm] = useState(FORM_VAZIO);
+  const [desativando, setDesativando] = useState<PrefixAuthorizationOut | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    setErro(null);
+    try {
+      await criar.mutateAsync({
+        organization_id: Number(form.organization_id),
+        family: form.family,
+        prefix: form.prefix,
+        notes: form.notes || null,
+      });
+      setForm(FORM_VAZIO);
+    } catch (err) {
+      setErro(err instanceof ApiError ? err.message : "Falha ao cadastrar autorização.");
+    }
+  }
+
+  return (
+    <main>
+      <PageHeader titulo="Prefixos autorizados" />
+      {podeEscrever && (
+        <form onSubmit={onSubmit} className="grid-form">
+          <FormField label="Organização *">
+            <select value={form.organization_id} onChange={(e) => setForm({ ...form, organization_id: e.target.value })} required>
+              <option value="">—</option>
+              {(organizations ?? []).map((o) => (
+                <option key={o.id} value={o.id}>{o.name}</option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Família">
+            <select value={form.family} onChange={(e) => setForm({ ...form, family: e.target.value as "ipv4" | "ipv6" })}>
+              <option value="ipv4">ipv4</option>
+              <option value="ipv6">ipv6</option>
+            </select>
+          </FormField>
+          <FormField label="Prefixo *">
+            <input value={form.prefix} onChange={(e) => setForm({ ...form, prefix: e.target.value })} required />
+          </FormField>
+          <FormField label="Observações">
+            <input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+          </FormField>
+          <button className="primary" type="submit" disabled={criar.isPending}>
+            Cadastrar
+          </button>
+        </form>
+      )}
+      {erro && <p role="alert">{erro}</p>}
+      <DataTable<PrefixAuthorizationOut>
+        colunas={[
+          { key: "organization", title: "Organização", render: (z) => organizations?.find((o) => o.id === z.organization_id)?.name ?? "—" },
+          { key: "family", title: "Família" },
+          { key: "prefix", title: "Prefixo" },
+          { key: "origin", title: "Origem" },
+          { key: "notes", title: "Observações", render: (z) => z.notes ?? "—" },
+          { key: "admin_status", title: "Situação", render: (z) => (z.admin_status ? "ativo" : "inativo") },
+        ]}
+        linhas={data ?? []}
+        carregando={isLoading}
+        acoes={(z) =>
+          podeEscrever && z.admin_status ? (
+            <button type="button" onClick={() => setDesativando(z)}>
+              Desativar
+            </button>
+          ) : null
+        }
+      />
+      <ConfirmDialog
+        aberto={desativando !== null}
+        titulo={`Desativar ${desativando?.prefix ?? ""}?`}
+        mensagem="Para alterar um prefixo autorizado, desative e cadastre um novo."
+        onConfirmar={() => {
+          if (desativando) void desativar.mutateAsync({ id: desativando.id, admin_status: false }).then(() => setDesativando(null));
+        }}
+        onCancelar={() => setDesativando(null)}
+        confirmando={desativar.isPending}
+      />
+    </main>
+  );
+}
+```
+
+- [ ] **Step 5: `AuditEvents.tsx`** — filtros tipo/objeto, `details` expansível:
+
+```tsx
+import { useState } from "react";
+import { useAuditEvents } from "@/api/hooks";
+import { DataTable } from "@/components/DataTable";
+import { TimeAgo } from "@/components/TimeAgo";
+import { PageHeader } from "@/components/PageHeader";
+import type { AuditEventOut } from "@/api/types";
+
+export default function AuditEvents() {
+  const [tipo, setTipo] = useState("");
+  const [objeto, setObjeto] = useState("");
+  const { data, isLoading } = useAuditEvents({
+    ...(tipo ? { tipo } : {}),
+    ...(objeto ? { objeto } : {}),
+  });
+  return (
+    <main>
+      <PageHeader titulo="Auditoria" />
+      <form className="form-inline">
+        <label className="field">
+          <span>Tipo</span>
+          <input value={tipo} onChange={(e) => setTipo(e.target.value)} />
+        </label>
+        <label className="field">
+          <span>Objeto</span>
+          <input value={objeto} onChange={(e) => setObjeto(e.target.value)} />
+        </label>
+      </form>
+      <DataTable<AuditEventOut>
+        colunas={[
+          { key: "created_at", title: "Quando", render: (e) => <TimeAgo iso={e.created_at} /> },
+          { key: "type", title: "Ação" },
+          { key: "actor", title: "Autor" },
+          {
+            key: "details",
+            title: "Detalhes",
+            render: (e) => (
+              <details>
+                <summary>Exibir</summary>
+                <pre>{JSON.stringify(e.details, null, 2)}</pre>
+              </details>
+            ),
+          },
+        ]}
+        linhas={data ?? []}
+        carregando={isLoading}
+      />
+    </main>
+  );
+}
+```
+
+- [ ] **Step 6: testes + rotas + build + lint**
+
+`web/src/pages/PrefixAuthorizations.test.tsx`:
+
+```tsx
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import PrefixAuthorizations from "./PrefixAuthorizations";
+import { AuthProvider } from "@/auth/auth-context";
+
+const ME = { id: 1, username: "boss", role: "administrador", is_active: true, last_login_at: null, created_at: "" };
+const org = { id: 1, name: "Cliente A", legal_name: null, kind: "downstream", asn: 64512, irr_as_set: null, notes: null, admin_status: true };
+const autorizacao = { id: 1, organization_id: 1, family: "ipv4", prefix: "200.200.1.0/24", origin: "manual", notes: null, admin_status: true };
+
+beforeAll(() => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+      if (init?.method === "POST") return json({ id: 2, ...JSON.parse(String(init.body)), origin: "manual", admin_status: true }, 201);
+      if (url === "/api/v1/prefix-authorizations/1" && init?.method === "PATCH") return json({ ...autorizacao, admin_status: false });
+      if (url === "/api/v1/prefix-authorizations") return json([autorizacao]);
+      if (url === "/api/v1/organizations") return json([org]);
+      if (url === "/api/v1/auth/me") return json(ME);
+      return new Response("null", { status: 404 });
+    }),
+  );
+});
+
+function renderPage() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <AuthProvider>
+        <PrefixAuthorizations />
+      </AuthProvider>
+    </QueryClientProvider>,
+  );
+}
+
+describe("PrefixAuthorizations", () => {
+  it("lista e cadastra autorização pela API", async () => {
+    renderPage();
+    expect(await screen.findByText("200.200.1.0/24")).toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByLabelText("Organização *"), "1");
+    await userEvent.type(screen.getByLabelText("Prefixo *"), "200.200.2.0/24");
+    await userEvent.click(screen.getByRole("button", { name: "Cadastrar" }));
+    await waitFor(() => {
+      const chamadas = vi.mocked(fetch).mock.calls as unknown as [string, RequestInit][];
+      expect(chamadas.some((c) => c[1]?.method === "POST" && String(c[1]?.body).includes("200.200.2.0/24"))).toBe(true);
+    });
+  });
+
+  it("desativa com confirmação", async () => {
+    renderPage();
+    await screen.findByText("200.200.1.0/24");
+    await userEvent.click(screen.getByRole("button", { name: "Desativar" }));
+    await userEvent.click(screen.getByRole("button", { name: "Confirmar" }));
+    await waitFor(() => {
+      const chamadas = vi.mocked(fetch).mock.calls as unknown as [string, RequestInit][];
+      const patch = chamadas.find((c) => c[0] === "/api/v1/prefix-authorizations/1" && c[1]?.method === "PATCH");
+      expect(patch).toBeTruthy();
+      expect(JSON.parse(String(patch![1].body))).toEqual({ admin_status: false });
+    });
+  });
+});
+```
+
+`web/src/pages/AuditEvents.test.tsx`:
+
+```tsx
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import AuditEvents from "./AuditEvents";
+
+const EVENTOS = [
+  { id: 1, type: "device.create", actor: "cli", details: { objeto: "device", objeto_id: 1 }, created_at: "2026-09-04T12:00:00Z" },
+];
+
+beforeAll(() => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => {
+      return new Response(JSON.stringify(EVENTOS), { status: 200, headers: { "Content-Type": "application/json" } });
+    }),
+  );
+});
+
+function renderPage() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <AuditEvents />
+    </QueryClientProvider>,
+  );
+}
+
+describe("AuditEvents", () => {
+  it("lista eventos e filtra por tipo", async () => {
+    renderPage();
+    expect(await screen.findByText("device.create")).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Tipo"), "device.");
+    await waitFor(() => {
+      const chamadas = vi.mocked(fetch).mock.calls;
+      expect(chamadas.some((c) => String(c[0]).includes("tipo=device."))).toBe(true);
+    });
+  });
+
+  it("expande os detalhes do evento", async () => {
+    renderPage();
+    await userEvent.click(await screen.findByText("Exibir"));
+    expect(screen.getByText(/"objeto": "device"/)).toBeTruthy();
+  });
+});
+```
+
+Run: `cd web && npx vitest run src/pages/PrefixAuthorizations.test.tsx src/pages/AuditEvents.test.tsx` — Expected: 4 PASS.
+
+Rotas em `App.tsx` (adicionar às existentes):
+
+```tsx
+<Route path="/policy-profiles" element={<RequireAuth><PolicyProfiles /></RequireAuth>} />
+<Route path="/communities" element={<RequireAuth><Communities /></RequireAuth>} />
+<Route path="/prefix-authorizations" element={<RequireAuth><PrefixAuthorizations /></RequireAuth>} />
+<Route path="/audit-events" element={<RequireAuth><AuditEvents /></RequireAuth>} />
+```
+
+Run: `cd web && npm run build` e `cd web && npx eslint src` — Expected: sem erros.
+
+- [ ] **Step 7: commit**
 
 ```bash
 git add web/src/pages web/src/App.tsx web/src/api/hooks.ts
@@ -2458,19 +4722,39 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 - Create: `web/src/pages/Reconcile.test.tsx`, `Snapshots.test.tsx`
 
 **Interfaces:**
-- Consumes: hooks (Task 9). Específicos `useDesiredConfig(deviceId)`, `useReconcile({device_id|snapshot_id})`, `useSnapshots(deviceId)`, `useJobPoll`, `useJobs({filtros})`.
-- Produces: as 4 telas de inspeção técnica (snapshot JSON com colapso por chave top-level; desired-config em acordeão por bloco + MonoCode + botão copiar; reconcile com filtro por severidade e aviso de snapshot ausente; jobs com filtros + detalhe com timing e snapshot).
+- Consumes: hooks (Tasks 6–9). Específicos desta task: `useDevices` (Task 7), `useJobPoll` (Task 6), e os hooks definidos no Step 1 (`useSnapshots`, `useSnapshot`, `useDesiredConfig`, `useReconcile`, `useJobs`). Contratos de backend verificados: `GET /devices/{id}/snapshots` (lista, `limit` máx. 100), `GET /snapshots/{id}`, `GET /devices/{id}/desired-config`, `GET /reconciliation?device_id|snapshot_id` (exatamente um; 400 "Informe exatamente um de device_id ou snapshot_id."), `GET /jobs?device_id|status|kind|limit|offset` e `GET /jobs/{id}`.
+- Produces: as 4 telas de inspeção técnica (snapshot JSON com colapso por chave top-level; desired-config em acordeão por bloco + MonoCode com botão copiar; reconcile com filtro por severidade e aviso de snapshot ausente; jobs com filtros + detalhe com timing e link ao reconcile do snapshot).
+- Rotas novas: `/snapshots`, `/desired-config`, `/reconcile`, `/jobs`, `/jobs/:id`. A T6 já linkava `/reconcile?device_id=` (Dashboard) e a T10/`JobDetail` linka `/reconcile?snapshot_id=` — a tela Reconcile lê os dois params.
 
-- [ ] **Step 1: hooks**
+> **Correções de defeito do rascunho (ruling da orquestração):**
+> (a) `useSnapshot` com key `["snapshots", id]` colidiria com a key da lista `["snapshots", deviceId]` (ids de snapshot e de device são ambos `int` pequenos — uma colisão serviria a lista no lugar do detalhe); a key do detalhe é `["snapshot", id]`.
+> (b) `useSnapshots(deviceId)` sem `enabled` dispararia `GET /devices/0/snapshots` quando o componente monta sem device; recebeu `enabled: deviceId > 0`.
+> (c) `Object.entries` inclui chaves com valor `undefined` — `new URLSearchParams([["snapshot_id", "undefined"]])` mandaria `snapshot_id=undefined` ao backend (422). Os dois novos hooks filtram `undefined` antes de montar a query string.
+
+- [ ] **Step 1: hooks** (append no `web/src/api/hooks.ts`; adicionar `DesiredConfigOut`, `ReconcileOut` e `SnapshotOut` ao bloco de import de tipos ordenado existente — não substituir; ele já lista outros tipos em uso)
+
 ```ts
 export function useSnapshots(deviceId: number) {
-  return useQuery({ queryKey: ["snapshots", deviceId], queryFn: () => apiFetch<SnapshotOut[]>(`/api/v1/devices/${deviceId}/snapshots`) });
+  return useQuery({
+    queryKey: ["snapshots", deviceId],
+    queryFn: () => apiFetch<SnapshotOut[]>(`/api/v1/devices/${deviceId}/snapshots`),
+    enabled: deviceId > 0,
+  });
 }
 export function useSnapshot(id: number) {
-  return useQuery({ queryKey: ["snapshots", id], queryFn: () => apiFetch<SnapshotOut>(`/api/v1/snapshots/${id}`), enabled: id > 0 });
+  return useQuery({
+    queryKey: ["snapshot", id], // distinta de ["snapshots", deviceId] (ver correção a)
+    queryFn: () => apiFetch<SnapshotOut>(`/api/v1/snapshots/${id}`),
+    enabled: id > 0,
+  });
 }
 export function useDesiredConfig(deviceId: number | null) {
-  return useQuery({ queryKey: ["desired", deviceId], queryFn: () => apiFetch<DesiredConfigOut>(`/api/v1/devices/${deviceId}/desired-config`), enabled: !!deviceId, retry: false });
+  return useQuery({
+    queryKey: ["desired", deviceId],
+    queryFn: () => apiFetch<DesiredConfigOut>(`/api/v1/devices/${deviceId}/desired-config`),
+    enabled: Boolean(deviceId),
+    retry: false,
+  });
 }
 export function useReconcile(filtro: { device_id?: number; snapshot_id?: number }) {
   return useQuery({
@@ -2478,19 +4762,689 @@ export function useReconcile(filtro: { device_id?: number; snapshot_id?: number 
     queryFn: () =>
       apiFetch<ReconcileOut>(
         `/api/v1/reconciliation?${new URLSearchParams(
-          Object.entries(filtro).map(([k, v]) => [k, String(v)]) as [string, string][],
+          Object.entries(filtro)
+            .filter(([, v]) => v !== undefined)
+            .map(([k, v]) => [k, String(v)] as [string, string]),
         ).toString()}`,
       ),
     enabled: Number(filtro.device_id ?? filtro.snapshot_id) > 0,
     retry: false,
   });
 }
+export function useJobs(filtros: {
+  device_id?: number;
+  status?: string;
+  kind?: string;
+  limit?: number;
+  offset?: number;
+}) {
+  return useQuery({
+    queryKey: ["jobs", filtros],
+    queryFn: () =>
+      apiFetch<JobRunOut[]>(
+        `/api/v1/jobs?${new URLSearchParams(
+          Object.entries(filtros)
+            .filter(([, v]) => v !== undefined)
+            .map(([k, v]) => [k, String(v)] as [string, string]),
+        ).toString()}`,
+      ),
+  });
+}
 ```
-- [ ] **Step 2: `Snapshots.tsx`** — seletor de device (select de `/devices`) → lista `/devices/{id}/snapshots` → seleciona → `GET /snapshots/{id}` e renderiza `resources` como árvore colapsável (recursion em componente `JsonTree` local: `<details>` por valor objeto/array; arrays com slice + paginação se > 60 itens).
-- [ ] **Step 3: `DesiredConfig.tsx`** — seletor de device → GET desired-config → blocos em acordeão (`<details>` por `tipo/objeto`) + `MonoCode` com o `texto`; vazio → "Nenhum bloco renderizado."
-- [ ] **Step 4: `Reconcile.tsx`** — dois modos: select de device OU input `snapshot_id`; query `useReconcile`; tabela com `SeverityBadge`, filtro client-side por severidade; `aviso` exibido quando presente; erro 400 com "Informe exatamente um de device_id ou snapshot_id." exibido.
-- [ ] **Step 5: `Jobs.tsx` + `JobDetail.tsx`** — lista com filtros (device/status/kind) e select limit/offset; detalhe do job com mesclar `started_at/finished_at/duration_ms` e link ao snapshot; polling via `useJobPoll(id)` (refetchInterval 3s encerrado em status terminal).
-- [ ] **Step 6: testes (`Reconcile.test.tsx` — itens mock, filtro por severidade, aviso; `Snapshots.test.tsx` — tree colapsável e paginação de array) + build + lint + commit.**
+
+- [ ] **Step 2: `Snapshots.tsx`**
+
+```tsx
+import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { useDevices, useSnapshot, useSnapshots } from "@/api/hooks";
+import { DataTable } from "@/components/DataTable";
+import { FormField } from "@/components/FormField";
+import { PageHeader } from "@/components/PageHeader";
+import { StatusBadge } from "@/components/StatusBadge";
+import { TimeAgo } from "@/components/TimeAgo";
+import type { SnapshotOut } from "@/api/types";
+
+const LIMITE_ARRAY = 60;
+
+function JsonValor({ valor }: { valor: unknown }) {
+  if (valor === null || typeof valor !== "object") return <>{String(valor)}</>;
+  if (Array.isArray(valor)) return <JsonArray itens={valor} />;
+  return (
+    <ul>
+      {Object.entries(valor as Record<string, unknown>).map(([k, v]) => (
+        <li key={k}>
+          {k}: <JsonValor valor={v} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function JsonArray({ itens }: { itens: unknown[] }) {
+  const [corte, setCorte] = useState(LIMITE_ARRAY);
+  const visiveis = itens.slice(0, corte);
+  const restante = itens.length - visiveis.length;
+  return (
+    <>
+      <ol>
+        {visiveis.map((item, i) => (
+          <li key={i}>
+            <JsonValor valor={item} />
+          </li>
+        ))}
+      </ol>
+      {restante > 0 && (
+        <button type="button" onClick={() => setCorte((c) => c + LIMITE_ARRAY)}>
+          Mostrar mais ({restante})
+        </button>
+      )}
+    </>
+  );
+}
+
+function JsonTree({ recursos }: { recursos: Record<string, unknown> }) {
+  return (
+    <ul>
+      {Object.entries(recursos).map(([chave, valor]) => (
+        <li key={chave}>
+          <details>
+            <summary>{chave}</summary>
+            <JsonValor valor={valor} />
+          </details>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+export default function Snapshots() {
+  const [params, setParams] = useSearchParams();
+  const { data: devices, isLoading: carregandoDevices } = useDevices();
+  const [deviceId, setDeviceId] = useState<number>(Number(params.get("device_id") ?? 0));
+  const { data: snapshots, isLoading } = useSnapshots(deviceId);
+  const [selecionado, setSelecionado] = useState<number | null>(null);
+  const detalhe = useSnapshot(selecionado ?? 0);
+
+  return (
+    <main>
+      <PageHeader titulo="Snapshots" />
+      <FormField label="Equipamento">
+        <select
+          value={deviceId}
+          onChange={(e) => {
+            const v = Number(e.target.value);
+            setDeviceId(v);
+            setSelecionado(null);
+            setParams(v > 0 ? { device_id: String(v) } : {});
+          }}
+        >
+          <option value={0}>Selecione…</option>
+          {(devices ?? []).map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.name}
+            </option>
+          ))}
+        </select>
+      </FormField>
+      {deviceId === 0 && <p>Selecione um equipamento.</p>}
+      {deviceId > 0 && (
+        <DataTable<SnapshotOut>
+          colunas={[
+            { key: "id", title: "Snapshot" },
+            { key: "started_at", title: "Início", render: (s) => <TimeAgo iso={s.started_at} /> },
+            { key: "status", title: "Status", render: (s) => <StatusBadge estado={s.status} /> },
+            { key: "duration_ms", title: "Duração (ms)" },
+          ]}
+          linhas={snapshots ?? []}
+          carregando={carregandoDevices || isLoading}
+          vazio="Nenhum snapshot deste equipamento."
+          acoes={(s) => (
+            <button type="button" onClick={() => setSelecionado(s.id)}>
+              Ver
+            </button>
+          )}
+        />
+      )}
+      {detalhe.data && (
+        <section>
+          <h2>
+            Snapshot #{detalhe.data.id} ({detalhe.data.status})
+          </h2>
+          <p>
+            Início: <TimeAgo iso={detalhe.data.started_at} /> · duração: {detalhe.data.duration_ms} ms
+          </p>
+          <h3>resources</h3>
+          <JsonTree recursos={detalhe.data.resources} />
+          {Object.keys(detalhe.data.errors).length > 0 && (
+            <>
+              <h3>errors</h3>
+              <JsonTree recursos={detalhe.data.errors} />
+            </>
+          )}
+        </section>
+      )}
+      {detalhe.isError && <p role="alert">Falha ao carregar o snapshot.</p>}
+    </main>
+  );
+}
+```
+
+- [ ] **Step 3: `DesiredConfig.tsx`**
+
+```tsx
+import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { useDesiredConfig, useDevices } from "@/api/hooks";
+import { FormField } from "@/components/FormField";
+import { MonoCode } from "@/components/MonoCode";
+import { PageHeader } from "@/components/PageHeader";
+
+export default function DesiredConfig() {
+  const [params, setParams] = useSearchParams();
+  const { data: devices } = useDevices();
+  const [deviceId, setDeviceId] = useState<number>(Number(params.get("device_id") ?? 0));
+  const { data, isLoading } = useDesiredConfig(deviceId > 0 ? deviceId : null);
+
+  return (
+    <main>
+      <PageHeader titulo="Configuração desejada" />
+      <FormField label="Equipamento">
+        <select
+          value={deviceId}
+          onChange={(e) => {
+            const v = Number(e.target.value);
+            setDeviceId(v);
+            setParams(v > 0 ? { device_id: String(v) } : {});
+          }}
+        >
+          <option value={0}>Selecione…</option>
+          {(devices ?? []).map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.name}
+            </option>
+          ))}
+        </select>
+      </FormField>
+      {deviceId === 0 && <p>Selecione um equipamento.</p>}
+      {isLoading && <p aria-busy="true">Carregando…</p>}
+      {data && (
+        <>
+          <p>Gerada em {new Date(data.gerado_em).toLocaleString("pt-BR")}</p>
+          <MonoCode texto={data.texto} />
+          <h2>Blocos</h2>
+          {data.blocos.length === 0 && <p>Nenhum bloco renderizado.</p>}
+          {data.blocos.map((b) => (
+            <details key={`${b.tipo}-${b.objeto}-${b.objeto_id}`}>
+              <summary>
+                {b.tipo} · {b.objeto} #{b.objeto_id}
+              </summary>
+              <pre>{b.comandos.join("\n")}</pre>
+            </details>
+          ))}
+        </>
+      )}
+    </main>
+  );
+}
+```
+
+- [ ] **Step 4: `Reconcile.tsx`** (lê `device_id`/`snapshot_id` da URL — a T6 já linka `/reconcile?device_id=` e o JobDetail linka `/reconcile?snapshot_id=`; os dois modos são mutuamente exclusivos, gerando sempre exatamente um filtro)
+
+```tsx
+import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { ApiError } from "@/api/client";
+import { useDevices, useReconcile } from "@/api/hooks";
+import { DataTable } from "@/components/DataTable";
+import { FormField } from "@/components/FormField";
+import { PageHeader } from "@/components/PageHeader";
+import { SeverityBadge } from "@/components/SeverityBadge";
+import type { ReconcileItemOut } from "@/api/types";
+
+const SEVERIDADES = ["todas", "critica", "atencao", "aviso"] as const;
+
+export default function Reconcile() {
+  const [params, setParams] = useSearchParams();
+  const { data: devices } = useDevices();
+  const deviceParam = Number(params.get("device_id") ?? 0);
+  const snapshotParam = Number(params.get("snapshot_id") ?? 0);
+  const [modo, setModo] = useState<"device" | "snapshot">(snapshotParam > 0 ? "snapshot" : "device");
+  const [deviceSel, setDeviceSel] = useState<number>(deviceParam);
+  const [snapInput, setSnapInput] = useState<string>(snapshotParam > 0 ? String(snapshotParam) : "");
+  const [severidade, setSeveridade] = useState<string>("todas");
+
+  const filtro =
+    modo === "device"
+      ? { device_id: deviceSel > 0 ? deviceSel : undefined, snapshot_id: undefined }
+      : { device_id: undefined, snapshot_id: Number(snapInput) > 0 ? Number(snapInput) : undefined };
+  const { data, isLoading, error } = useReconcile(filtro);
+  const items = (data?.items ?? []).filter((i) => severidade === "todas" || i.severidade === severidade);
+
+  return (
+    <main>
+      <PageHeader titulo="Reconciliação" />
+      <FormField label="Modo">
+        <select value={modo} onChange={(e) => setModo(e.target.value as "device" | "snapshot")}>
+          <option value="device">Equipamento</option>
+          <option value="snapshot">Snapshot</option>
+        </select>
+      </FormField>
+      {modo === "device" && (
+        <FormField label="Equipamento">
+          <select
+            value={deviceSel}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              setDeviceSel(v);
+              setParams(v > 0 ? { device_id: String(v) } : {});
+            }}
+          >
+            <option value={0}>Selecione…</option>
+            {(devices ?? []).map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name}
+              </option>
+            ))}
+          </select>
+        </FormField>
+      )}
+      {modo === "snapshot" && (
+        <FormField label="Snapshot (id)">
+          <input type="number" min={1} value={snapInput} onChange={(e) => setSnapInput(e.target.value)} />
+        </FormField>
+      )}
+      <FormField label="Severidade">
+        <select value={severidade} onChange={(e) => setSeveridade(e.target.value)}>
+          {SEVERIDADES.map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
+      </FormField>
+      {data?.aviso && <p role="status">{data.aviso}</p>}
+      {error && <p role="alert">{error instanceof ApiError ? error.message : "Falha ao reconciliar."}</p>}
+      {(modo === "device" ? deviceSel === 0 : snapInput === "") && (
+        <p>Selecione um equipamento ou informe um snapshot.</p>
+      )}
+      <DataTable<ReconcileItemOut>
+        colunas={[
+          { key: "tipo", title: "Tipo" },
+          { key: "severidade", title: "Severidade", render: (i) => <SeverityBadge severidade={i.severidade} /> },
+          { key: "esperado", title: "Esperado" },
+          { key: "encontrado", title: "Encontrado" },
+          { key: "acao", title: "Ação recomendada" },
+        ]}
+        linhas={items}
+        carregando={isLoading}
+        vazio="Nenhuma divergência encontrada."
+      />
+    </main>
+  );
+}
+```
+
+- [ ] **Step 5: `Jobs.tsx` + `JobDetail.tsx`**
+
+`Jobs.tsx`:
+
+```tsx
+import { useState } from "react";
+import { Link } from "react-router-dom";
+import { useDevices, useJobs } from "@/api/hooks";
+import { DataTable } from "@/components/DataTable";
+import { FormField } from "@/components/FormField";
+import { PageHeader } from "@/components/PageHeader";
+import { StatusBadge } from "@/components/StatusBadge";
+import { TimeAgo } from "@/components/TimeAgo";
+import type { JobRunOut } from "@/api/types";
+
+const STATUS = ["queued", "running", "success", "partial", "error"] as const;
+
+export default function Jobs() {
+  const { data: devices } = useDevices();
+  const [deviceId, setDeviceId] = useState(0);
+  const [status, setStatus] = useState("");
+  const [kind, setKind] = useState("");
+  const [limite, setLimite] = useState(100);
+  const [offset, setOffset] = useState(0);
+  const { data, isLoading } = useJobs({
+    device_id: deviceId > 0 ? deviceId : undefined,
+    status: status || undefined,
+    kind: kind || undefined,
+    limit: limite,
+    offset,
+  });
+
+  return (
+    <main>
+      <PageHeader titulo="Jobs" />
+      <div className="form-inline">
+        <FormField label="Equipamento">
+          <select
+            value={deviceId}
+            onChange={(e) => {
+              setDeviceId(Number(e.target.value));
+              setOffset(0);
+            }}
+          >
+            <option value={0}>Todos</option>
+            {(devices ?? []).map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name}
+              </option>
+            ))}
+          </select>
+        </FormField>
+        <FormField label="Status">
+          <select
+            value={status}
+            onChange={(e) => {
+              setStatus(e.target.value);
+              setOffset(0);
+            }}
+          >
+            <option value="">Todos</option>
+            {STATUS.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+        </FormField>
+        <FormField label="Tipo">
+          <input value={kind} onChange={(e) => { setKind(e.target.value); setOffset(0); }} />
+        </FormField>
+        <FormField label="Limite">
+          <select
+            value={limite}
+            onChange={(e) => {
+              setLimite(Number(e.target.value));
+              setOffset(0);
+            }}
+          >
+            {[10, 50, 100].map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </FormField>
+      </div>
+      <DataTable<JobRunOut>
+        colunas={[
+          {
+            key: "id",
+            title: "Job",
+            render: (j) => <Link to={`/jobs/${j.id}`}>#{j.id}</Link>,
+          },
+          { key: "device_id", title: "Device", render: (j) => j.device_id ?? "—" },
+          { key: "kind", title: "Tipo" },
+          { key: "actor", title: "Autor" },
+          { key: "status", title: "Status", render: (j) => <StatusBadge estado={j.status} /> },
+          { key: "started_at", title: "Início", render: (j) => <TimeAgo iso={j.started_at} /> },
+          { key: "duration_ms", title: "Duração (ms)" },
+        ]}
+        linhas={data ?? []}
+        carregando={isLoading}
+        vazio="Nenhum job."
+      />
+      <p>
+        <button type="button" disabled={offset === 0} onClick={() => setOffset((o) => Math.max(0, o - limite))}>
+          Anterior
+        </button>{" "}
+        <button type="button" onClick={() => setOffset((o) => o + limite)}>
+          Próximo
+        </button>
+      </p>
+    </main>
+  );
+}
+```
+
+`JobDetail.tsx`:
+
+```tsx
+import { Link, useParams } from "react-router-dom";
+import { useJobPoll } from "@/api/hooks";
+import { PageHeader } from "@/components/PageHeader";
+import { StatusBadge } from "@/components/StatusBadge";
+import { TimeAgo } from "@/components/TimeAgo";
+
+export default function JobDetail() {
+  const { id } = useParams();
+  const jobId = Number(id);
+  const { data, isLoading } = useJobPoll(jobId);
+
+  return (
+    <main>
+      <PageHeader titulo={`Job #${data ? data.id : (id ?? "")}`} acoes={<Link to="/jobs">← Voltar</Link>} />
+      {isLoading && <p aria-busy="true">Carregando…</p>}
+      {!data && !isLoading && <p>Job não encontrado.</p>}
+      {data && (
+        <>
+          <dl>
+            <dt>Equipamento</dt>
+            <dd>{data.device_id ?? "—"}</dd>
+            <dt>Origem</dt>
+            <dd>{data.origin}</dd>
+            <dt>Autor</dt>
+            <dd>{data.actor}</dd>
+            <dt>Tipo</dt>
+            <dd>{data.kind}</dd>
+            <dt>Status</dt>
+            <dd><StatusBadge estado={data.status} /></dd>
+            <dt>Início</dt>
+            <dd><TimeAgo iso={data.started_at} /></dd>
+            <dt>Fim</dt>
+            <dd>{data.finished_at ? <TimeAgo iso={data.finished_at} /> : "—"}</dd>
+            <dt>Duração</dt>
+            <dd>{data.duration_ms} ms</dd>
+          </dl>
+          {data.snapshot_id !== null && (
+            <p>
+              <Link to={`/reconcile?snapshot_id=${data.snapshot_id}`}>
+                Ver reconcile do snapshot #{data.snapshot_id}
+              </Link>
+            </p>
+          )}
+        </>
+      )}
+    </main>
+  );
+}
+```
+
+- [ ] **Step 6: testes**
+
+`web/src/pages/Reconcile.test.tsx`:
+
+```tsx
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import Reconcile from "./Reconcile";
+
+const DEVICES = [{ id: 1, name: "ne8000-01" }];
+const RECONCILE = {
+  device_id: 1,
+  snapshot_id: null,
+  aviso: "Sem snapshot; comparando com o estado de produção.",
+  gerado_em: "2026-09-04T00:00:00Z",
+  items: [
+    { tipo: "bgp", severidade: "critica", esperado: "peer up", encontrado: "peer down", acao: "reconciliar" },
+    { tipo: "vlan", severidade: "atencao", esperado: "vlan 10", encontrado: "ausente", acao: "criar" },
+  ],
+};
+
+function mockFetch() {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url === "/api/v1/devices") {
+        return new Response(JSON.stringify(DEVICES), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.startsWith("/api/v1/reconciliation?")) {
+        return new Response(JSON.stringify(RECONCILE), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ detail: "Não encontrado." }), { status: 404, headers: { "Content-Type": "application/json" } });
+    }),
+  );
+}
+
+function renderReconcile(initialEntry: string) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <Reconcile />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+describe("Reconcile", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("mostra divergências com aviso e filtra por severidade", async () => {
+    mockFetch();
+    renderReconcile("/reconcile?device_id=1");
+    expect(await screen.findByText("Sem snapshot; comparando com o estado de produção.")).toBeInTheDocument();
+    expect(screen.getByText("bgp")).toBeInTheDocument();
+    expect(screen.getByText("vlan")).toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByLabelText("Severidade"), "critica");
+    expect(screen.getByText("bgp")).toBeInTheDocument();
+    expect(screen.queryByText("vlan")).not.toBeInTheDocument();
+  });
+
+  it("snapshot_id na URL aciona o modo snapshot", async () => {
+    mockFetch();
+    renderReconcile("/reconcile?snapshot_id=7");
+    expect(await screen.findByText("bgp")).toBeInTheDocument();
+    const chamada = vi.mocked(fetch).mock.calls.some((c) => String(c[0]).includes("snapshot_id=7"));
+    expect(chamada).toBe(true);
+  });
+});
+```
+
+`web/src/pages/Snapshots.test.tsx`:
+
+```tsx
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import Snapshots from "./Snapshots";
+
+const DEVICES = [{ id: 1, name: "ne8000-01" }];
+const SNAPSHOTS = [
+  {
+    id: 10,
+    device_id: 1,
+    started_at: "2026-09-04T00:00:00Z",
+    finished_at: "2026-09-04T00:00:05Z",
+    status: "success",
+    resources: {},
+    errors: {},
+    duration_ms: 5000,
+  },
+  {
+    id: 11,
+    device_id: 1,
+    started_at: "2026-09-04T00:00:00Z",
+    finished_at: null,
+    status: "partial",
+    resources: {},
+    errors: {},
+    duration_ms: 2000,
+  },
+];
+const DETAIL = {
+  id: 11,
+  device_id: 1,
+  started_at: "2026-09-04T00:00:00Z",
+  finished_at: null,
+  status: "partial",
+  resources: {
+    interfaces: { "GE0/0/0": { up: true } },
+    bd: Array.from({ length: 70 }, (_, i) => i),
+  },
+  errors: { coleta_v4: "timeout" },
+  duration_ms: 2000,
+};
+
+function mockFetch() {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url === "/api/v1/devices") {
+        return new Response(JSON.stringify(DEVICES), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url === "/api/v1/devices/1/snapshots") {
+        return new Response(JSON.stringify(SNAPSHOTS), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url === "/api/v1/snapshots/11") {
+        return new Response(JSON.stringify(DETAIL), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ detail: "Não encontrado." }), { status: 404, headers: { "Content-Type": "application/json" } });
+    }),
+  );
+}
+
+function renderSnapshots() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={["/snapshots"]}>
+        <Snapshots />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+describe("Snapshots", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("lista snapshots, seleciona e mostra a árvore colapsável com paginação", async () => {
+    mockFetch();
+    renderSnapshots();
+    // espera o useDevices resolver antes do selectOptions (a opção não existe
+    // enquanto a lista está carregando — `Value "1" not found` de forma determinística)
+    await screen.findByRole("option", { name: "ne8000-01" });
+    await userEvent.selectOptions(screen.getByLabelText("Equipamento"), "1");
+    expect(await screen.findByText("11")).toBeInTheDocument();
+    await userEvent.click(screen.getAllByRole("button", { name: "Ver" })[1]);
+    expect(await screen.findByText("interfaces")).toBeInTheDocument();
+    expect(screen.getByText("Mostrar mais (10)")).toBeInTheDocument();
+    await userEvent.click(screen.getByText("Mostrar mais (10)"));
+    await waitFor(() => {
+      expect(screen.queryByText("Mostrar mais (10)")).not.toBeInTheDocument();
+    });
+  });
+});
+```
+
+Run: `cd web && npx vitest run src/pages/Reconcile.test.tsx src/pages/Snapshots.test.tsx` — Expected: 3 PASS. Depois a suíte completa de web e `npm run build` + `npx eslint src`.
+
+Rotas em `App.tsx` (adicionar às existentes; com os imports `Snapshots`, `DesiredConfig`, `Reconcile`, `Jobs`, `JobDetail` de `@/pages/*`):
+
+```tsx
+<Route path="/snapshots" element={<RequireAuth><Snapshots /></RequireAuth>} />
+<Route path="/desired-config" element={<RequireAuth><DesiredConfig /></RequireAuth>} />
+<Route path="/reconcile" element={<RequireAuth><Reconcile /></RequireAuth>} />
+<Route path="/jobs" element={<RequireAuth><Jobs /></RequireAuth>} />
+<Route path="/jobs/:id" element={<RequireAuth><JobDetail /></RequireAuth>} />
+```
+
+- [ ] **Step 7: commit**
 
 ```bash
 git add web/src/pages web/src/App.tsx web/src/api/hooks.ts
@@ -2504,20 +5458,444 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 ### Task 11: DeviceDetail + navegação entre telas + layout completo (nav lateral)
 
 **Files:**
-- Create: `web/src/pages/DeviceDetail.tsx`
-- Modify: `web/src/App.tsx` (rota `/devices/:id` + layout com nav), `web/src/components/Layout.tsx` (nav com links + logout)
-- Modify: `web/src/styles/global.css` (nav)
+- Create: `web/src/pages/DeviceDetail.tsx`, `web/src/pages/DeviceDetail.test.tsx`, `web/src/components/Layout.tsx`, `web/src/components/Layout.test.tsx`
+- Modify: `web/src/App.tsx` (rota `/devices/:id` + rotas protegidas sob o `<Layout>`), `web/src/api/hooks.ts` (hook `useDevice`), `web/src/styles/global.css` (nav)
 
-**Interfaces:** Consuma `useDevices/{id}` (Task 7), `useSnapshot`/`useSnapshots` (Task 10). Botões: "Coletar agora" (POST collect → retorna `job_id` → navega para `/jobs/{id}` e faz poll), abrir snapshots/desired-config/reconcile.
+**Interfaces:**
+- Consumes: `useAuth` (Task 4: `usuario`, `ehAdmin`, `logout` — POST `/api/v1/auth/logout` → 204, limpa `usuario`), `useDeviceColetar` (Task 7 — POST collect → `{queued, message, job_id}`), `useSnapshots(deviceId)` (Task 10), `useSites` (Task 7), tipos `DeviceOut`/`SiteOut` (Task 3).
+- Produces: `useDevice(id)` (novo hook, Step 1); `Layout` com nav lateral + logout; rota `/devices/:id`; links de inspeção com `?device_id=`.
 
-- [ ] **Step 1: `Layout.tsx`** — header com título + nav (Dashboard, Devices, Sites, Organizations, Contacts, Circuits, BGP Sessions, Prefix Auths, Policy Profiles, Communities, Snapshots, Desired Config, Reconcile, Jobs, Audit, Users (admin)) + botão logout (useAuth). Opcional: quebra por seções usando `<details>`? Não no v1 — nav direta.
-- [ ] **Step 2: `App.tsx`** — envolver todas as rotas protegidas no `<Layout>`; rota `/devices/:id` → `DeviceDetail`.
-- [ ] **Step 3: `DeviceDetail.tsx`** — GET `/devices/{id}`; cartões (com status, site, coleta, asn, vrp), último snapshot resumo (via `/devices/{id}/snapshots` → primeiro), links para detalhe (desired-config/reconcile/snapshots), botão coleta + poll de job.
-- [ ] **Step 4: test + build + lint + commit.**
+> **Correção de defeito do rascunho (ruling da orquestração, compatível com o ruling da T3 e a implementação da T7):** o texto original dizia "POST collect → retorna `job_id` → navega para `/jobs/{id}` e faz poll". **Errado**: o `job_id` do `/collect` é o **uuid da fila RQ**, NÃO o `JobRun.id` (int) — a rota `/jobs/{id}` só aceita int; `Number(uuid)` = NaN → `useJobPoll` desabilitado → "Job não encontrado." A navegação correta (idêntica à da T7/Devices, e ao teste da T7) é para **`/jobs?device_id=<id>`** — a lista filtrida. Polling individual do JobRun não é possível no pós-coleta (JobRun só nasce na execução do runner) — wart de backend parkado como follow-up pós-ciclo (ver ledger T3).
+> Também: a T7 define `useDevices` (lista) mas **nenhum** `useDevice` (detalhe) — o Step 1 cria o hook.
+
+- [ ] **Step 1: `useDevice` em `web/src/api/hooks.ts`** (append; adicionar `DeviceOut` ao bloco de import de tipos ordenado existente — não substituir)
+
+```ts
+export function useDevice(id: number) {
+  return useQuery({
+    queryKey: ["device", id],
+    queryFn: () => apiFetch<DeviceOut>(`/api/v1/devices/${id}`),
+    enabled: id > 0,
+  });
+}
+```
+
+- [ ] **Step 2: `Layout.tsx`**
+
+`web/src/components/Layout.tsx` (usa `<Outlet />` — o App o define como rota-pai):
+
+```tsx
+import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
+import { useAuth } from "@/auth/auth-context";
+
+const ITENS_NAV: { para: string; rotulo: string; admin?: boolean }[] = [
+  { para: "/", rotulo: "Dashboard" },
+  { para: "/devices", rotulo: "Equipamentos" },
+  { para: "/sites", rotulo: "Sites" },
+  { para: "/organizations", rotulo: "Organizações" },
+  { para: "/contacts", rotulo: "Contatos" },
+  { para: "/circuits", rotulo: "Circuitos" },
+  { para: "/bgp-sessions", rotulo: "Sessões BGP" },
+  { para: "/prefix-authorizations", rotulo: "Prefixos autorizados" },
+  { para: "/policy-profiles", rotulo: "Perfis de política" },
+  { para: "/communities", rotulo: "Communities" },
+  { para: "/snapshots", rotulo: "Snapshots" },
+  { para: "/desired-config", rotulo: "Config desejada" },
+  { para: "/reconcile", rotulo: "Reconciliação" },
+  { para: "/jobs", rotulo: "Jobs" },
+  { para: "/audit-events", rotulo: "Auditoria" },
+  { para: "/users", rotulo: "Usuários", admin: true },
+];
+
+export function Layout() {
+  const { usuario, ehAdmin, logout } = useAuth();
+  const navigate = useNavigate();
+  return (
+    <div className="app-shell">
+      <header className="app-header">
+        <Link to="/" className="app-titulo">
+          Gerenet
+        </Link>
+        <span className="app-usuario">{usuario?.username}</span>
+        <button type="button" onClick={() => void logout().then(() => navigate("/login"))}>
+          Sair
+        </button>
+      </header>
+      <div className="app-corpo">
+        <nav className="app-nav" aria-label="Navegação principal">
+          {ITENS_NAV.filter((i) => !i.admin || ehAdmin).map((i) => (
+            <NavLink key={i.para} to={i.para} end={i.para === "/"}>
+              {i.rotulo}
+            </NavLink>
+          ))}
+        </nav>
+        <div className="app-conteudo">
+          <Outlet />
+        </div>
+      </div>
+    </div>
+  );
+}
+```
+
+CSS a appendar em `global.css` (as páginas mantêm `<main>` interno; o conteúdo do layout é `<div>` para não aninhar mains):
+
+```css
+.app-shell { display: flex; flex-direction: column; min-height: 100vh; }
+.app-header { display: flex; align-items: center; gap: 1rem; padding: 0.6rem 1rem; border-bottom: 1px solid var(--border); background: var(--bg-elevated); }
+.app-header .app-titulo { font-weight: 700; text-decoration: none; color: inherit; }
+.app-header .app-usuario { margin-left: auto; font-size: 0.85rem; opacity: 0.8; }
+.app-corpo { display: flex; flex: 1; }
+.app-nav { display: flex; flex-direction: column; gap: 0.1rem; min-width: 190px; padding: 0.8rem; border-right: 1px solid var(--border); }
+.app-nav a { padding: 0.3rem 0.5rem; color: inherit; text-decoration: none; border-radius: 6px; font-size: 0.9rem; }
+.app-nav a.active { background: var(--accent); color: var(--text-on-accent); }
+.app-conteudo { flex: 1; padding: 1rem; overflow-x: auto; }
+```
+
+- [ ] **Step 3: `App.tsx`** — rotas protegidas aninhadas sob o `Layout` (rota pai sem path + `<Outlet />`), nova rota `/devices/:id`, `/login` fora do layout
+
+```tsx
+import { Route, Routes } from "react-router-dom";
+import Login from "@/auth/Login";
+import { RequireAdmin, RequireAuth } from "@/auth/auth-context";
+import { Layout } from "@/components/Layout";
+import Dashboard from "@/pages/Dashboard";
+import Users from "@/pages/Users";
+import Devices from "@/pages/Devices";
+import DeviceDetail from "@/pages/DeviceDetail";
+import Sites from "@/pages/Sites";
+import Organizations from "@/pages/Organizations";
+import Contacts from "@/pages/Contacts";
+import Circuits from "@/pages/Circuits";
+import CircuitDetail from "@/pages/CircuitDetail";
+import BgpSessions from "@/pages/BgpSessions";
+import BgpSessionDetail from "@/pages/BgpSessionDetail";
+import PolicyProfiles from "@/pages/PolicyProfiles";
+import Communities from "@/pages/Communities";
+import PrefixAuthorizations from "@/pages/PrefixAuthorizations";
+import AuditEvents from "@/pages/AuditEvents";
+import Snapshots from "@/pages/Snapshots";
+import DesiredConfig from "@/pages/DesiredConfig";
+import Reconcile from "@/pages/Reconcile";
+import Jobs from "@/pages/Jobs";
+import JobDetail from "@/pages/JobDetail";
+
+export default function App() {
+  return (
+    <Routes>
+      <Route path="/login" element={<Login />} />
+      <Route
+        element={
+          <RequireAuth>
+            <Layout />
+          </RequireAuth>
+        }
+      >
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/devices" element={<Devices />} />
+        <Route path="/devices/:id" element={<DeviceDetail />} />
+        <Route path="/sites" element={<Sites />} />
+        <Route path="/organizations" element={<Organizations />} />
+        <Route path="/contacts" element={<Contacts />} />
+        <Route path="/circuits" element={<Circuits />} />
+        <Route path="/circuits/:id" element={<CircuitDetail />} />
+        <Route path="/bgp-sessions" element={<BgpSessions />} />
+        <Route path="/bgp-sessions/:id" element={<BgpSessionDetail />} />
+        <Route path="/policy-profiles" element={<PolicyProfiles />} />
+        <Route path="/communities" element={<Communities />} />
+        <Route path="/prefix-authorizations" element={<PrefixAuthorizations />} />
+        <Route path="/audit-events" element={<AuditEvents />} />
+        <Route path="/snapshots" element={<Snapshots />} />
+        <Route path="/desired-config" element={<DesiredConfig />} />
+        <Route path="/reconcile" element={<Reconcile />} />
+        <Route path="/jobs" element={<Jobs />} />
+        <Route path="/jobs/:id" element={<JobDetail />} />
+        <Route
+          path="/users"
+          element={
+            <RequireAdmin>
+              <Users />
+            </RequireAdmin>
+          }
+        />
+      </Route>
+    </Routes>
+  );
+}
+```
+
+(Se um nome de default export de alguma página divergir do que está acima, ajustar o import ao nome real — o `tsc -b` do build acusa.)
+
+- [ ] **Step 4: `DeviceDetail.tsx`**
+
+```tsx
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { ApiError } from "@/api/client";
+import { useDevice, useDeviceColetar, useSites, useSnapshots } from "@/api/hooks";
+import { PageHeader } from "@/components/PageHeader";
+import { StatusBadge } from "@/components/StatusBadge";
+import { TimeAgo } from "@/components/TimeAgo";
+
+export default function DeviceDetail() {
+  const { id } = useParams();
+  const deviceId = Number(id);
+  const navigate = useNavigate();
+  const { data: device, isLoading, error } = useDevice(deviceId);
+  const { data: sites } = useSites();
+  const { data: snapshots } = useSnapshots(deviceId);
+  const coletar = useDeviceColetar();
+  const siteNome = sites?.find((s) => s.id === device?.site_id)?.name ?? null;
+  const ultimoSnapshot = snapshots && snapshots.length > 0 ? snapshots[0] : null;
+
+  if (isLoading) return <main><p aria-busy="true">Carregando…</p></main>;
+  if (!device) {
+    return (
+      <main>
+        <p role="alert">{error instanceof ApiError ? error.message : "Falha ao carregar o equipamento."}</p>
+      </main>
+    );
+  }
+
+  return (
+    <main>
+      <PageHeader titulo={device.name} acoes={<Link to="/devices">← Voltar</Link>} />
+      <ul>
+        <li>Endereço de gestão: <span>{device.management_address}</span></li>
+        <li>Site: <span>{siteNome ?? "—"}</span></li>
+        <li>Função: <span>{device.role ?? "—"}</span></li>
+        <li>Modelo: <span>{device.model ?? "—"}</span> · Família: <span>{device.family ?? "—"}</span></li>
+        <li>Versão VRP: <span>{device.vrp_version ?? "—"}</span></li>
+        <li>ASN: <span>{device.asn ?? "—"}</span></li>
+        <li>Comunicação: <StatusBadge estado={device.comm_status} /></li>
+        <li>Situação: <StatusBadge estado={device.admin_status ? "ativo" : "inativo"} /></li>
+        <li>Última coleta: <TimeAgo iso={device.last_collected_at} /></li>
+      </ul>
+      <p>
+        <button
+          className="primary"
+          disabled={coletar.isPending}
+          onClick={() => void coletar.mutateAsync(device.id).then(() => navigate(`/jobs?device_id=${device.id}`))}
+        >
+          Coletar agora
+        </button>
+        {coletar.error && (
+          <span role="alert"> {String(coletar.error.message ?? "Falha ao coletar.")}</span>
+        )}
+      </p>
+      <h2>Último snapshot</h2>
+      <p>
+        {ultimoSnapshot ? (
+          <>
+            #{ultimoSnapshot.id} · <StatusBadge estado={ultimoSnapshot.status} /> ·{" "}
+            <TimeAgo iso={ultimoSnapshot.started_at} />
+          </>
+        ) : (
+          "Nenhum snapshot."
+        )}
+      </p>
+      <h2>Inspeção</h2>
+      <p>
+        <Link to={`/snapshots?device_id=${device.id}`}>Snapshots</Link>{" "}
+        <Link to={`/desired-config?device_id=${device.id}`}>Config desejada</Link>{" "}
+        <Link to={`/reconcile?device_id=${device.id}`}>Reconciliar</Link>
+      </p>
+    </main>
+  );
+}
+```
+
+> **Correção de defeito do rascunho (ruling da orquestração):** os valores deste `<ul>` são envolvidos em `<span>` (uniforme). Motivo: `getByText` da @testing-library compara `getNodeText` — a concatenação dos filhos diretos que são text nodes; `<li>ASN: {device.asn ?? "—"}</li>` vira `"ASN: 65001"` e a asserção `getByText("65001")` do teste (Step 5) falha de forma determinística (`Unable to find an element with the text: 65001`). Com `<span>` o valor é nó textual direto do próprio elemento e casa default `exact: true` — o mesmo vale para todos os valores do `ul` (estrutura uniforme para o que estiver no teste). Não mexer nos `StatusBadge`/`TimeAgo` (elementos filhos, ignorados pelo getNodeText — não afetam).
+>
+> **Segunda correção (revisor T11, Important):** `if (!device)` colocava 404, rede e 500 no mesmo texto "Equipamento não encontrado." — sem superfície de erro para `useDevice`. Agora o guard renderiza `role="alert"` com a mensagem exata (404 = `"Equipamento {id} não encontrado."` da API via `ApiError.message`; rede/500 idem — constraint de mensagens idênticas) e o texto estático fica só como fallback de query sem erro. MESMA família do pool T10 (JobDetail, listas de jobs/snapshots) — os demais casos ficam na revisão final.
+
+- [ ] **Step 5: testes**
+
+`web/src/components/Layout.test.tsx`:
+
+```tsx
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { Layout } from "./Layout";
+import { AuthProvider } from "@/auth/auth-context";
+
+const ME_ADMIN = {
+  id: 1,
+  username: "boss",
+  role: "administrador",
+  is_active: true,
+  last_login_at: null,
+  created_at: "2026-09-04T00:00:00Z",
+};
+
+function mockFetch() {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/v1/auth/me") {
+        return new Response(JSON.stringify(ME_ADMIN), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url === "/api/v1/auth/logout" && init?.method === "POST") {
+        return new Response(null, { status: 204 });
+      }
+      return new Response(JSON.stringify({ detail: "Não encontrado." }), { status: 404, headers: { "Content-Type": "application/json" } });
+    }),
+  );
+}
+
+function renderLayout() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <AuthProvider>
+        <MemoryRouter initialEntries={["/devices"]}>
+          <Routes>
+            <Route path="/login" element={<div>login-page</div>} />
+            <Route element={<Layout />}>
+              <Route path="/devices" element={<div>devices-page</div>} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </AuthProvider>
+    </QueryClientProvider>,
+  );
+}
+
+describe("Layout", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("renderiza a nav com item admin e faz logout", async () => {
+    mockFetch();
+    renderLayout();
+    expect(await screen.findByText("Equipamentos")).toBeInTheDocument();
+    expect(screen.getByText("Usuários")).toBeInTheDocument();
+    expect(screen.getByText("devices-page")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Sair" }));
+    expect(await screen.findByText("login-page")).toBeInTheDocument();
+    const chamada = vi.mocked(fetch).mock.calls.find(
+      (c) => String(c[0]) === "/api/v1/auth/logout" && String(c[1]?.method) === "POST",
+    );
+    expect(chamada).toBeTruthy();
+  });
+});
+```
+
+`web/src/pages/DeviceDetail.test.tsx`:
+
+```tsx
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import DeviceDetail from "./DeviceDetail";
+
+const DEVICE = {
+  id: 1,
+  name: "ne8000-01",
+  management_address: "10.0.0.1",
+  ssh_port: null,
+  vendor: "huawei",
+  model: "NE8000",
+  family: "NE8000",
+  role: "edge",
+  site_id: 1,
+  asn: 65001,
+  vrp_version: "V800R021",
+  comm_status: "ok",
+  admin_status: true,
+  last_collected_at: null,
+  tags: [],
+};
+const SITES = [
+  { id: 1, name: "POP-SP", city: null, uf: "SP", p2p_ipv4_block: null, p2p_ipv6_base: null, admin_status: true },
+];
+const SNAPSHOTS = [
+  {
+    id: 10,
+    device_id: 1,
+    started_at: "2026-09-04T00:00:00Z",
+    finished_at: null,
+    status: "success",
+    resources: {},
+    errors: {},
+    duration_ms: 1000,
+  },
+];
+
+function mockFetch() {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/v1/devices/1" && (init?.method === undefined || init.method === "GET")) {
+        return new Response(JSON.stringify(DEVICE), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url === "/api/v1/sites") {
+        return new Response(JSON.stringify(SITES), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url === "/api/v1/devices/1/snapshots") {
+        return new Response(JSON.stringify(SNAPSHOTS), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url === "/api/v1/devices/1/collect" && init?.method === "POST") {
+        return new Response(JSON.stringify({ queued: true, message: "ok", job_id: "uuid-do-job" }), { status: 202, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ detail: "Não encontrado." }), { status: 404, headers: { "Content-Type": "application/json" } });
+    }),
+  );
+}
+
+function renderDetail() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={["/devices/1"]}>
+        <Routes>
+          <Route path="/devices/:id" element={<DeviceDetail />} />
+          <Route path="/jobs" element={<div>jobs-page</div>} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+describe("DeviceDetail", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("renderiza dados do equipamento, snapshot e links de inspeção", async () => {
+    mockFetch();
+    renderDetail();
+    expect(await screen.findByText("ne8000-01")).toBeInTheDocument();
+    expect(screen.getByText("65001")).toBeInTheDocument();
+    expect(screen.getByText("POP-SP")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Reconciliar" })).toBeInTheDocument();
+  });
+
+  it("Coletar agora envia POST e navega para /jobs?device_id=1", async () => {
+    mockFetch();
+    renderDetail();
+    await userEvent.click(await screen.findByRole("button", { name: "Coletar agora" }));
+    expect(await screen.findByText("jobs-page")).toBeInTheDocument();
+    const chamada = vi.mocked(fetch).mock.calls.find(
+      (c) => String(c[0]) === "/api/v1/devices/1/collect" && String(c[1]?.method) === "POST",
+    );
+    expect(chamada).toBeTruthy();
+  });
+});
+```
+
+Run: `cd web && npx vitest run src/components/Layout.test.tsx src/pages/DeviceDetail.test.tsx` — Expected: 3 PASS. Depois `cd web && npx vitest run` (suíte completa), `npm run build` e `npx eslint src`.
+
+- [ ] **Step 6: commit**
 
 ```bash
-git add web/src/pages/DeviceDetail.tsx web/src/components/Layout.tsx web/src/App.tsx web/src/styles/global.css
-git commit -m "feat(web): detalhe de device com coleta/poll de job e layout de navegacao
+git add web/src/pages/DeviceDetail.tsx web/src/pages/DeviceDetail.test.tsx web/src/components/Layout.tsx web/src/components/Layout.test.tsx web/src/App.tsx web/src/api/hooks.ts web/src/styles/global.css
+git commit -m "feat(web): detalhe de device com coleta e layout de navegacao com logout
 
 Co-Authored-By: Claude Code <noreply@anthropic.com>"
 ```
@@ -2538,11 +5916,24 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 - Consumes: backend de verdade (compose + alembic + uvicorn) com `.env`/config padrão.
 - Produces: 2 specs de fumo verdes localmente com a stack de pé; documentos.
 
-- [ ] **Step 1: `web/e2e/setup.ts`** — seeds idempotentes: cria usuário `admin` via `gerenet users create admin --role administrador` (senha via env `E2E_PASSWORD` padrão `e2e-super-8`), cria device+site+org+circuito+vlan+prefixo através da API com X-Api-Key (enviada ao backend diretamente via fetch node com Api-Key de `settings.api_key` — ler de `GERENET_API_KEY` env). Sem segredo hardcoded: senha só no env.
+- [ ] **Step 1: `web/e2e/setup.ts`** — seeds idempotentes: cria usuário `admin` via `gerenet users create admin --role administrador` (senha via env `E2E_PASSWORD` padrão `e2e-super-8`), cria device+site+org+circuito+prefixo através da API com X-Api-Key (enviada ao backend diretamente via fetch node com Api-Key de `settings.api_key` — ler de `GERENET_API_KEY` env). Sem segredo hardcoded: senha só no env.
+
+> **Fatos verificados para o seed (contrato real do backend):**
+> - `POST /api/v1/users` exige **sessão de administrador** (`require_admin` — ator da API key é `usuario=None` → 403 "Somente administradores."; deps.py:49-53) — o usuário admin só pode ser criado via CLI; em seed node, invocar via `execSync` com a senha **pipedada no stdin do prompt** (nunca em argv).
+> - Header de API: **`x-api-key`** com `settings.api_key` (default `"dev-key-change-me"`; env `GERENET_API_KEY` sobrepõe — config.py:13).
+> - POSTs disponíveis para seed (payload mínimo):
+>   - `/api/v1/sites` → `{name, city?, uf? (2 letras), p2p_ipv4_block?, p2p_ipv6_base?}` (ex. `{name: "POP-SP", uf: "SP"}`);
+>   - `/api/v1/devices` → `{name, management_address, vendor? ("huawei" default), model?, family?, role?, site_id?, asn?, ssh_port?, tags?}` (ex. `{name: "ne8000-01", management_address: "10.0.0.1", site_id: 1, asn: 65001}`);
+>   - `/api/v1/organizations` → `{name, kind? ("downstream"|"parceiro"), asn?, irr_as_set?, notes?}`;
+>   - `/api/v1/circuits` → `{code, organization_id, site_id, access_device_id, access_port (^[A-Za-z0-9/-]+$), edge_device_id, backup_edge_device_id?, stack?, vlan_mode?, qinq?, vrf?, mtu?, bandwidth?, bfd?, p2p_v4_len?, description?}`;
+>   - `/api/v1/prefix-authorizations` → `{organization_id, family: "ipv4"|"ipv6", prefix, notes?}`.
+> - **Não há** rota de POST para vlan/IP como entidade separada (VLAN vive dentro do CircuitCreate, `vlan_mode`; IPAM é do serviço) — o seed não cria vlan isolada.
+> - **Ruling de execução (SDD):** o run e2e desta task roda contra banco **dedicado `gerenet_e2e`** (`GERENET_DATABASE_URL=…:5432/gerenet_e2e` para alembic + uvicorn + CLI de seed + playwright) — nunca o `gerenet` dev nem `gerenet_test`. O `web/e2e/README.md` documenta o fluxo padrão do dev (compose + alembic default); o ruling não muda o documento.
 - [ ] **Step 2: `login.spec.ts`**:
   - `test('login ok → dashboard', …)`: goto `/login`, preenche, entra; vê h1 "Dashboard".
   - `test('login inválido → erro', …)`: senha errada; vê "Usuário ou senha inválidos."
   - `test('logout', …)`: sai; volta ao `/login`.
+  - Conexões: `test.describe.serial`/storageState opcional — o login.ok pode guardar estado autenticado para o smoke (ex. `storageState` em `use`/`setup`); decisão do implementer, desde que os 3 testes de login rode em sequência limpa e o smoke trabalhe com sessão autenticada.
 - [ ] **Step 3: `smoke.spec.ts`**:
   - `test('criar e desativar site', …)`: site → lista → desativar com confirmação.
   - `test('abrir Reconcile com device seedado', …)`: select device → tabela/aviso renderizada.
@@ -2553,7 +5944,7 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 3. cd web && npm run build && npm run test:e2e   (segundo terminal: rodar seed `npx playwright test e2e/setup? — ou script npm run e2e:seed`)
 ```
 - [ ] **Step 5: README.md** — seção "Interface web — dev e build" (run-book §7 da spec; mencionar `GERENET_COOKIE_SECURE=true` sob HTTPS).
-- [ ] **Step 6: CLAUDE.md** — atualizar "Estado do repositório" com `web/` (scripts, proxy, o que roda em dev).
+- [ ] **Step 6: CLAUDE.md** — atualizar "Estado do repositório" com `web/` (scripts, proxy, o que roda em dev; mencionar `npm run test:e2e` + seed, e que os e2e rodam contra stack local (uvicorn) com browser local).
 - [ ] **Step 7: rodar e2e (stack local de pé) e commit.**
 
 ```bash
@@ -2602,3 +5993,24 @@ Expected: lint e testes verdes; build gera `web/dist`.
 - **Buraco encontrado na revisão do estado**: `reconciliation.py`/`communities.py` em `require_api_key` — coberto na **T1** (falla se a web for usar cookie).
 - **Placeholders**: nenhum TODO/TBD — os esboços curtos (Task 7 e 8) indicam campos exatos do schema e o padrão do teste, que o implementer segue à risca (as telas derivam mecanicamente).
 - **Consistência**: client sempre `apiFetch`; todas as rotas sob `RequireAuth`; **`useJobPoll` definido uma vez na Task 6** (`enabled` + refetchInterval 3s até status terminal `success/partial/error` — `JOB_STATUS` de models.py:22) e consumido nas Tasks 10 e 11 com o mesmo nome; tipos `*Out` conferidos nesta revisão contra models/schemas (`COMM_STATUS`, `SNAPSHOT_STATUS`, `JOB_STATUS`) e `verify_password` (users.py:46) / `_valida_senha` (users.py:63) / `create_user` (keyword-only) confirmados no código real.
+
+---
+
+## Cortes registrados na revisão final (T13, 2026-09-04)
+
+A revisão final de branch (gate anterior ao merge) apontou 5 achados Important.
+Quatro foram corrigidos nesta plan (loop de 401, poll de erro, erros de lista
+engolidos, invalidação do `has_password`); para o quinto — **edição de entidades
+e reativação** — a decisão é registrada aqui:
+
+- **Edição/reativação de entidades (spec §12.5 pede "listagem + criação +
+  edição + desativação"; o plano T7-T9 aprovou o padrão criar+desativar)**:
+  corte registrado como **follow-up de ciclo** (próximo ciclo web: `include_disabled`
+  nos GETs, formulários de edição, reativação). O botão "Reativar" morto em
+  `Users.tsx` e o link "Coletar" duplicado do Dashboard saíram já nesta revisão.
+- Outros cortes/adjudicações de follow-up: `.catch` de mutações por página
+  (rejeições não tratadas em ConfirmDialog/logout), a11y de dialog (foco/escape/
+  backdrop), cards do dashboard com `by_comm_status`/`snapshot_age_seconds`
+  (spec §6.3), guard de falha dura no webServer do Playwright (hoje
+  `reuseExistingServer` com aviso no run-book), e a pasta de Minors de polimento
+  de testes de T1-T9 (contida no ledger SDD — revisão nunca bloqueou por eles).

@@ -1,0 +1,72 @@
+:root {
+  --bg: #0f141a;
+  --bg-elevated: #171d24;
+  --bg-hover: #1f2730;
+  --border: #2a333d;
+  --text: #d7dde3;
+  --text-muted: #8a96a3;
+  --accent: #4aa8ff;
+  --text-on-accent: #fff;
+  --danger: #e5534b;
+  --warn: #d29a3a;
+  --ok: #3fb27f;
+  --unknown: #8a96a3;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f5f7f9;
+    --bg-elevated: #ffffff;
+    --bg-hover: #eef2f5;
+    --border: #d3dbe2;
+    --text: #1b232b;
+    --text-muted: #5a6875;
+    --accent: #1f6feb;
+    color-scheme: light;
+  }
+}
+body { margin: 0; background: var(--bg); color: var(--text); }
+a { color: var(--accent); }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+th, td { border-bottom: 1px solid var(--border); padding: 0.4rem 0.6rem; text-align: left; }
+button, input, select, textarea { font: inherit; }
+button { cursor: pointer; background: var(--bg-elevated); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 0.35rem 0.8rem; }
+button:hover { background: var(--bg-hover); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--text-on-accent); }
+input, select, textarea { background: var(--bg-elevated); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 0.35rem 0.5rem; }
+code, pre { font-family: var(--mono); }
+.badge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 999px; font-size: 0.75rem; border: 1px solid var(--border); }
+.badge-ok { color: var(--ok); }
+.badge-fail, .badge-danger { color: var(--danger); }
+.badge-warn { color: var(--warn); }
+.badge-unknown { color: var(--unknown); }
+.field { display: flex; flex-direction: column; gap: 0.25rem; margin-bottom: 0.8rem; font-size: 0.9rem; }
+.field em { color: var(--danger); font-style: normal; font-size: 0.8rem; }
+.dialog-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); display: flex; align-items: center; justify-content: center; }
+.dialog { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 8px; padding: 1.2rem; max-width: 420px; width: 90%; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem; }
+.mono-block { position: relative; }
+.mono-block pre { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem; overflow-x: auto; white-space: pre-wrap; }
+.mono-block button { position: absolute; top: 0.5rem; right: 0.5rem; }
+.page-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+.page-header h1 { margin: 0; font-size: 1.3rem; }
+.login { max-width: 360px; margin: 15vh auto; padding: 1.5rem; }
+.login h1 { margin-top: 0; }
+.login form { display: flex; flex-direction: column; gap: 0.8rem; }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem; margin-bottom: 1.2rem; }
+.card { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 8px; padding: 0.9rem; font-size: 0.9rem; }
+.card strong { display: block; font-size: 1.5rem; }
+.form-inline { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.6rem; margin-bottom: 1rem; }
+
+.app-shell { display: flex; flex-direction: column; min-height: 100vh; }
+.app-header { display: flex; align-items: center; gap: 1rem; padding: 0.6rem 1rem; border-bottom: 1px solid var(--border); background: var(--bg-elevated); }
+.app-header .app-titulo { font-weight: 700; text-decoration: none; color: inherit; }
+.app-header .app-usuario { margin-left: auto; font-size: 0.85rem; opacity: 0.8; }
+.app-corpo { display: flex; flex: 1; }
+.app-nav { display: flex; flex-direction: column; gap: 0.1rem; min-width: 190px; padding: 0.8rem; border-right: 1px solid var(--border); }
+.app-nav a { padding: 0.3rem 0.5rem; color: inherit; text-decoration: none; border-radius: 6px; font-size: 0.9rem; }
+.app-nav a.active { background: var(--accent); color: var(--text-on-accent); }
+.app-conteudo { flex: 1; padding: 1rem; overflow-x: auto; }

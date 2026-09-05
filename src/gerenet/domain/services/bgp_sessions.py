@@ -172,6 +172,22 @@ def get_session(session: Session, session_id: int) -> models.BgpSession:
     return sessao
 
 
+def list_communities(session: Session, session_id: int) -> list[models.Community]:
+    """Communities associadas à sessão, na ordem de associação."""
+    get_session(session, session_id)
+    return list(
+        session.scalars(
+            select(models.Community)
+            .join(
+                models.BgpSessionCommunity,
+                models.BgpSessionCommunity.community_id == models.Community.id,
+            )
+            .where(models.BgpSessionCommunity.session_id == session_id)
+            .order_by(models.BgpSessionCommunity.id)
+        )
+    )
+
+
 def list_sessions(
     session: Session,
     circuit_id: int | None = None,
