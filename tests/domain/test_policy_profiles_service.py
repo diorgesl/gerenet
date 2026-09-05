@@ -75,6 +75,32 @@ def test_update_policy_profile_altera_e_valida(db_session: Session) -> None:
             db_session.commit()
 
 
+def test_update_policy_profile_rejeita_label_e_nome_nulos(db_session: Session) -> None:
+    from gerenet.domain.schemas import PolicyProfileUpdate
+
+    perfil = models.PolicyProfile(
+        name="c3-perfil-nulo", label="Nulo", direction="export", kind="produto", prefixes=None
+    )
+    db_session.add(perfil)
+    db_session.commit()
+    try:
+        # None explícito chega ao serviço via model_dump(exclude_unset=True)
+        # e deve dar o mesmo ValidationError que valor vazio — não AttributeError.
+        with pytest.raises(ValidationError, match="Label do perfil não pode ser vazio"):
+            svc.update_policy_profile(
+                db_session, perfil.id, PolicyProfileUpdate(label=None), actor="cli"
+            )
+        with pytest.raises(ValidationError, match="Nome do perfil não pode ser vazio"):
+            svc.update_policy_profile(
+                db_session, perfil.id, PolicyProfileUpdate(name=None), actor="cli"
+            )
+    finally:
+        perfil = db_session.get(models.PolicyProfile, perfil.id)
+        if perfil is not None:
+            db_session.delete(perfil)
+            db_session.commit()
+
+
 def test_disable_policy_profile_audita(db_session: Session) -> None:
     perfil = models.PolicyProfile(
         name="c3-perfil-off", label="Desliga", direction="export", kind="produto", prefixes=None

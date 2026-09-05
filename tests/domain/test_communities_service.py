@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from gerenet.domain import models
 from gerenet.domain.services import communities as svc
-from gerenet.domain.services.errors import NotFoundError
+from gerenet.domain.services.errors import NotFoundError, ValidationError
 
 
 def test_catalogo_communities_tem_as_tres_sementes(db_session: Session) -> None:
@@ -38,6 +38,24 @@ def test_update_community_altera_e_audita(db_session: Session) -> None:
         )
         assert evento is not None
         assert evento.details["antes"] == {"name": "c3-teste-upd", "notes": "antes"}
+    finally:
+        com = db_session.get(models.Community, com.id)
+        if com is not None:
+            db_session.delete(com)
+            db_session.commit()
+
+
+def test_update_community_rejeita_nome_nulo(db_session: Session) -> None:
+    from gerenet.domain.schemas import CommunityUpdate
+
+    com = models.Community(name="c3-com-nulo")
+    db_session.add(com)
+    db_session.commit()
+    try:
+        # None explícito chega ao serviço via model_dump(exclude_unset=True)
+        # e deve dar o mesmo ValidationError que nome vazio — não AttributeError.
+        with pytest.raises(ValidationError, match="Nome da community não pode ser vazio"):
+            svc.update_community(db_session, com.id, CommunityUpdate(name=None), actor="cli")
     finally:
         com = db_session.get(models.Community, com.id)
         if com is not None:

@@ -38,7 +38,7 @@ def update_policy_profile(
         return perfil
     if "name" in mudancas:
         nome = mudancas["name"]
-        if not nome.strip():
+        if not (nome or "").strip():
             raise ValidationError("Nome do perfil não pode ser vazio.")
         ocupado = session.scalar(
             select(models.PolicyProfile).where(
@@ -47,7 +47,7 @@ def update_policy_profile(
         )
         if ocupado is not None:
             raise ConflictError(f"Perfil já existe: {nome}.")
-    if "label" in mudancas and not mudancas["label"].strip():
+    if "label" in mudancas and not (mudancas["label"] or "").strip():
         raise ValidationError("Label do perfil não pode ser vazio.")
     if "direction" in mudancas and mudancas["direction"] not in models.DIRECTION:
         raise ValidationError(

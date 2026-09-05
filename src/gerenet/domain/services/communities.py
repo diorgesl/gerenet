@@ -33,7 +33,7 @@ def update_community(
         return com
     if "name" in mudancas:
         nome = mudancas["name"]
-        if not nome.strip():
+        if not (nome or "").strip():
             raise ValidationError("Nome da community não pode ser vazio.")
         ocupado = session.scalar(
             select(models.Community).where(
