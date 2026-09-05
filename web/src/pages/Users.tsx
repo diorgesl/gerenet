@@ -13,7 +13,7 @@ const ROLES = ["visualizador", "operador", "aprovador", "executor", "administrad
 
 export default function Users() {
   const { usuario } = useAuth();
-  const { data, isLoading } = useUsers();
+  const { data, isLoading, error } = useUsers();
   const criar = useUserCriar();
   const atualizar = useUserAtualizar();
   const senha = useUserSenha();
@@ -71,6 +71,7 @@ export default function Users() {
         ]}
         linhas={data ?? []}
         carregando={isLoading}
+        erro={error ? (error instanceof ApiError ? error.message : "Falha ao carregar os usuários.") : undefined}
         acoes={(u) => (
           <>
             <button
