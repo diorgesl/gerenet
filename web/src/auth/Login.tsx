@@ -32,7 +32,11 @@ export default function Login() {
 
   return (
     <main className="login">
-      <h1>gerenet</h1>
+      <div className="logomarca">
+        <span className="led" aria-hidden="true" />
+        <h1>gerenet</h1>
+      </div>
+      <p className="sub">Gerenciador de Rede Huawei VRP — entre com a conta de operador.</p>
       {erro && <p role="alert">{erro}</p>}
       <form onSubmit={onSubmit}>
         <label>

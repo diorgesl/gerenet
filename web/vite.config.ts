@@ -6,7 +6,9 @@ import path from "node:path";
 export default defineConfig({
   plugins: [react()],
   resolve: { alias: { "@": path.resolve(__dirname, "src") } },
-  server: { proxy: { "/api": "http://localhost:8000" } },
+  server: {
+    proxy: { "/api": process.env.VITE_API_PROXY_TARGET ?? "http://localhost:8000" },
+  },
   test: {
     environment: "jsdom",
     globals: true,

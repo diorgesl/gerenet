@@ -6,6 +6,7 @@ from gerenet.cli import (
     collect,
     communities,
     contacts,
+    credential_groups,
     devices,
     hostkey,
     organizations,
@@ -29,6 +30,7 @@ app.add_typer(prefix_authorizations.app, name="prefix-authorizations", help="Aut
 app.add_typer(policy_profiles.app, name="policy-profiles", help="Produtos de roteamento.")
 app.add_typer(hostkey.app, name="hostkey", help="Host keys dos equipamentos.")
 app.add_typer(vault.app, name="vault", help="Credenciais de automação no Vault.")
+app.add_typer(credential_groups.app, name="credential-groups", help="Grupos de credencial (SoT).")
 app.add_typer(collect.app, name="collect", help="Coleta read-only.")
 app.add_typer(snapshot.app, name="snapshot", help="Snapshots de coleta.")
 app.add_typer(communities.app, name="communities", help="Communities BGP.")

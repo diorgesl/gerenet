@@ -68,16 +68,24 @@ def run_collection(
         token = secrets.token_hex(16)
         redis = Redis.from_url(settings.redis_url)
         if not redis.set(chave_lock, token, nx=True, ex=settings.lock_ttl_seconds):
+            # Lock ativo não é falha desta execução (outro job é o dono), mas deixa
+            # registro do porquê — senão o operador só vê o job "sumido" (§18).
+            session.add(
+                AuditEvent(type="collect.skipped", actor=actor, details={"device_id": device_id, "reason": "lock"})
+            )
+            session.commit()
             return {"status": "error", "snapshot_id": None, "error": "Equipamento já está sendo coletado (lock ativo)."}
         try:
             dev = device_svc.get_device(session, device_id)
-            grupo = dev.credential_group
-            if grupo is None:
-                raise ValueError(f"{dev.name} não possui grupo de credencial.")
-
+            # JobRun nasce ANTES da validação de grupo: falha pré-snapshot também
+            # deixa trilha no banco (motivo em job.error + evento collect.failed).
             job = JobRun(device_id=dev.id, actor=actor, origin=origin, kind="collect", status="running")
             session.add(job)
             session.commit()
+
+            grupo = dev.credential_group
+            if grupo is None:
+                raise ValueError(f"{dev.name} não possui grupo de credencial.")
 
             cred = VaultSecretStore(settings.vault_url, settings.vault_token).get_credential(grupo.vault_path)
 
@@ -164,7 +172,12 @@ def run_collection(
         except Exception as exc:  # noqa: BLE001 — contrato dict preservado em qualquer falha
             if job is not None:
                 job.status = "error"
+                job.error = str(exc)
                 job.finished_at = datetime.now(UTC)
+                session.commit()
+                session.add(
+                    AuditEvent(type="collect.failed", actor=actor, details={"device_id": device_id, "error": str(exc)})
+                )
                 session.commit()
             return {"status": "error", "snapshot_id": snapshot.id if snapshot else None, "error": str(exc)}
         finally:

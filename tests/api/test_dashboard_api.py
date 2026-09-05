@@ -76,7 +76,11 @@ def test_dashboard_agrega(client: TestClient, db_session) -> None:
     # 2º snapshot (id e started_at maiores) para r1 e 2º job "queued" (id maior)
     # para r2: o dashboard deve cravar o de MAIOR id, não o primeiro que achar.
     snap_novo = models.DeviceSnapshot(
-        device_id=r1.id, status="success", resources={}, started_at=datetime.now(UTC) + timedelta(minutes=1)
+        device_id=r1.id,
+        status="error",
+        resources={},
+        errors={"version": "Authentication to device failed."},
+        started_at=datetime.now(UTC) + timedelta(minutes=1),
     )
     job = models.JobRun(device_id=r2.id, origin="api", actor="api", kind="collect", status="running")
     job_novo = models.JobRun(device_id=r2.id, origin="api", actor="api", kind="collect", status="queued")
@@ -112,7 +116,8 @@ def test_dashboard_agrega(client: TestClient, db_session) -> None:
     assert nomes == ["ne8k-dash1", "ne8k-dash2", "r1", "r2", "r3", "sw-dash"]
     p = {d["name"]: d for d in dados["per_device"]}
     assert p["r1"]["latest_snapshot"]["id"] == snap_novo.id  # maior id vence
-    assert p["r1"]["latest_snapshot"]["status"] == "success"
+    assert p["r1"]["latest_snapshot"]["status"] == "error"
+    assert p["r1"]["latest_snapshot"]["error"] == "Authentication to device failed."
     assert datetime.fromisoformat(p["r1"]["latest_snapshot"]["started_at"]) > snap.started_at
     assert isinstance(p["r1"]["snapshot_age_seconds"], (int, float))
     assert p["r1"]["site_name"] == "pop-dash"

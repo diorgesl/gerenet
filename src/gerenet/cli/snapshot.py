@@ -23,3 +23,7 @@ def show(
         typer.echo(f"#{snap.id} device={snap.device_id} status={snap.status} duração={snap.duration_ms}ms")
         typer.echo("Recursos: " + ", ".join(snap.resources.keys()))
         typer.echo("Brutos: " + ", ".join(str(p) for ps in snap.raw_files.values() for p in ps))
+        if snap.errors:
+            typer.echo("Erros:")
+            for nome_do_recurso, mensagem in sorted(snap.errors.items()):
+                typer.echo(f"  {nome_do_recurso}: {mensagem}")

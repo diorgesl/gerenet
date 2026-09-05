@@ -25,23 +25,32 @@ def test_lista_filtros_e_detalhe(client: TestClient, db_session) -> None:
     d2 = create_device(db_session, DeviceCreate(name="job-dev-2", management_address="10.9.0.12"), actor="cli")
     j1 = JobRun(device_id=d1.id, origin="api", actor="api", kind="collect", status="queued")
     j2 = JobRun(device_id=d2.id, origin="cli", actor="cli", kind="collect", status="success", duration_ms=1200)
-    db_session.add_all([j1, j2])
+    j3 = JobRun(
+        device_id=d1.id,
+        origin="api",
+        actor="api",
+        kind="collect",
+        status="error",
+        error="Falha ao ler o segredo: timeout no Vault.",
+    )
+    db_session.add_all([j1, j2, j3])
     db_session.commit()
 
     lista = client.get("/api/v1/jobs", headers=_auth()).json()
-    assert [j["id"] for j in lista] == [j2.id, j1.id]
+    assert [j["id"] for j in lista] == [j3.id, j2.id, j1.id]
     assert set(lista[0]) == {
         "id", "device_id", "origin", "actor", "kind", "status",
-        "started_at", "finished_at", "duration_ms", "snapshot_id",
+        "started_at", "finished_at", "duration_ms", "snapshot_id", "error",
     }
+    assert lista[0]["error"] == "Falha ao ler o segredo: timeout no Vault."  # motivo exposto
 
     so_running = client.get("/api/v1/jobs?status=queued", headers=_auth()).json()
     assert [j["id"] for j in so_running] == [j1.id]
 
     # Cobertura dos filtros declarados: kind + paginação (limit/offset) — id DESC
-    # [j2, j1]; offset=1 pula o maior id e limit=1 devolve exatamente um job.
+    # [j3, j2, j1]; offset=1 pula o maior id e limit=1 devolve exatamente um job.
     paginado = client.get("/api/v1/jobs?kind=collect&limit=1&offset=1", headers=_auth()).json()
-    assert [j["id"] for j in paginado] == [j1.id]
+    assert [j["id"] for j in paginado] == [j2.id]
 
     por_device = client.get(f"/api/v1/jobs?device_id={j2.device_id}", headers=_auth()).json()
     assert [j["id"] for j in por_device] == [j2.id]

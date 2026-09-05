@@ -70,8 +70,10 @@ def connect_and_run(device, username: str, password: str, commands: list[str], s
                 device.name,
                 "indisponível — verifique a conectividade SSH e tente novamente",
             )
-        if actual != normalize_fingerprint(device.host_key_fingerprint):
-            raise HostKeyMismatch(device.name, actual)
+        # Normaliza os dois lados: o servidor calcula com padding base64 e o
+        # `ssh-keygen -lf` do operador imprime sem — mesma chave, formas iguais.
+        if normalize_fingerprint(actual) != normalize_fingerprint(device.host_key_fingerprint):
+            raise HostKeyMismatch(device.name, normalize_fingerprint(actual))
         saidas: dict[str, str] = {}
         for cmd in commands:
             saidas[cmd] = conn.send_command(cmd, read_timeout=settings.read_timeout)

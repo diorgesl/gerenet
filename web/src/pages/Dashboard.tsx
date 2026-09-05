@@ -6,63 +6,109 @@ import { TimeAgo } from "@/components/TimeAgo";
 import { PageHeader } from "@/components/PageHeader";
 import type { PerDeviceOut } from "@/api/types";
 
+function led(total: number, ativos: number): string {
+  if (total === 0) return "gray";
+  return ativos === total ? "green" : "amber";
+}
+
 export default function Dashboard() {
   const { data, isLoading, error } = useDashboard();
 
   return (
     <main>
-      <PageHeader titulo="Dashboard" />
+      <PageHeader titulo="Dashboard" sub="Estado atual dos equipamentos e serviços registrados." />
       {isLoading && <p aria-busy="true">Carregando…</p>}
       {error && !data && (
-        <p role="alert">{error instanceof ApiError ? error.message : "Falha ao carregar o painel."}</p>
+        <p role="alert" className="erro-banner">
+          {error instanceof ApiError ? error.message : "Falha ao carregar o painel."}
+        </p>
       )}
       {data && (
         <>
-          <section className="cards">
-            <div className="card"><strong>{data.devices.total}</strong> equipamentos</div>
-            <div className="card"><strong>{data.devices.active}</strong> ativos</div>
-            <div className="card"><strong>{data.bgp_sessions.active}</strong> sessões BGP ativas</div>
-            <div className="card"><strong>{data.circuits.active}</strong> circuitos ativos</div>
-            <div className="card"><strong>{data.vlans.reserved}</strong> VLANs reservadas</div>
-            <div className="card"><strong>{data.ip_prefixes.reserved}</strong> prefixos reservados</div>
+          <section className="health" aria-label="Saúde da rede">
+            <div className="metric">
+              <span className={`led ${led(data.devices.total, data.devices.active)}`} aria-hidden="true" />
+              <span className="val">{data.devices.active}/{data.devices.total}</span>
+              <span className="label">equipamentos<br />ativos</span>
+            </div>
+            <div className="metric">
+              <span className={`led ${data.bgp_sessions.active > 0 ? "green" : "gray"}`} aria-hidden="true" />
+              <span className="val">{data.bgp_sessions.active}</span>
+              <span className="label">sessões BGP<br />ativas</span>
+            </div>
+            <div className="metric">
+              <span className={`led ${data.circuits.active > 0 ? "green" : "gray"}`} aria-hidden="true" />
+              <span className="val">{data.circuits.active}</span>
+              <span className="label">circuitos<br />ativos</span>
+            </div>
+            <div className="metric">
+              <span className={`led ${data.vlans.reserved > 0 ? "green" : "gray"}`} aria-hidden="true" />
+              <span className="val">{data.vlans.reserved}</span>
+              <span className="label">VLANs<br />reservadas</span>
+            </div>
+            <div className="metric">
+              <span className={`led ${data.ip_prefixes.reserved > 0 ? "green" : "gray"}`} aria-hidden="true" />
+              <span className="val">{data.ip_prefixes.reserved}</span>
+              <span className="label">prefixos<br />reservados</span>
+            </div>
           </section>
+
           <h2>Equipamentos</h2>
-          <table>
-            <thead>
-              <tr>
-                <th>Nome</th><th>Site</th><th>Status</th><th>Última coleta</th><th>Snapshot</th><th>Job</th><th>Ações</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.per_device.map((d: PerDeviceOut) => (
-                <tr key={d.device_id}>
-                  <td><Link to={`/devices/${d.device_id}`}>{d.name}</Link></td>
-                  <td>{d.site_name ?? "—"}</td>
-                  <td><StatusBadge estado={d.comm_status} /></td>
-                  <td><TimeAgo iso={d.last_collected_at} /></td>
-                  <td>{d.latest_snapshot ? <StatusBadge estado={d.latest_snapshot.status} /> : "—"}</td>
-                  <td>{d.active_job ? <StatusBadge estado={d.active_job.status} /> : "—"}</td>
-                  <td>
-                    <Link to={`/devices/${d.device_id}`}>Detalhe</Link>{" "}
-                    <Link to={`/reconcile?device_id=${d.device_id}`}>Reconciliar</Link>
-                  </td>
+          {data.per_device.length === 0 ? (
+            <p className="vazio">
+              Nenhum equipamento cadastrado ainda — comece por{" "}
+              <Link to="/devices">Equipamentos</Link>.
+            </p>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>Nome</th><th>Site</th><th>Status</th><th>Última coleta</th><th>Snapshot</th><th>Job</th><th>Ações</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {data.per_device.map((d: PerDeviceOut) => (
+                  <tr key={d.device_id}>
+                    <td><Link to={`/devices/${d.device_id}`}>{d.name}</Link></td>
+                    <td>{d.site_name ?? "—"}</td>
+                    <td><StatusBadge estado={d.comm_status} /></td>
+                    <td><TimeAgo iso={d.last_collected_at} /></td>
+                    <td>
+                      {d.latest_snapshot ? <StatusBadge estado={d.latest_snapshot.status} /> : "—"}
+                      {d.latest_snapshot?.error && (
+                        <div className="erro-curto" title={d.latest_snapshot.error}>
+                          {d.latest_snapshot.error}
+                        </div>
+                      )}
+                    </td>
+                    <td>{d.active_job ? <StatusBadge estado={d.active_job.status} /> : "—"}</td>
+                    <td>
+                      <Link to={`/devices/${d.device_id}`}>Detalhe</Link>{" "}
+                      <Link to={`/reconcile?device_id=${d.device_id}`}>Reconciliar</Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+
           <h2>Auditoria recente</h2>
-          <table>
-            <thead><tr><th>Quando</th><th>Ação</th><th>Autor</th></tr></thead>
-            <tbody>
-              {data.recent_audit.map((e) => (
-                <tr key={e.id}>
-                  <td><TimeAgo iso={e.created_at} /></td>
-                  <td>{e.type}</td>
-                  <td>{e.actor}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {data.recent_audit.length === 0 ? (
+            <p className="vazio">Nenhum evento registrado até agora.</p>
+          ) : (
+            <table>
+              <thead><tr><th>Quando</th><th>Ação</th><th>Autor</th></tr></thead>
+              <tbody>
+                {data.recent_audit.map((e) => (
+                  <tr key={e.id}>
+                    <td><TimeAgo iso={e.created_at} /></td>
+                    <td>{e.type}</td>
+                    <td>{e.actor}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </>
       )}
     </main>

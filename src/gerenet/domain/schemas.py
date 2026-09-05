@@ -370,6 +370,7 @@ class SnapshotResumoOut(BaseModel):
     id: int
     status: str
     started_at: datetime
+    error: str | None = None  # primeiro motivo de falha, quando o último snapshot não está ok
 
 
 class JobResumoOut(BaseModel):
@@ -514,3 +515,4 @@ class JobRunOut(BaseModel):
     finished_at: datetime | None
     duration_ms: int
     snapshot_id: int | None
+    error: str | None = None  # motivo da falha (falha pré-snapshot: grupo, lock, segredo…)

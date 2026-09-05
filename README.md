@@ -9,6 +9,36 @@ Fase 1: inventário e coleta read-only.
 - App: `cp .env.example .env`; `GERENET_DATABASE_URL=… uv run alembic upgrade head`; `uv run uvicorn gerenet.api.main:create_app --factory --reload --port 8000`
 - Testes: `uv run pytest`
 
+## Docker — dev completo (compose)
+
+Tudo (db, redis, vault, API, worker e frontend) com um comando, sem instalar
+Python/Node na máquina (só Docker):
+
+```bash
+docker compose up -d --build
+```
+
+- **API** (FastAPI, hot reload) em `http://localhost:8000` — migrações rodam no
+  start (`alembic upgrade head`, somente no serviço `api`);
+- **Frontend** (Vite + HMR) em `http://localhost:5173`, com `/api` proxyado
+  para o serviço `api` (`VITE_API_PROXY_TARGET`);
+- **Worker** RQ conectado ao redis.
+
+Primeiro uso: criar o usuário admin
+`docker compose exec api gerenet users create admin --role administrador`
+(senha por prompt — nunca em argv).
+
+Comandos dentro do container:
+`docker compose exec api uv run pytest -q`,
+`docker compose exec api gerenet …`, `docker compose logs -f api web`.
+
+Ao alterar `pyproject.toml`/`Dockerfile.dev` (dependências), recriar:
+`docker compose up -d --build`.
+
+⚠️ **`npm run test:e2e` (host): pare o compose antes** — o Playwright sobe o
+próprio uvicorn na :8000 e usa o banco dedicado `gerenet_e2e`; a api do compose
+ocupando a porta/banco de dev quebra esse fluxo.
+
 ## Autenticação web (ciclo C)
 
 - Login local com perfis §17: `gerenet users create admin --role administrador` (senha por

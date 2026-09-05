@@ -35,6 +35,12 @@ export default function JobDetail() {
             <dd>{data.finished_at ? <TimeAgo iso={data.finished_at} /> : "—"}</dd>
             <dt>Duração</dt>
             <dd>{data.duration_ms} ms</dd>
+            {data.error && (
+              <>
+                <dt>Motivo</dt>
+                <dd><code className="erro-texto">{data.error}</code></dd>
+              </>
+            )}
           </dl>
           {data.snapshot_id !== null && (
             <p>

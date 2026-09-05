@@ -62,7 +62,12 @@ def dashboard(session: SessionDep) -> DashboardOut:
                 last_collected_at=d.last_collected_at,
                 snapshot_age_seconds=idade,
                 latest_snapshot=(
-                    SnapshotResumoOut(id=snap.id, status=snap.status, started_at=snap.started_at)
+                    SnapshotResumoOut(
+                        id=snap.id,
+                        status=snap.status,
+                        started_at=snap.started_at,
+                        error=next(iter(snap.errors.values()), None) if snap.errors else None,
+                    )
                     if snap is not None else None
                 ),
                 active_job=JobResumoOut(id=job.id, status=job.status) if job is not None else None,

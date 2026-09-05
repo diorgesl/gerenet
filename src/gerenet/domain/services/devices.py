@@ -67,6 +67,24 @@ def disable_device(session: Session, device_id: int, *, actor: str) -> models.De
     return dev
 
 
+def enable_device(session: Session, device_id: int, *, actor: str) -> models.Device:
+    dev = get_device(session, device_id)
+    if dev.admin_status is True:
+        return dev  # idempotente: sem transição, sem evento (Ruling 5)
+    dev.admin_status = True
+    registrar(
+        session,
+        tipo="device.enable",
+        ator=actor,
+        objeto="device",
+        objeto_id=dev.id,
+        antes={"admin_status": False},
+        depois={"admin_status": True},
+    )
+    session.commit()
+    return dev
+
+
 def touch_collection(
     session: Session,
     device: models.Device,

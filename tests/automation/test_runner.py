@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from gerenet.automation.netmiko_conn import ConnectionFailed
 from gerenet.automation.runner import run_collection
 from gerenet.config import Settings
-from gerenet.domain.models import CredentialGroup, DeviceSnapshot, JobRun
+from gerenet.domain.models import AuditEvent, CredentialGroup, DeviceSnapshot, JobRun
 from gerenet.domain.schemas import DeviceCreate
 from gerenet.domain.services.devices import create_device
 
@@ -454,3 +454,46 @@ def test_comandos_verbose_respeita_o_cap_de_50(db_session: Session) -> None:
     assert len(comandos) == 50
     assert len(set(comandos)) == 50  # comando por sessão distinta; o corte é o cap
     assert all(c.startswith("display bgp ") and c.endswith(" verbose") for c in comandos)
+
+
+def test_falha_sem_grupo_registra_jobrun_error_e_audit(db_session: Session) -> None:
+    """Falha pré-execução (grupo ausente) precisa de trilha: JobRun error + auditoria (§18)."""
+    dev = create_device(db_session, DeviceCreate(name="sem-grupo-r", management_address="10.0.0.45"), actor="cli")
+
+    resultado = run_collection(
+        dev.id, settings=Settings(_env_file=None, backups_dir=Path("/tmp")), session_override=db_session
+    )
+    assert resultado["status"] == "error"
+    assert "grupo de credencial" in resultado["error"]
+
+    job = db_session.query(JobRun).filter_by(device_id=dev.id).one()
+    assert job.status == "error"
+    assert job.error is not None
+    assert "grupo de credencial" in job.error
+    assert job.finished_at is not None
+
+    evento = db_session.query(AuditEvent).filter_by(type="collect.failed").one()
+    assert evento.details["device_id"] == dev.id
+    assert "grupo de credencial" in evento.details["error"]
+
+
+def test_lock_ativo_registra_audit_skipped(db_session: Session) -> None:
+    """Lock de outro job não é falha fatal de execução, mas deixa registro (por quê)."""
+    dev = _dev_com_grupo(db_session, "r-lock", "10.0.0.46")
+    r = Redis.from_url(Settings(_env_file=None).redis_url)
+    chave = f"gerenet:lock:device:{dev.id}"
+    try:
+        assert r.set(chave, "outro-token", ex=60)
+        resultado = run_collection(
+            dev.id, settings=Settings(_env_file=None, backups_dir=Path("/tmp")), session_override=db_session
+        )
+    finally:
+        r.delete(chave)
+
+    assert resultado["status"] == "error"
+    assert "lock" in resultado["error"]
+
+    evento = db_session.query(AuditEvent).filter_by(type="collect.skipped").one()
+    assert evento.details["device_id"] == dev.id
+    # Nenhum JobRun novo criado: o dono do lock (outro job) é quem tem a execução.
+    assert db_session.query(JobRun).filter_by(device_id=dev.id).count() == 0

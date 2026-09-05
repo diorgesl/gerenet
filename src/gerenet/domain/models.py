@@ -119,6 +119,7 @@ class JobRun(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     duration_ms: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     snapshot_id: Mapped[int | None] = mapped_column(ForeignKey("device_snapshots.id"))
+    error: Mapped[str | None] = mapped_column(Text)  # motivo da falha, quando status=error
 
 
 class AuditEvent(Base):

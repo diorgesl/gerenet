@@ -15,7 +15,12 @@ const DASH = {
       comm_status: "ok",
       last_collected_at: null,
       snapshot_age_seconds: null,
-      latest_snapshot: null,
+      latest_snapshot: {
+        id: 9,
+        status: "error",
+        started_at: "2026-09-05T17:12:42Z",
+        error: "Authentication to device failed.",
+      },
       active_job: null,
     },
   ],
@@ -50,7 +55,9 @@ describe("Dashboard", () => {
       </QueryClientProvider>,
     );
     expect(await screen.findByText("ne8000-01")).toBeTruthy();
-    expect(screen.getByText("equipamentos")).toHaveTextContent(/^3 equipamentos$/);
+    expect(screen.getByText("2/3")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Equipamentos" })).toBeTruthy();
+    expect(screen.getByText("Authentication to device failed.")).toBeTruthy();
     expect(screen.getByText("coleta")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Reconciliar" })).toBeTruthy();
   });

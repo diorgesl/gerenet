@@ -95,6 +95,11 @@ export default function Jobs() {
           { key: "kind", title: "Tipo" },
           { key: "actor", title: "Autor" },
           { key: "status", title: "Status", render: (j) => <StatusBadge estado={j.status} /> },
+          {
+            key: "error",
+            title: "Motivo",
+            render: (j) => (j.error ? <span className="erro-curto" title={j.error}>{j.error}</span> : "—"),
+          },
           { key: "started_at", title: "Início", render: (j) => <TimeAgo iso={j.started_at} /> },
           { key: "duration_ms", title: "Duração (ms)" },
         ]}

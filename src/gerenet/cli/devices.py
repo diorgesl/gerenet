@@ -75,3 +75,15 @@ def disable(device: str = typer.Argument(..., help="ID ou nome do equipamento.")
             raise typer.Exit(1)
         svc.disable_device(session, dev.id, actor="cli")
     typer.echo(f"Equipamento {dev.name} desativado.")
+
+
+@app.command("enable")
+def enable(device: str = typer.Argument(..., help="ID ou nome do equipamento.")) -> None:
+    """Reativa um equipamento desativado (sem tocar no histórico)."""
+    with get_session() as session:
+        dev = resolver(session, device)
+        if dev is None:
+            typer.echo("Equipamento não encontrado.", err=True)
+            raise typer.Exit(1)
+        svc.enable_device(session, dev.id, actor="cli")
+    typer.echo(f"Equipamento {dev.name} reativado.")

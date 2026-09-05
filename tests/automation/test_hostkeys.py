@@ -6,8 +6,17 @@ from gerenet.domain.services.devices import create_device
 
 
 def test_normaliza_fingerprint() -> None:
-    assert normalize_fingerprint("  SHA256:AbCdEf==  ") == "sha256:AbCdEf=="
-    assert normalize_fingerprint("SHA256:abcdef==") == "sha256:abcdef=="
+    assert normalize_fingerprint("  SHA256:AbCdEf==  ") == "sha256:AbCdEf"
+    assert normalize_fingerprint("SHA256:abcdef==") == "sha256:abcdef"
+    assert normalize_fingerprint("sha256:abcdef") == "sha256:abcdef"
+
+
+def test_fingerprint_padding_nao_quebra_igualdade() -> None:
+    """A mesma chave pode chegar com padding ('ssh-keygen -lf' imprime sem, o cálculo
+    `sha256:` do servidor com) — os dois lados precisam canonicalizar iguais."""
+    servidor = "sha256:h0k1DFuQeWw43aX2zHN0XIUuR/lSH7lirO/mAdB311U="
+    registrado = "SHA256:h0k1DFuQeWw43aX2zHN0XIUuR/lSH7lirO/mAdB311U"
+    assert normalize_fingerprint(servidor) == normalize_fingerprint(registrado)
 
 
 def test_registro_gera_audit(db_session: Session) -> None:

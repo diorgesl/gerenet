@@ -182,7 +182,7 @@ export interface PerDeviceOut {
   comm_status: string;
   last_collected_at: string | null;
   snapshot_age_seconds: number | null;
-  latest_snapshot: { id: number; status: string; started_at: string } | null;
+  latest_snapshot: { id: number; status: string; started_at: string; error: string | null } | null;
   active_job: { id: number; status: string } | null;
 }
 export interface DashboardOut {
@@ -210,6 +210,7 @@ export interface JobRunOut {
   finished_at: string | null;
   duration_ms: number;
   snapshot_id: number | null;
+  error: string | null;
 }
 export interface CollectResposta {
   queued: boolean;

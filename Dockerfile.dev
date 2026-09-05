@@ -1,0 +1,23 @@
+# Imagem de desenvolvimento (compose): projeto editável + grupo dev (pytest/ruff).
+# O compose usa bind mounts de src/alembic para hot reload; releitura de
+# dependências exige rebuild (`docker compose build`).
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+
+WORKDIR /srv/app
+
+# Scripts do venv disponíveis para qualquer exec (inclusive `docker compose exec`)
+ENV PATH="/srv/app/.venv/bin:$PATH"
+
+# Manifestos primeiro (cache de camada)
+COPY pyproject.toml uv.lock ./
+COPY alembic.ini ./
+COPY alembic ./alembic
+COPY src ./src
+
+RUN uv sync --frozen
+
+COPY docker/dev-entrypoint.sh /usr/local/bin/dev-entrypoint
+RUN chmod +x /usr/local/bin/dev-entrypoint
+
+# Default: API com hot reload (compose/worker podem sobrescrever via command)
+CMD ["uv", "run", "uvicorn", "gerenet.api.main:create_app", "--factory", "--reload", "--host", "0.0.0.0", "--port", "8000"]
