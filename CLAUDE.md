@@ -136,5 +136,22 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   revoga as sessões; dashboard usa `by_comm_status` e `snapshot_age_seconds`;
   `npm run test:e2e` tem guard com `reuseExistingServer: false` (porta 8000
   ocupada = falha dura).
+- Web (ciclo E): **wiki operacional** — página `/wiki` (grupo de nav "Ajuda",
+  rota na SPA), API `/api/v1/wiki` (router `gerenet.api.wiki`, renderização
+  server-side com `markdown` + sanitização `nh3` — a SPA nunca renderiza
+  markdown cru); conteúdo em `docs/wiki/` (10 páginas PT-BR, frontmatter
+  `title`/`secao`/`order`/`em_breve`, `em_breve: true` = badge "(em breve)" na
+  sidebar + aviso na página); **tooltips de campo** — prop `help` no `FormField`
+  (`.field-help` + `.field-help-dica` no hover/foco), textos centralizados em
+  `web/src/help.ts` (o `npm run build` valida as chaves).
+- Backend (ciclo D, estado no momento do ciclo E): **API de change requests já
+  existe** — `/api/v1/change-requests` (router `gerenet.api.routers.change_requests`,
+  papéis via `require_papel`): criar/listar/detalhar, enviar, approve (com
+  re-aprovação após reconciliação), cancelar, executar, rollback (gera CR inverso
+  em `aguardando_aprovacao`; 422 sem steps aplicados) e reconciliar. **A aplicação
+  real em equipamento ainda NÃO**: `POST /{cr_id}/executar` apenas marca o estado
+  (`marcar_executando` — docstring anota que o enqueue na fila `gerenet-change`
+  é plugado depois); não há worker/fila da mudança, e a UI web do fluxo de
+  mudanças ainda não existe.
 - Convenções previstas no `.gitignore`: Python com venv e pytest (`.venv/`, `.pytest_cache/`), deploy via Docker Compose em `deploy/` com `.env` ignorado, `config.yaml` local com segredos **fora do repositório**, logs em `logs/` ignorados.
 - `.claude/settings.local.json` contém token e aponta o harness para uma API externa: é arquivo local — não versionar nem alterar.

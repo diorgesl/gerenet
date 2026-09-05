@@ -1,5 +1,7 @@
 // Fumos do núcleo web (ciclo C2): cadastro/desativação de site e abertura da
 // Reconciliação com o device seedado (ne8000-01 — seed do globalSetup).
+// Ciclo E: wiki operacional (menu Ajuda, sidebar por seção, badge "em breve")
+// e tooltip de campo no hover (FormField/help).
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 
@@ -53,4 +55,27 @@ test("abrir Reconcile com device seedado", async ({ page }) => {
       return aviso + tabela + vazio > 0 ? "renderizou" : "aguardando";
     })
     .toBe("renderizou");
+});
+
+test("wiki abre pelo menu Ajuda e tooltip aparece em campo de formulário", async ({ page }) => {
+  await entrar(page);
+
+  // Wiki: menu Ajuda → índice renderiza a página "Visão geral"
+  await page.getByRole("link", { name: "Wiki" }).click();
+  await expect(page).toHaveURL(/\/wiki/);
+  await expect(page.getByRole("heading", { name: "Visão geral e conceitos" })).toBeVisible();
+
+  // Navega pela sidebar para uma página "em breve" e vê o badge de aviso.
+  // O nome acessível do link é o título da página + badge "(em breve)"
+  // ("... (em breve)"). A tabela "Navegação rápida" do próprio índice tem um
+  // link só com "Serviços MPLS" — usar o nome completo isola o link da sidebar
+  // (evita violação de strict mode do Playwright).
+  await page.getByRole("link", { name: "Serviços MPLS (L2VC e VSI) (em breve)" }).click();
+  await expect(page.getByText("Recurso planejado — não disponível ainda.")).toBeVisible();
+
+  // Tooltip: o ícone de ajuda do campo "Nome *" mostra a dica no hover
+  // (primeiro label.field do form de Sites é "Nome *" — todos têm help()).
+  await page.goto("/sites");
+  await page.locator("label.field").first().locator(".field-help").hover();
+  await expect(page.locator(".field-help-dica").first()).toBeVisible();
 });
