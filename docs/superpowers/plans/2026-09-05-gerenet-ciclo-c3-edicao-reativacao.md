@@ -2897,3 +2897,30 @@ Execute na ordem (raiz do repo):
 Antes do merge no main (executado pelo usuário, protocolo do projeto): revisar o diff total e conferir que nenhum teste de catálogo deixou linhas para trás (`select` com nomes `c3-`/`api-c3-`/`cli-c3-` em `bgp_policy_profiles`/`communities` do `gerenet_test`).
 
 > **Registro de escopo (spec §7)**: o roteiro e2e de edição não entra no C3 — os fumos existentes continuam como gate; o fluxo de edição/reativação é coberto por Vitest (Tasks 9-11).
+
+---
+
+## Revisão final da branch (2026-09-05)
+
+Veredito "Ready to merge? With fixes." — 1 achado Important corrigido neste ciclo:
+
+- **Desativação de catálogos na web** (spec §1.1 promete "edição/**desativação**/
+  reativação na web"; o plano T9/T10 só prescreveu Reativar para
+  communities/policy-profiles — lacuna corrigida no fix `2cdc1d0`: botão
+  Desativar com ConfirmDialog e PATCH `{"admin_status": false}` nas duas páginas
+  + testes; suíte web 60/60, pytest 392).
+- **Adjudicações sem mudança de código:** assimetria do Ruling 5 na reativação
+  repetida de catálogos (evento `update` com antes==depois — padrão repo-wide,
+  aceita) · `Retry-After` fixo em 300 s (janela fixa §3.7, cosmético) ·
+  CLI `update` de catálogos sem `admin_status` (parkado como follow-up).
+- **Follow-ups parkados para o próximo ciclo web:** (a) socket timeouts em
+  `rate_limit.conectar`; (b) teste do 429 para usuário inexistente; (c) evento
+  de auditoria para tentativas bloqueadas; (d) desativação por corpo misto via
+  API sem revogação de sessões (inalcançável pela UI — verificado); (e)
+  `EditDialog`/`useEditState` — consolidar ~600 linhas duplicadas das 10
+  páginas; (f) teste "no options → exit 1" de policy-profiles; (g) opção
+  `admin_status` no CLI `update` de catálogos; (h) e2e com o guard novo ainda
+  não executado (porta 8000 ocupada pelo stack de dev — rodar com a porta livre).
+- **Notas out-of-scope:** edição de circuits/BgpSessions expõe campos
+  estruturais (drift de IPAM — candidato a ciclo futuro); `request.client.host`
+  atrás de proxy reverso no rate limit (nota de deploy).
