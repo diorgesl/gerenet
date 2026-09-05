@@ -86,12 +86,12 @@ export const HELP = {
   "policy.label": "Rótulo exibido (1–64) — nome lógico × efetivo.",
   "policy.product": "Produto de roteamento do catálogo: Somente default, Default + internas, Tabela parcial, Full routing, CDN ou Personalizado — a route-policy de exportação é construída a partir do produto (Default + internas e Tabela parcial ainda viram comentário de dívida no MVP).",
   "policy.direction": "Direção do perfil: import (entrada) ou export (saída) — a sessão só aceita o perfil da direção correspondente.",
-  "policy.kind": "Tipo do perfil: produto (catálogo) — na renderização a sintaxe segue a capacidade do equipamento (route-policy clássico ou XPL).",
+  "policy.kind": "Tipo do perfil: produto (catálogo) — route-policy clássico; XPL é evolução do produto e a seleção de sintaxe por capacidade é recurso futuro.",
   "policy.prefixes": "Prefixos do produto (CDN/personalizado), um por linha (CIDR) — montam a prefix-list de anúncio; sem prefixos, o produto renderiza um comentário de dívida.",
   "policy.notes": "Observações livres.",
 
   // Communities
-  "community.name": "Nome lógico da community no catálogo (1–64; ex.: no-export) — o valor concreto (ASN:tag etc.) é definido na renderização.",
+  "community.name": "Nome/valor da community no catálogo (1–64 caracteres; ex.: no-export ou 64500:100) — a aplicação do valor concreto na configuração é fase futura.",
   "community.notes": "Observações livres.",
 
   // Prefix authorizations
