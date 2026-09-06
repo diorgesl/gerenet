@@ -4,9 +4,11 @@
 // - As variáveis do processo (GERENET_DATABASE_URL etc.) já devem estar no
 //   ambiente do `npm run test:e2e`: o uvicorn do webServer, o CLI (execSync)
 //   e o seed herdam o mesmo ambiente.
-// - Usuário admin: verificado via `gerenet users list` (CLI) e criado SÓ se
-//   ausente, com a senha pipedada no stdin (o comando usa prompt oculto —
-//   nunca em argv). O segredo vem de `E2E_PASSWORD` (default de fixture).
+// - Usuários `admin` (`administrador`) e `e2e-aprovador` (`aprovador`):
+//   verificados via `gerenet users list` (CLI) e criados SÓ se ausentes, com a
+//   senha pipedada no stdin (o comando usa prompt oculto — nunca em argv). O
+//   segredo vem de `E2E_PASSWORD` (default de fixture). O aprovador é distinto
+//   do solicitante (spec §3.3) para o fumo de mudança (change.spec.ts).
 // - Objetos do seed: API com X-Api-Key (settings.api_key). POSTs idempotentes
 //   (201 → segue com o id do corpo; 409 → segue com o id achado na listagem).
 import { execSync } from "node:child_process";
@@ -71,18 +73,18 @@ async function criarOuAchar(
   throw new Error(`POST ${endpoint} inesperado: ${res.status} ${res.detail}`);
 }
 
-// --- Usuário admin (CLI) ------------------------------------------------------
+// --- Usuários seed (CLI) ------------------------------------------------------
 
-function usuarioAdminExiste(): boolean {
+function usuarioExiste(nome: string): boolean {
   const stdout = execSync("uv run gerenet users list", { env: process.env, encoding: "utf8" });
   return stdout
     .split("\n")
     .map((linha) => linha.trim().split(/\s+/))
-    .some((campos) => campos[1] === "admin");
+    .some((campos) => campos[1] === nome);
 }
 
-function criarUsuarioAdmin(): void {
-  execSync("uv run gerenet users create admin --role administrador", {
+function criarUsuario(nome: string, role: string): void {
+  execSync(`uv run gerenet users create ${nome} --role ${role}`, {
     input: `${SENHA}\n${SENHA}\n`,
     env: process.env,
     encoding: "utf8",
@@ -161,8 +163,14 @@ async function seed(): Promise<void> {
 // --- globalSetup ---------------------------------------------------------------
 
 export default async function globalSetup(): Promise<void> {
-  if (!usuarioAdminExiste()) {
-    criarUsuarioAdmin();
+  if (!usuarioExiste("admin")) {
+    criarUsuario("admin", "administrador");
+  }
+  // Aprovador distinto do solicitante — o fumo de mudança (change.spec.ts)
+  // solicita como admin e aprova como e2e-aprovador (spec §3.3: não aprovar o
+  // próprio pedido).
+  if (!usuarioExiste("e2e-aprovador")) {
+    criarUsuario("e2e-aprovador", "aprovador");
   }
   await seed();
 }

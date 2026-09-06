@@ -144,14 +144,24 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   sidebar + aviso na página); **tooltips de campo** — prop `help` no `FormField`
   (`.field-help` + `.field-help-dica` no hover/foco), textos centralizados em
   `web/src/help.ts` (o `npm run build` valida as chaves).
-- Backend (ciclo D, estado no momento do ciclo E): **API de change requests já
-  existe** — `/api/v1/change-requests` (router `gerenet.api.routers.change_requests`,
-  papéis via `require_papel`): criar/listar/detalhar, enviar, approve (com
-  re-aprovação após reconciliação), cancelar, executar, rollback (gera CR inverso
-  em `aguardando_aprovacao`; 422 sem steps aplicados) e reconciliar. **A aplicação
-  real em equipamento ainda NÃO**: `POST /{cr_id}/executar` apenas marca o estado
-  (`marcar_executando` — docstring anota que o enqueue na fila `gerenet-change`
-  é plugado depois); não há worker/fila da mudança, e a UI web do fluxo de
-  mudanças ainda não existe.
+- Ciclo D (fluxo de mudança controlada): mudanças sem alteração de **back-end**
+  exigem fluxo de change requests — máquina de estados (rascunho →
+  aguardando_aprovacao → aprovado → executando → aplicado/com_divergencia/parcial/
+  erro; rejeitado/cancelado), planos de provision/remoção gerados da SoT × última
+  coleta já na criação (diff por bloco, `automation/changes.py`), aprovação
+  única com papel `aprovador`/`administrador` e aprovador ≠ solicitante (`require_papel`),
+  **worker com fila `gerenet-change`** — `POST /{cr_id}/executar` enfileira antes
+  de transitar (202 + `enqueue_change`; com o worker parado a CR fica
+  `executando` = "jobs fake" do spec §10), lock por CR e device, backup
+  pré-mudança, re-diff na execução, pós-check `reconciliar_device` e classificação
+  ao final —, rollback como nova CR inversa em `aguardando_aprovacao` (422 sem
+  steps aplicados), e reconciliar reabre ciclo de aprovação só para steps não
+  aplicados. CLI: grupo `gerenet change-requests`
+  (add/list/show/send/approve/cancel/execute/rollback/reconcile). Web: páginas
+  `/change-requests` (lista/detalhe com diff por bloco e ações por papel),
+  "Solicitar mudança" nos detalhes de circuito e de sessão BGP, e card
+  "mudanças aguardando aprovação" no dashboard; e2e `web/e2e/change.spec.ts`
+  (fumo solicitando como `admin` e aprovando como o `e2e-aprovador` — papel
+  `aprovador` — seedado no globalSetup, único usuário novo do seed).
 - Convenções previstas no `.gitignore`: Python com venv e pytest (`.venv/`, `.pytest_cache/`), deploy via Docker Compose (`compose.yaml` na raiz) com `.env` ignorado (o `.gitignore` ainda prevê `deploy/docker/.env`), `config.yaml` local com segredos **fora do repositório**, logs em `logs/` ignorados.
 - `.claude/settings.local.json` contém token e aponta o harness para uma API externa: é arquivo local — não versionar nem alterar.
