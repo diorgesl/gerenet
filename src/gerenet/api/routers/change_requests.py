@@ -19,6 +19,7 @@ from gerenet.domain.services.errors import (
     PlanoRollbackVazio,
     ValidationError,
 )
+from gerenet.worker.tasks import enqueue_change
 
 router = APIRouter(
     prefix="/api/v1/change-requests",
@@ -117,15 +118,25 @@ def cancelar(cr_id: int, session: SessionDep, actor: Annotated[Actor, Depends(re
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.post("/{cr_id}/executar", response_model=ChangeRequestOut)
-def executar(cr_id: int, session: SessionDep, executor: ExecutorDep) -> object:
-    """Papel executor/admin. T7 pluga aqui o enqueue (fila gerenet-change)."""
+@router.post("/{cr_id}/executar", status_code=202)
+def executar(cr_id: int, session: SessionDep, executor: ExecutorDep) -> dict:
+    """Papel executor/admin; valida e ENFILEIRA antes de transitar (worker é o
+    transitor autoritativo — reexecução segura, lock de CR no run_change).
+    """
     try:
-        return svc.marcar_executando(session, cr_id, actor=executor.nome)
+        svc.get_change_request(session, cr_id)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    enfileirado = enqueue_change(cr_id, actor=executor.nome, origin="api")
+    if not enfileirado["queued"]:
+        raise HTTPException(status_code=409, detail=enfileirado["message"])
+    try:
+        svc.marcar_executando(session, cr_id, actor=executor.nome)
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"queued": True, "job_id": enfileirado.get("job_id"), "message": enfileirado["message"]}
 
 
 @router.post("/{cr_id}/rollback", response_model=ChangeRequestOut)

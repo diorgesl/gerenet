@@ -1,4 +1,6 @@
 """API do fluxo de mudança (spec §8): contratos, papéis e transições."""
+from unittest.mock import patch
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -180,7 +182,7 @@ def test_approve_somente_papel_e_uma_vez(client: TestClient, db_session: Session
     ).status_code == 400
 
 
-def test_executar_marca_executando(client: TestClient, db_session: Session) -> None:
+def test_executar_enfileira_e_marca_executando(client: TestClient, db_session: Session) -> None:
     cid = _cria_cenario(db_session)
     cr = _cria_cr(client, cid)
     _usuario(db_session, "aprovador-ex", "aprovador")
@@ -196,9 +198,17 @@ def test_executar_marca_executando(client: TestClient, db_session: Session) -> N
     assert client.post(
         f"/api/v1/change-requests/{cr['id']}/approve", json={"decisao": "aprovar"}
     ).status_code == 403
-    exec = client.post(f"/api/v1/change-requests/{cr['id']}/executar")
-    assert exec.status_code == 200
-    assert exec.json()["status"] == "executando"
+
+    with patch(
+        "gerenet.api.routers.change_requests.enqueue_change",
+        return_value={"queued": True, "job_id": "abc123", "message": "Mudança enfileirada."},
+    ) as enfileirar:
+        exec = client.post(f"/api/v1/change-requests/{cr['id']}/executar")
+    assert exec.status_code == 202
+    assert exec.json()["queued"] is True
+    enfileirar.assert_called_once_with(cr["id"], actor="executor-ex", origin="api")
+    modelo = db_session.get(models.ChangeRequest, cr["id"])
+    assert modelo.status == "executando"
 
 
 def test_rollback_gera_cr_filho_inverso(client: TestClient, db_session: Session) -> None:
