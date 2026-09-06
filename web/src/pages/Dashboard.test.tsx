@@ -43,6 +43,15 @@ describe("Dashboard", () => {
         if (url === "/api/v1/dashboard") {
           return new Response(JSON.stringify(DASH), { status: 200, headers: { "Content-Type": "application/json" } });
         }
+        if (url === "/api/v1/change-requests?status=aguardando_aprovacao") {
+          return new Response(
+            JSON.stringify([
+              { id: 1, circuit_id: 1, acao: "provision", criticidade: "media", motivo: "m1", ticket: null, solicitante_id: 1, status: "aguardando_aprovacao", rollback_de: null, created_at: "2026-09-05T10:00:00Z", steps: [], approvals: [] },
+              { id: 2, circuit_id: 1, acao: "remove", criticidade: "alta", motivo: "m2", ticket: null, solicitante_id: 2, status: "aguardando_aprovacao", rollback_de: null, created_at: "2026-09-05T11:00:00Z", steps: [], approvals: [] },
+            ]),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
         return new Response(null, { status: 404 });
       }),
     );
@@ -62,5 +71,7 @@ describe("Dashboard", () => {
     expect(screen.getByText("Authentication to device failed.")).toBeTruthy();
     expect(screen.getByText("coleta")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Reconciliar" })).toBeTruthy();
+    expect(screen.getByText(/mudanças/)).toBeTruthy();
+    expect(screen.getByText("2")).toBeTruthy();
   });
 });

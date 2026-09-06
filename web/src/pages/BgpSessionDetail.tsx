@@ -6,6 +6,7 @@ import { help } from "@/help";
 import { StatusBadge } from "@/components/StatusBadge";
 import { FormField } from "@/components/FormField";
 import { PageHeader } from "@/components/PageHeader";
+import SolicitarMudanca from "@/components/SolicitarMudanca";
 
 export default function BgpSessionDetail() {
   const { id } = useParams();
@@ -30,7 +31,7 @@ export default function BgpSessionDetail() {
 
   return (
     <main>
-      <PageHeader titulo={`Sessão BGP #${data.id}`} />
+      <PageHeader titulo={`Sessão BGP #${data.id}`} acoes={<SolicitarMudanca circuit_id={data.circuit_id} />} />
       <table>
         <tbody>
           <tr><th>Família</th><td><StatusBadge estado={data.afi} /></td></tr>

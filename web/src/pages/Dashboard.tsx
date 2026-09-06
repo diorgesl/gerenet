@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { ApiError } from "@/api/client";
-import { useDashboard } from "@/api/hooks";
+import { useChangeRequests, useDashboard } from "@/api/hooks";
 import { StatusBadge } from "@/components/StatusBadge";
 import { TimeAgo } from "@/components/TimeAgo";
 import { PageHeader } from "@/components/PageHeader";
@@ -23,6 +23,7 @@ function formatarIdade(seconds: number | null | undefined): string {
 
 export default function Dashboard() {
   const { data, isLoading, error } = useDashboard();
+  const { data: pendentes } = useChangeRequests({ status: "aguardando_aprovacao" });
 
   const idades = (data?.per_device ?? [])
     .map((d) => d.snapshot_age_seconds)
@@ -73,6 +74,11 @@ export default function Dashboard() {
               />
               <span className="val">{formatarIdade(idadeMax)}</span>
               <span className="label">idade da<br />última coleta</span>
+            </div>
+            <div className="metric">
+              <span className={`led ${(pendentes?.length ?? 0) > 0 ? "amber" : "gray"}`} aria-hidden="true" />
+              <span className="val">{pendentes?.length ?? 0}</span>
+              <span className="label">mudanças<br />aguardando aprovação</span>
             </div>
           </section>
           <p className="estados-equipamentos">

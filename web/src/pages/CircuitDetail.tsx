@@ -4,6 +4,7 @@ import { ApiError } from "@/api/client";
 import { useBgpSessions, useCircuitDetail, useCircuitoReservar, useDevices, useOrganizations, useSites } from "@/api/hooks";
 import { StatusBadge } from "@/components/StatusBadge";
 import { PageHeader } from "@/components/PageHeader";
+import SolicitarMudanca from "@/components/SolicitarMudanca";
 
 export default function CircuitDetail() {
   const { id } = useParams();
@@ -29,7 +30,12 @@ export default function CircuitDetail() {
     <main>
       <PageHeader
         titulo={`Circuito ${data.code}`}
-        acoes={<Link to="/circuits">← Voltar</Link>}
+        acoes={
+          <>
+            <Link to="/circuits">← Voltar</Link>
+            <SolicitarMudanca circuit_id={data.id} />
+          </>
+        }
       />
       <table>
         <tbody>
