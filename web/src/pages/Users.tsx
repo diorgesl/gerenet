@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import { useAuth } from "@/auth/auth-context";
 import { ApiError } from "@/api/client";
 import { useUserAtualizar, useUserCriar, useUserSenha, useUsers } from "@/api/hooks";
+import { help } from "@/help";
 import { DataTable } from "@/components/DataTable";
 import { FormField } from "@/components/FormField";
 import { Modal } from "@/components/Modal";
@@ -78,13 +79,13 @@ export default function Users() {
         Ver desativados
       </label>
       <form onSubmit={onSubmit} className="form-inline">
-        <FormField label="Usuário">
+        <FormField label="Usuário" help={help("user.username")}>
           <input value={username} onChange={(e) => setUsername(e.target.value)} required />
         </FormField>
-        <FormField label="Senha">
+        <FormField label="Senha" help={help("user.password")}>
           <input type="password" value={senhaNova} onChange={(e) => setSenhaNova(e.target.value)} required />
         </FormField>
-        <FormField label="Perfil">
+        <FormField label="Perfil" help={help("user.role")}>
           <select value={role} onChange={(e) => setRole(e.target.value)}>
             {ROLES.map((r) => (
               <option key={r} value={r}>{r}</option>
@@ -137,7 +138,7 @@ export default function Users() {
           titulo={`Redefinir senha de ${resetando.username}`}
           onFechar={() => setResetando(null)}
         >
-          <FormField label="Nova senha">
+          <FormField label="Nova senha" help={help("user.password")}>
             <input
               type="password"
               value={senhaReset}
@@ -168,10 +169,10 @@ export default function Users() {
       {editando && (
         <Modal aberto titulo={`Editar ${editando.username}`} onFechar={() => setEditando(null)}>
           <form onSubmit={salvarEdicao} className="form-inline">
-            <FormField label="Usuário">
+            <FormField label="Usuário" help={help("user.username")}>
               <input value={formEdit.username} onChange={(e) => setFormEdit({ ...formEdit, username: e.target.value })} required />
             </FormField>
-            <FormField label="Perfil">
+            <FormField label="Perfil" help={help("user.role")}>
               <select
                 value={formEdit.role}
                 onChange={(e) => setFormEdit({ ...formEdit, role: e.target.value as UserOut["role"] })}

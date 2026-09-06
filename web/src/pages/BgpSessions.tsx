@@ -11,6 +11,7 @@ import {
   useDevices,
   usePolicyProfiles,
 } from "@/api/hooks";
+import { help } from "@/help";
 import { DataTable } from "@/components/DataTable";
 import { FormField } from "@/components/FormField";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -177,7 +178,7 @@ export default function BgpSessions() {
       </label>
       {podeEscrever && (
         <form onSubmit={onSubmit} className="grid-form">
-          <FormField label="Circuito *">
+          <FormField label="Circuito *" help={help("bgp.circuit_id")}>
             <select value={form.circuit_id} onChange={(e) => setForm({ ...form, circuit_id: e.target.value })} required>
               <option value="">—</option>
               {(circuits ?? []).map((c) => (
@@ -185,7 +186,7 @@ export default function BgpSessions() {
               ))}
             </select>
           </FormField>
-          <FormField label="Equipamento *">
+          <FormField label="Equipamento *" help={help("bgp.device_id")}>
             <select value={form.device_id} onChange={(e) => setForm({ ...form, device_id: e.target.value })} required>
               <option value="">—</option>
               {(devices ?? []).map((d) => (
@@ -193,31 +194,31 @@ export default function BgpSessions() {
               ))}
             </select>
           </FormField>
-          <FormField label="Família">
+          <FormField label="Família" help={help("bgp.afi")}>
             <select value={form.afi} onChange={(e) => setForm({ ...form, afi: e.target.value as "ipv4" | "ipv6" })}>
               <option value="ipv4">ipv4</option>
               <option value="ipv6">ipv6</option>
             </select>
           </FormField>
-          <FormField label="Endereço local *">
+          <FormField label="Endereço local *" help={help("bgp.local_address")}>
             <input value={form.local_address} onChange={(e) => setForm({ ...form, local_address: e.target.value })} required />
           </FormField>
-          <FormField label="Endereço remoto *">
+          <FormField label="Endereço remoto *" help={help("bgp.remote_address")}>
             <input value={form.remote_address} onChange={(e) => setForm({ ...form, remote_address: e.target.value })} required />
           </FormField>
-          <FormField label="Source address">
+          <FormField label="Source address" help={help("bgp.source_address")}>
             <input value={form.source_address} onChange={(e) => setForm({ ...form, source_address: e.target.value })} />
           </FormField>
-          <FormField label="ASN local">
+          <FormField label="ASN local" help={help("bgp.asn_local")}>
             <input type="number" value={form.asn_local} onChange={(e) => setForm({ ...form, asn_local: e.target.value })} />
           </FormField>
-          <FormField label="ASN remoto">
+          <FormField label="ASN remoto" help={help("bgp.asn_remote")}>
             <input type="number" value={form.asn_remote} onChange={(e) => setForm({ ...form, asn_remote: e.target.value })} />
           </FormField>
-          <FormField label="Descrição">
+          <FormField label="Descrição" help={help("bgp.description")}>
             <input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
           </FormField>
-          <FormField label="Perfil de importação">
+          <FormField label="Perfil de importação" help={help("bgp.import_profile_id")}>
             <select value={form.import_profile_id} onChange={(e) => setForm({ ...form, import_profile_id: e.target.value })}>
               <option value="">—</option>
               {(profiles ?? []).map((p) => (
@@ -225,7 +226,7 @@ export default function BgpSessions() {
               ))}
             </select>
           </FormField>
-          <FormField label="Perfil de exportação">
+          <FormField label="Perfil de exportação" help={help("bgp.export_profile_id")}>
             <select value={form.export_profile_id} onChange={(e) => setForm({ ...form, export_profile_id: e.target.value })}>
               <option value="">—</option>
               {(profiles ?? []).map((p) => (
@@ -233,37 +234,37 @@ export default function BgpSessions() {
               ))}
             </select>
           </FormField>
-          <FormField label="Maximum-prefix">
+          <FormField label="Maximum-prefix" help={help("bgp.maximum_prefix")}>
             <input type="number" value={form.maximum_prefix} onChange={(e) => setForm({ ...form, maximum_prefix: e.target.value })} />
           </FormField>
-          <FormField label="Limiar (%)">
+          <FormField label="Limiar (%)" help={help("bgp.maximum_prefix_threshold")}>
             <input type="number" value={form.maximum_prefix_threshold} onChange={(e) => setForm({ ...form, maximum_prefix_threshold: e.target.value })} />
           </FormField>
-          <FormField label="Local-preference">
+          <FormField label="Local-preference" help={help("bgp.local_preference")}>
             <input type="number" value={form.local_preference} onChange={(e) => setForm({ ...form, local_preference: e.target.value })} />
           </FormField>
-          <FormField label="MED">
+          <FormField label="MED" help={help("bgp.med")}>
             <input type="number" value={form.med} onChange={(e) => setForm({ ...form, med: e.target.value })} />
           </FormField>
-          <FormField label="Prepend">
+          <FormField label="Prepend" help={help("bgp.prepend")}>
             <input type="number" value={form.prepend} onChange={(e) => setForm({ ...form, prepend: e.target.value })} />
           </FormField>
-          <FormField label="Keepalive">
+          <FormField label="Keepalive" help={help("bgp.keepalive")}>
             <input type="number" value={form.keepalive} onChange={(e) => setForm({ ...form, keepalive: e.target.value })} />
           </FormField>
-          <FormField label="Holdtime">
+          <FormField label="Holdtime" help={help("bgp.holdtime")}>
             <input type="number" value={form.holdtime} onChange={(e) => setForm({ ...form, holdtime: e.target.value })} />
           </FormField>
-          <FormField label="BFD">
+          <FormField label="BFD" help={help("bgp.bfd_enabled")}>
             <input type="checkbox" checked={form.bfd_enabled} onChange={(e) => setForm({ ...form, bfd_enabled: e.target.checked })} />
           </FormField>
-          <FormField label="Graceful restart">
+          <FormField label="Graceful restart" help={help("bgp.graceful_restart")}>
             <input type="checkbox" checked={form.graceful_restart} onChange={(e) => setForm({ ...form, graceful_restart: e.target.checked })} />
           </FormField>
-          <FormField label="Shutdown">
+          <FormField label="Shutdown" help={help("bgp.shutdown")}>
             <input type="checkbox" checked={form.shutdown} onChange={(e) => setForm({ ...form, shutdown: e.target.checked })} />
           </FormField>
-          <FormField label="Default route">
+          <FormField label="Default route" help={help("bgp.allow_default_route")}>
             <input type="checkbox" checked={form.allow_default_route} onChange={(e) => setForm({ ...form, allow_default_route: e.target.checked })} />
           </FormField>
           <button className="primary" type="submit" disabled={criar.isPending}>
@@ -337,7 +338,7 @@ export default function BgpSessions() {
       {editando && (
         <Modal aberto titulo={`Editar sessão BGP #${editando.id}`} onFechar={() => setEditando(null)}>
           <form onSubmit={salvarEdicao} className="grid-form">
-            <FormField label="Circuito *">
+            <FormField label="Circuito *" help={help("bgp.circuit_id")}>
               <select value={formEdit.circuit_id} onChange={(e) => setFormEdit({ ...formEdit, circuit_id: e.target.value })} required>
                 <option value="">—</option>
                 {(circuits ?? []).map((c) => (
@@ -345,7 +346,7 @@ export default function BgpSessions() {
                 ))}
               </select>
             </FormField>
-            <FormField label="Equipamento *">
+            <FormField label="Equipamento *" help={help("bgp.device_id")}>
               <select value={formEdit.device_id} onChange={(e) => setFormEdit({ ...formEdit, device_id: e.target.value })} required>
                 <option value="">—</option>
                 {(devices ?? []).map((d) => (
@@ -353,31 +354,31 @@ export default function BgpSessions() {
                 ))}
               </select>
             </FormField>
-            <FormField label="Família">
+            <FormField label="Família" help={help("bgp.afi")}>
               <select value={formEdit.afi} onChange={(e) => setFormEdit({ ...formEdit, afi: e.target.value as "ipv4" | "ipv6" })}>
                 <option value="ipv4">ipv4</option>
                 <option value="ipv6">ipv6</option>
               </select>
             </FormField>
-            <FormField label="Endereço local *">
+            <FormField label="Endereço local *" help={help("bgp.local_address")}>
               <input value={formEdit.local_address} onChange={(e) => setFormEdit({ ...formEdit, local_address: e.target.value })} required />
             </FormField>
-            <FormField label="Endereço remoto *">
+            <FormField label="Endereço remoto *" help={help("bgp.remote_address")}>
               <input value={formEdit.remote_address} onChange={(e) => setFormEdit({ ...formEdit, remote_address: e.target.value })} required />
             </FormField>
-            <FormField label="Source address">
+            <FormField label="Source address" help={help("bgp.source_address")}>
               <input value={formEdit.source_address} onChange={(e) => setFormEdit({ ...formEdit, source_address: e.target.value })} />
             </FormField>
-            <FormField label="ASN local">
+            <FormField label="ASN local" help={help("bgp.asn_local")}>
               <input type="number" value={formEdit.asn_local} onChange={(e) => setFormEdit({ ...formEdit, asn_local: e.target.value })} />
             </FormField>
-            <FormField label="ASN remoto">
+            <FormField label="ASN remoto" help={help("bgp.asn_remote")}>
               <input type="number" value={formEdit.asn_remote} onChange={(e) => setFormEdit({ ...formEdit, asn_remote: e.target.value })} />
             </FormField>
-            <FormField label="Descrição">
+            <FormField label="Descrição" help={help("bgp.description")}>
               <input value={formEdit.description} onChange={(e) => setFormEdit({ ...formEdit, description: e.target.value })} />
             </FormField>
-            <FormField label="Perfil de importação">
+            <FormField label="Perfil de importação" help={help("bgp.import_profile_id")}>
               <select value={formEdit.import_profile_id} onChange={(e) => setFormEdit({ ...formEdit, import_profile_id: e.target.value })}>
                 <option value="">—</option>
                 {(profiles ?? []).map((p) => (
@@ -385,7 +386,7 @@ export default function BgpSessions() {
                 ))}
               </select>
             </FormField>
-            <FormField label="Perfil de exportação">
+            <FormField label="Perfil de exportação" help={help("bgp.export_profile_id")}>
               <select value={formEdit.export_profile_id} onChange={(e) => setFormEdit({ ...formEdit, export_profile_id: e.target.value })}>
                 <option value="">—</option>
                 {(profiles ?? []).map((p) => (
@@ -393,37 +394,37 @@ export default function BgpSessions() {
                 ))}
               </select>
             </FormField>
-            <FormField label="Maximum-prefix">
+            <FormField label="Maximum-prefix" help={help("bgp.maximum_prefix")}>
               <input type="number" value={formEdit.maximum_prefix} onChange={(e) => setFormEdit({ ...formEdit, maximum_prefix: e.target.value })} />
             </FormField>
-            <FormField label="Limiar (%)">
+            <FormField label="Limiar (%)" help={help("bgp.maximum_prefix_threshold")}>
               <input type="number" value={formEdit.maximum_prefix_threshold} onChange={(e) => setFormEdit({ ...formEdit, maximum_prefix_threshold: e.target.value })} />
             </FormField>
-            <FormField label="Local-preference">
+            <FormField label="Local-preference" help={help("bgp.local_preference")}>
               <input type="number" value={formEdit.local_preference} onChange={(e) => setFormEdit({ ...formEdit, local_preference: e.target.value })} />
             </FormField>
-            <FormField label="MED">
+            <FormField label="MED" help={help("bgp.med")}>
               <input type="number" value={formEdit.med} onChange={(e) => setFormEdit({ ...formEdit, med: e.target.value })} />
             </FormField>
-            <FormField label="Prepend">
+            <FormField label="Prepend" help={help("bgp.prepend")}>
               <input type="number" value={formEdit.prepend} onChange={(e) => setFormEdit({ ...formEdit, prepend: e.target.value })} />
             </FormField>
-            <FormField label="Keepalive">
+            <FormField label="Keepalive" help={help("bgp.keepalive")}>
               <input type="number" value={formEdit.keepalive} onChange={(e) => setFormEdit({ ...formEdit, keepalive: e.target.value })} />
             </FormField>
-            <FormField label="Holdtime">
+            <FormField label="Holdtime" help={help("bgp.holdtime")}>
               <input type="number" value={formEdit.holdtime} onChange={(e) => setFormEdit({ ...formEdit, holdtime: e.target.value })} />
             </FormField>
-            <FormField label="BFD">
+            <FormField label="BFD" help={help("bgp.bfd_enabled")}>
               <input type="checkbox" checked={formEdit.bfd_enabled} onChange={(e) => setFormEdit({ ...formEdit, bfd_enabled: e.target.checked })} />
             </FormField>
-            <FormField label="Graceful restart">
+            <FormField label="Graceful restart" help={help("bgp.graceful_restart")}>
               <input type="checkbox" checked={formEdit.graceful_restart} onChange={(e) => setFormEdit({ ...formEdit, graceful_restart: e.target.checked })} />
             </FormField>
-            <FormField label="Shutdown">
+            <FormField label="Shutdown" help={help("bgp.shutdown")}>
               <input type="checkbox" checked={formEdit.shutdown} onChange={(e) => setFormEdit({ ...formEdit, shutdown: e.target.checked })} />
             </FormField>
-            <FormField label="Default route">
+            <FormField label="Default route" help={help("bgp.allow_default_route")}>
               <input type="checkbox" checked={formEdit.allow_default_route} onChange={(e) => setFormEdit({ ...formEdit, allow_default_route: e.target.checked })} />
             </FormField>
             <div className="dialog-actions">

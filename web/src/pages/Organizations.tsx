@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import { useAuth } from "@/auth/auth-context";
 import { ApiError } from "@/api/client";
 import { useOrganizationAtualizar, useOrganizationCriar, useOrganizations } from "@/api/hooks";
+import { help } from "@/help";
 import { DataTable } from "@/components/DataTable";
 import { FormField } from "@/components/FormField";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -91,13 +92,13 @@ export default function Organizations() {
       </label>
       {podeEscrever && (
         <form onSubmit={onSubmit} className="grid-form">
-          <FormField label="Nome *">
+          <FormField label="Nome *" help={help("organization.name")}>
             <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
           </FormField>
-          <FormField label="Razão social">
+          <FormField label="Razão social" help={help("organization.legal_name")}>
             <input value={form.legal_name} onChange={(e) => setForm({ ...form, legal_name: e.target.value })} />
           </FormField>
-          <FormField label="Tipo">
+          <FormField label="Tipo" help={help("organization.kind")}>
             <select
               value={form.kind}
               onChange={(e) => setForm({ ...form, kind: e.target.value as "downstream" | "parceiro" })}
@@ -106,13 +107,13 @@ export default function Organizations() {
               <option value="parceiro">parceiro</option>
             </select>
           </FormField>
-          <FormField label="ASN">
+          <FormField label="ASN" help={help("organization.asn")}>
             <input type="number" value={form.asn} onChange={(e) => setForm({ ...form, asn: e.target.value })} />
           </FormField>
-          <FormField label="IRR AS-SET">
+          <FormField label="IRR AS-SET" help={help("organization.irr_as_set")}>
             <input value={form.irr_as_set} onChange={(e) => setForm({ ...form, irr_as_set: e.target.value })} />
           </FormField>
-          <FormField label="Observações">
+          <FormField label="Observações" help={help("organization.notes")}>
             <input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
           </FormField>
           <button className="primary" type="submit" disabled={criar.isPending}>
@@ -184,13 +185,13 @@ export default function Organizations() {
       {editando && (
         <Modal aberto titulo={`Editar ${editando.name}`} onFechar={() => setEditando(null)}>
           <form onSubmit={salvarEdicao} className="grid-form">
-            <FormField label="Nome *">
+            <FormField label="Nome *" help={help("organization.name")}>
               <input value={formEdit.name} onChange={(e) => setFormEdit({ ...formEdit, name: e.target.value })} required />
             </FormField>
-            <FormField label="Razão social">
+            <FormField label="Razão social" help={help("organization.legal_name")}>
               <input value={formEdit.legal_name} onChange={(e) => setFormEdit({ ...formEdit, legal_name: e.target.value })} />
             </FormField>
-            <FormField label="Tipo">
+            <FormField label="Tipo" help={help("organization.kind")}>
               <select
                 value={formEdit.kind}
                 onChange={(e) => setFormEdit({ ...formEdit, kind: e.target.value as "downstream" | "parceiro" })}
@@ -199,13 +200,13 @@ export default function Organizations() {
                 <option value="parceiro">parceiro</option>
               </select>
             </FormField>
-            <FormField label="ASN">
+            <FormField label="ASN" help={help("organization.asn")}>
               <input type="number" value={formEdit.asn} onChange={(e) => setFormEdit({ ...formEdit, asn: e.target.value })} />
             </FormField>
-            <FormField label="IRR AS-SET">
+            <FormField label="IRR AS-SET" help={help("organization.irr_as_set")}>
               <input value={formEdit.irr_as_set} onChange={(e) => setFormEdit({ ...formEdit, irr_as_set: e.target.value })} />
             </FormField>
-            <FormField label="Observações">
+            <FormField label="Observações" help={help("organization.notes")}>
               <input value={formEdit.notes} onChange={(e) => setFormEdit({ ...formEdit, notes: e.target.value })} />
             </FormField>
             <div className="dialog-actions">

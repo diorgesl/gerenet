@@ -452,3 +452,79 @@ h2 {
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* Wiki operacional (ciclo E) — painel de navegação + página sanitizada do servidor */
+.wiki { display: flex; gap: 1.5rem; align-items: flex-start; }
+.wiki-nav { flex: 0 0 220px; }
+.wiki-nav .wiki-secao {
+  display: block;
+  margin: 0.75rem 0 0.25rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--paper-dim);
+}
+.wiki-nav a {
+  display: block;
+  padding: 0.2rem 0;
+  color: var(--paper-dim);
+  text-decoration: none;
+}
+.wiki-nav a:hover { color: var(--paper); text-decoration: none; }
+.wiki-nav a.ativo { color: var(--paper); font-weight: 600; }
+.wiki-conteudo { flex: 1; min-width: 0; }
+.wiki-conteudo h1 { font-size: 1.5rem; font-weight: 600; letter-spacing: -0.01em; margin: 0 0 1rem; }
+.wiki-conteudo table { border-collapse: collapse; }
+.wiki-conteudo th, .wiki-conteudo td { border: 1px solid var(--line); padding: 0.35rem 0.6rem; text-align: left; }
+.wiki-conteudo pre {
+  background: var(--ink-4);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: 6px;
+  padding: 0.75rem;
+  overflow-x: auto;
+}
+.wiki-badge {
+  padding: 0.4rem 0.75rem;
+  background: color-mix(in srgb, var(--led-amber) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--led-amber) 55%, var(--line));
+  border-radius: 4px;
+  color: var(--led-amber);
+  font-weight: 600;
+}
+
+/* Tooltip de campo (ciclo E): ícone LED âmbar + dica no hover/foco */
+.field-help {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.1rem;
+  height: 1.1rem;
+  margin-left: 0.4rem;
+  border-radius: 50%;
+  background: var(--led-amber);
+  color: var(--text-on-amber);
+  font-size: 0.7rem;
+  cursor: help;
+}
+.field-help-dica {
+  display: none;
+  position: absolute;
+  bottom: 130%;
+  left: 0;
+  z-index: 10;
+  width: max-content;
+  max-width: 280px;
+  padding: 0.4rem 0.6rem;
+  background: var(--ink-3);
+  color: var(--paper);
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  font-size: 0.78rem;
+  font-weight: 400;
+  white-space: pre-line;
+}
+.field-help:hover .field-help-dica,
+.field-help:focus-visible .field-help-dica {
+  display: block;
+}

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { ApiError } from "@/api/client";
 import { useBgpSession, useCommunities, useSessionCommunities, useSessionCommunity, useSessionSenha } from "@/api/hooks";
+import { help } from "@/help";
 import { StatusBadge } from "@/components/StatusBadge";
 import { FormField } from "@/components/FormField";
 import { PageHeader } from "@/components/PageHeader";
@@ -62,7 +63,7 @@ export default function BgpSessionDetail() {
             .catch((err) => setErro(err instanceof ApiError ? err.message : "Falha ao associar community."));
         }}
       >
-        <FormField label="Community">
+        <FormField label="Community" help={help("community.name")}>
           <select value={communityId} onChange={(e) => setCommunityId(e.target.value)}>
             <option value="">—</option>
             {(catalogo ?? []).map((c) => (
@@ -86,7 +87,7 @@ export default function BgpSessionDetail() {
           void senha.mutateAsync({ sessionId, password: senhaNova }).then(() => setSenhaNova("")).catch((err) => setErro(err instanceof ApiError ? err.message : "Falha ao definir senha."));
         }}
       >
-        <FormField label="Senha MD5">
+        <FormField label="Senha MD5" help={help("bgp.password")}>
           <input
             type="password"
             value={senhaNova}

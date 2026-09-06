@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     session_ttl_seconds: int = 28800  # TTL do cookie de sessão web (§4.2)
     cookie_secure: bool = False  # True em produção sob HTTPS
     static_dir: Path = Path("web/dist")  # build da SPA (ciclo C2)
+    wiki_dir: Path = Path("docs/wiki")  # páginas do wiki operacional (ciclo E)
 
     # IPAM p2p (§25.8): bloco privado de enlaces v4 e base v6 por padrão;
     # cada site pode sobrescrever.

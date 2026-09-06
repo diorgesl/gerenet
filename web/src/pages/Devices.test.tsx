@@ -80,8 +80,8 @@ describe("Devices", () => {
   it("lista equipamentos e cadastra novo pela API", async () => {
     renderDevices();
     expect(await screen.findByText("ne8000-01")).toBeInTheDocument();
-    await userEvent.type(screen.getByLabelText("Nome *"), "ne8000-02");
-    await userEvent.type(screen.getByLabelText("IP de gestão *"), "10.99.0.2");
+    await userEvent.type(screen.getByLabelText(/^Nome \*/), "ne8000-02");
+    await userEvent.type(screen.getByLabelText(/^IP de gestão \*/), "10.99.0.2");
     await userEvent.click(screen.getByRole("button", { name: "Cadastrar" }));
     await waitFor(() => {
       const chamadas = vi.mocked(fetch).mock.calls;

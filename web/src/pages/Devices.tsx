@@ -10,6 +10,7 @@ import {
   useDevices,
   useSites,
 } from "@/api/hooks";
+import { help } from "@/help";
 import { DataTable } from "@/components/DataTable";
 import { FormField } from "@/components/FormField";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -128,28 +129,28 @@ export default function Devices() {
       </label>
       {podeEscrever && (
         <form onSubmit={onSubmit} className="grid-form">
-          <FormField label="Nome *">
+          <FormField label="Nome *" help={help("device.name")}>
             <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
           </FormField>
-          <FormField label="IP de gestão *">
+          <FormField label="IP de gestão *" help={help("device.management_address")}>
             <input value={form.management_address} onChange={(e) => setForm({ ...form, management_address: e.target.value })} required />
           </FormField>
-          <FormField label="Porta SSH">
+          <FormField label="Porta SSH" help={help("device.ssh_port")}>
             <input type="number" value={form.ssh_port} onChange={(e) => setForm({ ...form, ssh_port: e.target.value })} />
           </FormField>
-          <FormField label="Modelo">
+          <FormField label="Modelo" help={help("device.model")}>
             <input value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} />
           </FormField>
-          <FormField label="Família">
+          <FormField label="Família" help={help("device.family")}>
             <input value={form.family} onChange={(e) => setForm({ ...form, family: e.target.value })} />
           </FormField>
-          <FormField label="Função">
+          <FormField label="Função" help={help("device.role")}>
             <input value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} />
           </FormField>
-          <FormField label="ASN">
+          <FormField label="ASN" help={help("device.asn")}>
             <input type="number" value={form.asn} onChange={(e) => setForm({ ...form, asn: e.target.value })} />
           </FormField>
-          <FormField label="Site">
+          <FormField label="Site" help={help("device.site")}>
             <select value={form.site_id} onChange={(e) => setForm({ ...form, site_id: e.target.value })}>
               <option value="">—</option>
               {(sites ?? []).map((s) => (
@@ -159,7 +160,7 @@ export default function Devices() {
               ))}
             </select>
           </FormField>
-          <FormField label="Tags (separadas por vírgula)">
+          <FormField label="Tags (separadas por vírgula)" help={help("device.tags")}>
             <input value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })} />
           </FormField>
           <button className="primary" type="submit" disabled={criar.isPending}>
@@ -239,19 +240,19 @@ export default function Devices() {
       {editando && (
         <Modal aberto titulo={`Editar ${editando.name}`} onFechar={() => setEditando(null)}>
           <form onSubmit={salvarEdicao} className="grid-form">
-            <FormField label="Porta SSH">
+            <FormField label="Porta SSH" help={help("device.ssh_port")}>
               <input type="number" value={formEdit.ssh_port} onChange={(e) => setFormEdit({ ...formEdit, ssh_port: e.target.value })} />
             </FormField>
-            <FormField label="Modelo">
+            <FormField label="Modelo" help={help("device.model")}>
               <input value={formEdit.model} onChange={(e) => setFormEdit({ ...formEdit, model: e.target.value })} />
             </FormField>
-            <FormField label="Família">
+            <FormField label="Família" help={help("device.family")}>
               <input value={formEdit.family} onChange={(e) => setFormEdit({ ...formEdit, family: e.target.value })} />
             </FormField>
-            <FormField label="Função">
+            <FormField label="Função" help={help("device.role")}>
               <input value={formEdit.role} onChange={(e) => setFormEdit({ ...formEdit, role: e.target.value })} />
             </FormField>
-            <FormField label="Site">
+            <FormField label="Site" help={help("device.site")}>
               <select value={formEdit.site_id} onChange={(e) => setFormEdit({ ...formEdit, site_id: e.target.value })}>
                 <option value="">—</option>
                 {(sites ?? []).map((s) => (
@@ -261,10 +262,10 @@ export default function Devices() {
                 ))}
               </select>
             </FormField>
-            <FormField label="ASN">
+            <FormField label="ASN" help={help("device.asn")}>
               <input type="number" value={formEdit.asn} onChange={(e) => setFormEdit({ ...formEdit, asn: e.target.value })} />
             </FormField>
-            <FormField label="Tags (separadas por vírgula)">
+            <FormField label="Tags (separadas por vírgula)" help={help("device.tags")}>
               <input value={formEdit.tags} onChange={(e) => setFormEdit({ ...formEdit, tags: e.target.value })} />
             </FormField>
             <div className="dialog-actions">

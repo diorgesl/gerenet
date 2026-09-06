@@ -102,10 +102,10 @@ describe("BgpSessions", () => {
   it("lista sessões e cria nova pela API", async () => {
     renderList();
     expect(await screen.findByText("100.64.40.1 ↔ 100.64.40.2")).toBeInTheDocument();
-    await userEvent.selectOptions(screen.getByLabelText("Circuito *"), "1");
-    await userEvent.selectOptions(screen.getByLabelText("Equipamento *"), "2");
-    await userEvent.type(screen.getByLabelText("Endereço local *"), "100.64.42.1");
-    await userEvent.type(screen.getByLabelText("Endereço remoto *"), "100.64.42.2");
+    await userEvent.selectOptions(screen.getByLabelText(/^Circuito \*/), "1");
+    await userEvent.selectOptions(screen.getByLabelText(/^Equipamento \*/), "2");
+    await userEvent.type(screen.getByLabelText(/^Endereço local \*/), "100.64.42.1");
+    await userEvent.type(screen.getByLabelText(/^Endereço remoto \*/), "100.64.42.2");
     await userEvent.click(screen.getByRole("button", { name: "Cadastrar" }));
     await waitFor(() => {
       const chamadas = vi.mocked(fetch).mock.calls as unknown as [string, RequestInit][];
@@ -116,7 +116,7 @@ describe("BgpSessions", () => {
   it("detalhe associa e remove community", async () => {
     renderDetail();
     await screen.findByText(/Sessão BGP #1/);
-    await userEvent.selectOptions(screen.getByLabelText("Community"), "1");
+    await userEvent.selectOptions(screen.getByLabelText(/^Community/), "1");
     await userEvent.click(screen.getByRole("button", { name: "Associar" }));
     expect(await screen.findByRole("button", { name: "Remover" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Remover" }));
@@ -126,7 +126,7 @@ describe("BgpSessions", () => {
   it("define senha MD5 e mostra que há senha", async () => {
     renderDetail();
     await screen.findByText(/Sessão BGP #1/);
-    await userEvent.type(screen.getByLabelText("Senha MD5"), "segredo");
+    await userEvent.type(screen.getByLabelText(/^Senha MD5.*\?$/), "segredo");
     await userEvent.click(screen.getByRole("button", { name: "Definir senha" }));
     await waitFor(() => {
       const chamadas = vi.mocked(fetch).mock.calls as unknown as [string, RequestInit][];

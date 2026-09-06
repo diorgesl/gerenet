@@ -21,6 +21,8 @@ import type {
   SiteOut,
   SnapshotOut,
   UserOut,
+  WikiIndiceItem,
+  WikiPagina,
 } from "./types";
 
 export function useUsers(opts?: { includeDisabled?: boolean }) {
@@ -403,5 +405,20 @@ export function useJobs(filtros: {
             .map(([k, v]) => [k, String(v)] as [string, string]),
         ).toString()}`,
       ),
+  });
+}
+
+export function useWikiIndice() {
+  return useQuery({
+    queryKey: ["wiki-indice"],
+    queryFn: () => apiFetch<WikiIndiceItem[]>("/api/v1/wiki"),
+  });
+}
+
+export function useWikiPagina(slug: string | undefined) {
+  return useQuery({
+    queryKey: ["wiki-pagina", slug],
+    queryFn: () => apiFetch<WikiPagina>(`/api/v1/wiki/${slug}`),
+    enabled: Boolean(slug),
   });
 }

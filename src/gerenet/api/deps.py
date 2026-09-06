@@ -51,3 +51,18 @@ def require_admin(actor: Annotated[Actor, Depends(require_actor)]) -> Actor:
     if actor.usuario is None or actor.usuario.role != "administrador":
         raise HTTPException(status_code=403, detail="Somente administradores.")
     return actor
+
+
+def require_papel(*papeis: str):
+    """Fábrica de dependência: exige usuário de SESSÃO com um dos papéis.
+
+    Diferente de require_actor, chave de API não passa (o nome 'api' não tem
+    papel) — aprovação/execução exigem pessoa (spec §3.3/§8).
+    """
+
+    def _checa_papel(actor: Annotated[Actor, Depends(require_actor)]) -> Actor:
+        if actor.usuario is None or actor.usuario.role not in papeis:
+            raise HTTPException(status_code=403, detail=f"Perfil sem permissão: {', '.join(papeis)}.")
+        return actor
+
+    return _checa_papel

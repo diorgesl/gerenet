@@ -55,3 +55,14 @@ ocupando a porta/banco de dev quebra esse fluxo.
 - **Dev** (hot reload, dois processos): API `uv run uvicorn gerenet.api.main:create_app --factory --port 8000` + SPA `cd web && npm run dev` (Vite proxia `/api` → :8000).
 - **Prod/local completo**: `cd web && npm run build` → `web/dist` servido pelo próprio FastAPI (fallback SPA; sem build, as rotas da aplicação não são atendidas). Servir o FastAPI sob HTTPS em produção: `GERENET_COOKIE_SECURE=true` (ver autenticação acima).
 - **Testes**: `cd web && npm run test` (Vitest, componentes). Fumos end-to-end: `cd web && npm run test:e2e` (Playwright — sobe build + uvicorn, roda o seed automático e idempotente; ver `web/e2e/README.md`).
+
+## Wiki operacional (ciclo E)
+
+Após o build da SPA (ou no dev com a API rodando), o operador autenticado acessa
+`/wiki` (menu "Ajuda") para ler a documentação operacional; a sidebar agrupa as
+páginas por seção e marca com "(em breve)" as que ainda não têm recurso
+disponível. O conteúdo vive em `docs/wiki/` (10 páginas) e é editado via PR
+(renderização server-side com `markdown` + sanitização `nh3` — o HTML vem
+sanitizado do servidor; nenhum markdown é renderizado no cliente). Cada página usa frontmatter
+`title`/`secao`/`order`/`em_breve` — `em_breve: true` mostra o aviso
+"Recurso planejado — não disponível ainda." no topo da página.

@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import { useAuth } from "@/auth/auth-context";
 import { ApiError } from "@/api/client";
 import { useContactAtualizar, useContactCriar, useContacts, useOrganizations } from "@/api/hooks";
+import { help } from "@/help";
 import { DataTable } from "@/components/DataTable";
 import { FormField } from "@/components/FormField";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -90,7 +91,7 @@ export default function Contacts() {
       </label>
       {podeEscrever && (
         <form onSubmit={onSubmit} className="grid-form">
-          <FormField label="Organização *">
+          <FormField label="Organização *" help={help("contact.organization_id")}>
             <select
               value={form.organization_id}
               onChange={(e) => setForm({ ...form, organization_id: e.target.value })}
@@ -104,16 +105,16 @@ export default function Contacts() {
               ))}
             </select>
           </FormField>
-          <FormField label="Nome *">
+          <FormField label="Nome *" help={help("contact.name")}>
             <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
           </FormField>
-          <FormField label="E-mail">
+          <FormField label="E-mail" help={help("contact.email")}>
             <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
           </FormField>
-          <FormField label="Telefone">
+          <FormField label="Telefone" help={help("contact.phone")}>
             <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
           </FormField>
-          <FormField label="Tipo">
+          <FormField label="Tipo" help={help("contact.kind")}>
             <select
               value={form.kind}
               onChange={(e) => setForm({ ...form, kind: e.target.value as "tecnico" | "noc" | "admin" })}
@@ -195,7 +196,7 @@ export default function Contacts() {
       {editando && (
         <Modal aberto titulo={`Editar ${editando.name}`} onFechar={() => setEditando(null)}>
           <form onSubmit={salvarEdicao} className="grid-form">
-            <FormField label="Organização *">
+            <FormField label="Organização *" help={help("contact.organization_id")}>
               <select
                 value={formEdit.organization_id}
                 onChange={(e) => setFormEdit({ ...formEdit, organization_id: e.target.value })}
@@ -209,16 +210,16 @@ export default function Contacts() {
                 ))}
               </select>
             </FormField>
-            <FormField label="Nome *">
+            <FormField label="Nome *" help={help("contact.name")}>
               <input value={formEdit.name} onChange={(e) => setFormEdit({ ...formEdit, name: e.target.value })} required />
             </FormField>
-            <FormField label="E-mail">
+            <FormField label="E-mail" help={help("contact.email")}>
               <input type="email" value={formEdit.email} onChange={(e) => setFormEdit({ ...formEdit, email: e.target.value })} />
             </FormField>
-            <FormField label="Telefone">
+            <FormField label="Telefone" help={help("contact.phone")}>
               <input value={formEdit.phone} onChange={(e) => setFormEdit({ ...formEdit, phone: e.target.value })} />
             </FormField>
-            <FormField label="Tipo">
+            <FormField label="Tipo" help={help("contact.kind")}>
               <select
                 value={formEdit.kind}
                 onChange={(e) => setFormEdit({ ...formEdit, kind: e.target.value as "tecnico" | "noc" | "admin" })}
