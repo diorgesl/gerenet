@@ -2,6 +2,7 @@ import typer
 
 from gerenet.cli import (
     bgp_sessions,
+    change_requests,
     circuits,
     collect,
     communities,
@@ -26,6 +27,7 @@ app.add_typer(organizations.app, name="organizations", help="Organizações.")
 app.add_typer(contacts.app, name="contacts", help="Contatos de organizações.")
 app.add_typer(circuits.app, name="circuits", help="Circuitos de acesso.")
 app.add_typer(bgp_sessions.app, name="bgp-sessions", help="Sessões BGP.")
+app.add_typer(change_requests.app, name="change-requests", help="Change requests (fluxo de mudança).")
 app.add_typer(prefix_authorizations.app, name="prefix-authorizations", help="Autorizações de prefixo.")
 app.add_typer(policy_profiles.app, name="policy-profiles", help="Produtos de roteamento.")
 app.add_typer(hostkey.app, name="hostkey", help="Host keys dos equipamentos.")
