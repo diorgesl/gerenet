@@ -9,8 +9,10 @@ congelado contra o encontrado, aplicação bloco a bloco com denylist
 classificação §4.1. Zero segredos em logs/snapshot/audit (§18): o que entra em
 step/job/audit passa por `_mascarar_texto`.
 """
+import ipaddress
 import re
 import secrets
+from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -22,6 +24,7 @@ from gerenet.automation.collectors import COLLECTORS, comandos_verbose
 from gerenet.automation.netmiko_conn import connect_and_apply, connect_and_run
 from gerenet.automation.parsers.huawei_vrp.merge import merge_parsed
 from gerenet.automation.parsers.huawei_vrp.registry import parse_template
+from gerenet.automation.reconcile import reconciliar_device
 from gerenet.config import Settings, get_settings
 from gerenet.db import SessionLocal
 from gerenet.domain.models import AuditEvent, ChangeRequest, ChangeStep, DeviceSnapshot, JobRun
@@ -70,7 +73,9 @@ def _liberta_lock(redis: Redis, chave_lock: str, token: str) -> None:
 ERROS_VRP = re.compile(r"% Error:|\^$|Incomplete command|Ambiguous command|Unrecognized command", re.MULTILINE)
 
 # Palavras-chave cujo valor (1 token seguinte) nunca deve ir para log/audit (§18).
-_VAZAMENTO = re.compile(r"(?i)\b(password|secret|token|senha|community)\b\s+\S+")
+# `community` aceita sufixos de cola hifenada (community-filter/-list/-set) —
+# o valor de qualquer uma delas é segredo de comunidade (§14.1/§19).
+_VAZAMENTO = re.compile(r"(?i)\b(?:password|secret|token|senha|community(?:-[a-z0-9]+)*)\b\s+\S+")
 
 
 def _mascarar_texto(texto: str) -> str:
@@ -81,6 +86,19 @@ def _mascarar_texto(texto: str) -> str:
     palavra-chave) viram "[mascarado]" (§18).
     """
     return _VAZAMENTO.sub("[mascarado]", texto)
+
+
+# Recursos que o re-diff §5.3 (e o pós-check) consome. Coleta parcial destes
+# (chave em erros ou ausente de recursos) não pode seguir: a ausência viraria
+# "objeto ausente" e o plano congelado seria aplicado às cegas (config
+# inalterada? §12.2). `bgp_peers_verbose` fica fora — sem sessões o coletor
+# nem o coleta (chave ausente é o normal, não uma coleta incompleta).
+_RE_DIFF_KEYS = ("interfaces", "bgp_peers", "config_backup")
+
+
+def _chaves_incompletas(recursos: dict, erros: dict) -> list[str]:
+    """Chaves do re-diff ausentes ou com falha de coleta (gate §5.3)."""
+    return [k for k in _RE_DIFF_KEYS if k in erros or k not in recursos]
 
 
 def run_collection(
@@ -294,11 +312,63 @@ def _peer_familia(comandos: list[str]) -> str | None:
     return None
 
 
+def _enderecos_do_bloco(comandos: list[str]) -> dict[str, list[str]]:
+    """Endereços que um bloco create de subinterface promete, no formato do
+    merge ("addr/prefixlen" — a mesma normalização do §13/`_esperado_subinterfaces`).
+
+    Devolve {"v4": [...], "v6": [...]}, ou {} quando o bloco não carrega
+    endereço (nada a conferir; a identidade fica só no nome).
+    """
+    v4: list[str] = []
+    v6: list[str] = []
+    for linha in comandos:
+        m = re.match(r"ip address (\S+) (\S+)$", linha)
+        if m:
+            endereco, mascara = m.group(1), m.group(2)
+            prefixlen = ipaddress.IPv4Network(f"0.0.0.0/{mascara}").prefixlen
+            v4.append(f"{endereco}/{prefixlen}")
+            continue
+        m = re.match(r"ipv6 address (\S+)$", linha)
+        if m:
+            v6.append(m.group(1))
+    if not v4 and not v6:
+        return {}
+    return {"v4": v4, "v6": v6}
+
+
+def _binding_do_bloco(comandos: list[str], lado: str) -> str | None:
+    """Nome da route-policy `import|export` do bloco peer, ou None."""
+    for linha in comandos:
+        m = re.search(rf"peer\s+\S+\s+{lado}\s+route-policy\s+(\S+)", linha)
+        if m:
+            return m.group(1)
+    return None
+
+
+def _maximum_prefix_do_bloco(comandos: list[str]) -> int | None:
+    """Valor de `peer X maximum-prefix N` do bloco peer, ou None."""
+    for linha in comandos:
+        partes = linha.split()
+        for i, p in enumerate(partes):
+            if p == "maximum-prefix" and i + 1 < len(partes):
+                try:
+                    return int(partes[i + 1])
+                except ValueError:
+                    return None
+    return None
+
+
 def _estado_do_bloco(bloco: dict, recursos: dict, texto: str) -> str:
     """Presença do objeto do bloco no encontrado fresco, por identidade (§5.1/§5.3).
 
-    Mesma semântica do `_ja_existe` do plano: subinterface por nome; bgp_peer por
-    (afi, peer, asn) — ASN não confirmado ⇒ ausente (conservador §5.1.3); ASN
+    Mesma semântica do `_ja_existe` do plano — subinterface por nome; bgp_peer
+    por (afi, peer, asn) — até que o bloco create também carregue o que o plano
+    congelado promete (revisão T6 F1): subinterface compare nome + endereços
+    esperados (`ip address`/`ipv6 address` do plano contra o encontrado — nome
+    presente SEM o endereço esperado é o caso literal do §5.3, nunca "já
+    presente"); bgp_peer compare idem bindings (route-policy import/export e
+    maximum-prefix quando o bloco os carrega) — binding ausente/diferente é
+    "conflito". ASN não confirmado ⇒ ausente (conservador §5.1.3); ASN
     DIFERENTE para a mesma (afi, peer) ⇒ "conflito" (nunca "já presente");
     prefix_list e route-policy pelo padrão de texto no backup.
     """
@@ -314,7 +384,22 @@ def _estado_do_bloco(bloco: dict, recursos: dict, texto: str) -> str:
         if partes[0] == "undo":
             # "undo interface GigabitEthernet1/0/0.100" (bloco delete)
             nome = nome.split(" ", 1)[1] if " " in nome else nome
-        return "consta" if nome in {i.get("nome") for i in recursos.get("interfaces", [])} else "ausente"
+        encontradas = [i for i in recursos.get("interfaces", []) if i.get("nome") == nome]
+        if not encontradas:
+            return "ausente"
+        if partes[0] == "undo":
+            return "consta"
+        # create: identidade é nome + endereços que o plano congelado promete —
+        # nome presente SEM o endereço esperado é a divergência do §5.3, nunca
+        # "já presente" (revisão T6 F1).
+        esperados = _enderecos_do_bloco(comandos)
+        if not esperados:
+            return "consta"
+        encontrada = encontradas[0]
+        for chave, coluna in (("v4", "enderecos_v4"), ("v6", "enderecos_v6")):
+            if any(esperado not in encontrada.get(coluna, []) for esperado in esperados.get(chave, [])):
+                return "conflito"
+        return "consta"
     if tipo == "bgp_peer":
         remote = _peer_remote(comandos)
         if remote is None:
@@ -331,9 +416,13 @@ def _estado_do_bloco(bloco: dict, recursos: dict, texto: str) -> str:
                 return "consta"
             if linha.get("asn") is None:
                 continue  # ASN não confirmado: conservador, não consta
-            if asn == linha.get("asn"):
-                return "consta"
-            return "conflito"  # mesma (afi, peer), ASN diferente — não é "já presente"
+            if asn != linha.get("asn"):
+                return "conflito"  # mesma (afi, peer), ASN diferente — não é "já presente"
+            # create: (afi, peer, asn) igual é só a base — o que o plano bindou
+            # (route-policy import/export, maximum-prefix) também precisa
+            # constar; binding diferente/ausente = config mudou desde o plano
+            # (T6 F1): reaplicar às cegas quebraria o §12.2.
+            return _estado_bindings_do_bloco(comandos, recursos, texto, remote, familia)
         return "ausente"
     if tipo == "prefix_list":
         partes = comandos[0].split()
@@ -355,6 +444,39 @@ def _estado_do_bloco(bloco: dict, recursos: dict, texto: str) -> str:
             return "ausente"
         return "consta" if f"route-policy {nome} permit node" in texto else "ausente"
     return "ausente"  # tipo fora do repertório: reaplica (o comando é do nosso render)
+
+
+def _estado_bindings_do_bloco(
+    comandos: list[str], recursos: dict, texto: str, remote: str, familia: str | None,
+) -> str:
+    """Bindings do plano (route-policy import/export; maximum-prefix) × encontrado.
+
+    Compare apenas o que o bloco carrega. Desconhecido (linha verbose ausente
+    para a sessão ou backup sem a linha do máximo) ⇒ "conflito" — nunca
+    "consta" com o binding em dúvida (fail-safe §5.3).
+    """
+    bloco_import = _binding_do_bloco(comandos, "import")
+    bloco_export = _binding_do_bloco(comandos, "export")
+    max_prefix = _maximum_prefix_do_bloco(comandos)
+    if bloco_import is None and bloco_export is None and max_prefix is None:
+        return "consta"
+    if bloco_import is not None or bloco_export is not None:
+        linhas = [
+            l for l in recursos.get("bgp_peers_verbose", [])
+            if l.get("peer") == remote and (familia is None or l.get("afi") == familia)
+        ]
+        if not linhas:
+            return "conflito"
+        linha = linhas[0]
+        if bloco_import is not None and linha.get("filtro_import") != bloco_import:
+            return "conflito"
+        if bloco_export is not None and linha.get("filtro_export") != bloco_export:
+            return "conflito"
+    if max_prefix is not None and not re.search(
+        rf"peer\s+{re.escape(remote)}\s+maximum-prefix\s+{max_prefix}\b", texto,
+    ):
+        return "conflito"
+    return "consta"
 
 
 def _re_diff(blocos: list[dict], recursos: dict, texto: str) -> tuple[list[dict], list[dict], str | None]:
@@ -450,8 +572,16 @@ def _executa_step(
         recursos_pre, erros_pre, arquivos_pre = _coleta_recursos(session, dev, cred, settings, base / "pre")
         snap_pre = _grava_snapshot(session, dev, inicio, recursos_pre, erros_pre, arquivos_pre, actor)
         step.backup_snapshot_id = snap_pre.id  # backup pré-mudança §12.3
-        if erros_pre and not recursos_pre:
-            raise ValueError(_mascarar_texto(f"Coleta pré-mudança sem recursos: {list(erros_pre)[:3]}"))
+        # Gate de coleta (§5.3): sem os recursos que o re-diff consome não há
+        # re-diff confiável — o missing viraria "objeto ausente" e o plano
+        # congelado seria aplicado às cegas (config inalterada? §12.2).
+        incompletos_pre = _chaves_incompletas(recursos_pre, erros_pre)
+        if incompletos_pre:
+            raise ValueError(
+                f"Coleta pré-mudança incompleta — recursos "
+                f"{', '.join(sorted(incompletos_pre))} não coletados; "
+                "colete antes de executar (§5.3)."
+            )
 
         # re-diff §5.3 do plano congelado contra o encontrado fresco
         texto_pre = removal.texto_backup(snap_pre)
@@ -479,10 +609,28 @@ def _executa_step(
         # pós-coleta de verificação (a "validação do resultado" §12.3/§13)
         recursos_pos, erros_pos, arquivos_pos = _coleta_recursos(session, dev, cred, settings, base / "pos")
         snap_pos = _grava_snapshot(session, dev, datetime.now(UTC), recursos_pos, erros_pos, arquivos_pos, actor)
-        if erros_pos and not recursos_pos:
-            raise ValueError(_mascarar_texto(f"Coleta pós-mudança sem recursos: {list(erros_pos)[:3]}"))
-        items = _verifica_aplicados(step, snap_pos)
-        step.post_check_json = {"snapshot_id": snap_pos.id, "items": items}
+        incompletos_pos = _chaves_incompletas(recursos_pos, erros_pos)
+        if incompletos_pos:
+            raise ValueError(
+                f"Coleta pós-mudança incompleta — recursos "
+                f"{', '.join(sorted(incompletos_pos))} não coletados (§13)."
+            )
+        if cr.acao == "remove":
+            # Pós-check de remoção é por AUSÊNCIA (§5.2): reconciliar renderia
+            # o objeto desejado (reintroduziria) — aqui a verificação é o
+            # inverso do §13: cada bloco delete não pode mais constar.
+            items = _verifica_aplicados(step, snap_pos)
+            step.post_check_json = {"snapshot_id": snap_pos.id, "items": items}
+        else:
+            # Provision: pós-check é o reconciliador §13 (desejado × encontrado)
+            # — subinterface ausente/sem o endereço esperado, peer ausente/ASN,
+            # filtros divergentes viram itens críticos ⇒ CR com_divergencia.
+            resultado = reconciliar_device(session, dev.id, snapshot_id=snap_pos.id)
+            step.post_check_json = {
+                "snapshot_id": snap_pos.id,
+                "aviso": resultado.aviso,
+                "items": [asdict(i) for i in resultado.items],
+            }
 
         label = "aplicado" if a_aplicar else "pulado"
         step.status = label
@@ -514,6 +662,52 @@ def _executa_step(
         ))
         session.commit()
         return "falhou"
+
+
+# Nome do evento de auditoria por status (§18): "aplicado" usa o evento em
+# inglês como approved/rejected; "erro" usa o MESMO evento das exceções
+# (change.errors), não "change.erro" (revisão T6 M6).
+_TIPO_AUDIT = {
+    "aplicado": "change.applied",
+    "com_divergencia": "change.com_divergencia",
+    "parcial": "change.parcial",
+    "erro": "change.errors",
+}
+
+
+def _post_criticas(cr: ChangeRequest) -> bool:
+    """Algum step já aplicado/pulado tem item crítico no pós-check (§13)."""
+    return any(
+        step.post_check_json
+        and any(i.get("severidade") == "critica" for i in step.post_check_json.get("items", []))
+        for step in cr.steps if step.status in ("aplicado", "pulado")
+    )
+
+
+def _classifica(cr: ChangeRequest, resultados: list[str]) -> str:
+    """Classificação §6.5 dos steps DESTA execução + pós-checks críticos."""
+    if all(r in ("aplicado", "pulado") for r in resultados):
+        return "com_divergencia" if _post_criticas(cr) else "aplicado"
+    if any(r in ("aplicado", "pulado") for r in resultados):
+        return "parcial"
+    return "erro"
+
+
+def _status_dos_steps(cr: ChangeRequest) -> str | None:
+    """Classificação de uma re-execução sem pendentes; None = CR sem steps.
+
+    Re-execução sobre CR em "executando" com todos os steps já processados
+    (worker caiu após o último): classifica do estado dos steps existentes em
+    vez de devolver erro sem transição (revisão T6 M4).
+    """
+    estados = [step.status for step in cr.steps]
+    if not estados:
+        return None
+    if all(s in ("aplicado", "pulado") for s in estados):
+        return "com_divergencia" if _post_criticas(cr) else "aplicado"
+    if any(s in ("aplicado", "pulado") for s in estados):
+        return "parcial"
+    return "erro"
 
 
 def run_change(
@@ -608,27 +802,21 @@ def run_change(
                     _liberta_lock(redis, chave_dev, token)
 
             if resultados:
-                post_criticas = any(
-                    step.post_check_json
-                    and any(i["severidade"] == "critica" for i in step.post_check_json.get("items", []))
-                    for step in cr.steps if step.status in ("aplicado", "pulado")
-                )
-                if all(r in ("aplicado", "pulado") for r in resultados):
-                    status_cr = "com_divergencia" if post_criticas else "aplicado"
-                elif any(r in ("aplicado", "pulado") for r in resultados):
-                    status_cr = "parcial"
-                else:
-                    status_cr = "erro"
-                cr.status = status_cr
-                # "aplicado" vira "change.applied" (nome do evento em inglês, como
-                # approved/rejected); os demais status usam o nome PT do enum.
-                tipo_audit = "change.applied" if status_cr == "aplicado" else f"change.{status_cr}"
-                session.add(
-                    AuditEvent(type=tipo_audit, actor=actor, details={"change_request_id": cr.id})
-                )
-                session.commit()
-                return {"status": status_cr}
-            return {"status": "erro", "error": "Change request sem steps pendentes."}
+                status_cr = _classifica(cr, resultados)
+            else:
+                # Re-execução sobre CR já processada (worker caiu após o último
+                # step; nada pendente pela frente): classifica dos steps
+                # existentes — sem isso a CR ficaria presa em "executando"
+                # devolvendo erro sem transição (revisão T6 M4).
+                status_cr = _status_dos_steps(cr)
+                if status_cr is None:
+                    return {"status": "erro", "error": "Change request sem steps pendentes."}
+            cr.status = status_cr
+            session.add(
+                AuditEvent(type=_TIPO_AUDIT[status_cr], actor=actor, details={"change_request_id": cr.id})
+            )
+            session.commit()
+            return {"status": status_cr}
         except Exception as exc:  # noqa: BLE001 — contrato dict preservado
             if cr.status == "executando":
                 cr.status = "erro"
@@ -639,11 +827,11 @@ def run_change(
                     )
                 )
                 session.commit()
-            return {"status": "error", "error": str(exc)}
+            return {"status": "error", "error": _mascarar_texto(str(exc))}
         finally:
             _liberta_lock(redis, chave_cr, token)
     except Exception as exc:  # noqa: BLE001 — falha pré-lock
-        return {"status": "error", "error": str(exc)}
+        return {"status": "error", "error": _mascarar_texto(str(exc))}
     finally:
         if redis is not None:
             redis.close()
