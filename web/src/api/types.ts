@@ -243,3 +243,52 @@ export interface WikiPagina {
   em_breve: boolean;
   html: string;
 }
+
+// Ciclo D — change requests (contrato T4/T5; "acao" presente nos blocos de plano T2/T3).
+export interface ChangeBlocoOut extends BlocoOut {
+  acao: "create" | "delete";
+}
+export interface ApprovalOut {
+  id: number;
+  user_id: number;
+  decisao: string;
+  comentario: string | null;
+  created_at: string;
+}
+export interface PostCheckOut {
+  snapshot_id: number | null;
+  items: ReconcileItemOut[]; // mesmo shape do ReconcileOut (T6 grava asdict(item))
+}
+export interface ChangeStepOut {
+  id: number;
+  device_id: number;
+  status: string;
+  plano_json: ChangeBlocoOut[];
+  aviso: string | null;
+  baseline_snapshot_id: number | null;
+  backup_snapshot_id: number | null;
+  post_check_json: PostCheckOut | null;
+  erro: string | null;
+  finished_at: string | null;
+}
+export interface ChangeRequestOut {
+  id: number;
+  circuit_id: number;
+  acao: "provision" | "remove";
+  criticidade: "baixa" | "media" | "alta";
+  motivo: string;
+  ticket: string | null;
+  solicitante_id: number | null;
+  status: string;
+  rollback_de: number | null;
+  created_at: string;
+  steps: ChangeStepOut[];
+  approvals: ApprovalOut[];
+}
+export type ChangeRequestCreateIn = {
+  circuit_id: number;
+  acao: "provision" | "remove";
+  criticidade: "baixa" | "media" | "alta";
+  motivo: string;
+  ticket?: string | null;
+};

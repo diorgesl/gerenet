@@ -13,6 +13,8 @@ import Circuits from "@/pages/Circuits";
 import CircuitDetail from "@/pages/CircuitDetail";
 import BgpSessions from "@/pages/BgpSessions";
 import BgpSessionDetail from "@/pages/BgpSessionDetail";
+import ChangeRequests from "@/pages/ChangeRequests";
+import ChangeRequestDetail from "@/pages/ChangeRequestDetail";
 import PolicyProfiles from "@/pages/PolicyProfiles";
 import Communities from "@/pages/Communities";
 import PrefixAuthorizations from "@/pages/PrefixAuthorizations";
@@ -45,6 +47,8 @@ export default function App() {
         <Route path="/circuits/:id" element={<CircuitDetail />} />
         <Route path="/bgp-sessions" element={<BgpSessions />} />
         <Route path="/bgp-sessions/:id" element={<BgpSessionDetail />} />
+        <Route path="/change-requests" element={<ChangeRequests />} />
+        <Route path="/change-requests/:id" element={<ChangeRequestDetail />} />
         <Route path="/policy-profiles" element={<PolicyProfiles />} />
         <Route path="/communities" element={<Communities />} />
         <Route path="/prefix-authorizations" element={<PrefixAuthorizations />} />

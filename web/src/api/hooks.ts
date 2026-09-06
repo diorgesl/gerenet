@@ -3,6 +3,8 @@ import { apiFetch } from "./client";
 import type {
   AuditEventOut,
   BgpSessionOut,
+  ChangeRequestCreateIn,
+  ChangeRequestOut,
   CircuitDetailOut,
   CircuitOut,
   CollectResposta,
@@ -294,6 +296,81 @@ export function useSessionSenha() {
     onSuccess: (_d, v) => {
       void qc.invalidateQueries({ queryKey: ["bgp-session", v.sessionId] });
       void qc.invalidateQueries({ queryKey: ["bgp-sessions"] });
+    },
+  });
+}
+
+export const useChangeRequests = (filtros?: { status?: string; circuit_id?: number; solicitante_id?: number }) =>
+  useQuery({
+    queryKey: ["change-requests", filtros],
+    queryFn: () => {
+      const qs = new URLSearchParams();
+      if (filtros?.status) qs.set("status", filtros.status);
+      if (filtros?.circuit_id) qs.set("circuit_id", String(filtros.circuit_id));
+      if (filtros?.solicitante_id) qs.set("solicitante_id", String(filtros.solicitante_id));
+      const suf = qs.size > 0 ? `?${qs.toString()}` : "";
+      return apiFetch<ChangeRequestOut[]>(`/api/v1/change-requests${suf}`);
+    },
+  });
+export const useChangeRequest = (id: number) =>
+  useQuery({
+    queryKey: ["change-request", id],
+    queryFn: () => apiFetch<ChangeRequestOut>(`/api/v1/change-requests/${id}`),
+    enabled: id > 0,
+  });
+
+export const useChangeRequestCriar = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: ChangeRequestCreateIn) =>
+      apiFetch<ChangeRequestOut>("/api/v1/change-requests", { method: "POST", body }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["change-requests"] });
+      void qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+};
+
+// Ações de transição com corpo vazio — espelham os endpoints T5 (POST retorna ChangeRequestOut).
+function useChangeAction(caminho: (id: number) => string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => apiFetch<ChangeRequestOut>(caminho(id), { method: "POST" }),
+    onSuccess: (_d, id) => {
+      void qc.invalidateQueries({ queryKey: ["change-request", id] });
+      void qc.invalidateQueries({ queryKey: ["change-requests"] });
+      void qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+}
+export const useChangeRequestEnviar = () => useChangeAction((id) => `/api/v1/change-requests/${id}/enviar`);
+export const useChangeRequestCancelar = () => useChangeAction((id) => `/api/v1/change-requests/${id}/cancelar`);
+export const useChangeRequestRollback = () => useChangeAction((id) => `/api/v1/change-requests/${id}/rollback`);
+export const useChangeRequestReconciliar = () => useChangeAction((id) => `/api/v1/change-requests/${id}/reconciliar`);
+
+export function useChangeRequestAprovar() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, decisao, comentario }: { id: number; decisao: "aprovar" | "rejeitar"; comentario?: string | null }) =>
+      apiFetch<ChangeRequestOut>(`/api/v1/change-requests/${id}/approve`, { method: "POST", body: { decisao, comentario } }),
+    onSuccess: (_d, v) => {
+      void qc.invalidateQueries({ queryKey: ["change-request", v.id] });
+      void qc.invalidateQueries({ queryKey: ["change-requests"] });
+      void qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+}
+
+export function useChangeRequestExecutar() {
+  const qc = useQueryClient();
+  return useMutation({
+    // /executar devolve 202 {queued, message, job_id} (T7) — mesmo shape de CollectResposta.
+    mutationFn: (id: number) =>
+      apiFetch<CollectResposta>(`/api/v1/change-requests/${id}/executar`, { method: "POST" }),
+    onSuccess: (_d, id) => {
+      void qc.invalidateQueries({ queryKey: ["change-request", id] });
+      void qc.invalidateQueries({ queryKey: ["change-requests"] });
+      void qc.invalidateQueries({ queryKey: ["dashboard"] });
     },
   });
 }

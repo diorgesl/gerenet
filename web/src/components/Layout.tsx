@@ -40,6 +40,10 @@ const GRUPOS_NAV: { rotulo: string; itens: { para: string; rotulo: string; admin
     ],
   },
   {
+    rotulo: "Mudanças",
+    itens: [{ para: "/change-requests", rotulo: "Change requests" }],
+  },
+  {
     rotulo: "Governança",
     itens: [
       { para: "/audit-events", rotulo: "Auditoria" },
