@@ -33,6 +33,11 @@ const FORM_VAZIO = {
   ticket: "",
 };
 
+const ACAO_LABELS: Record<ChangeRequestOut["acao"], string> = {
+  provision: "Aplicar configuração",
+  remove: "Remover configuração",
+};
+
 export default function ChangeRequests() {
   const { podeEscrever } = useAuth();
   const [status, setStatus] = useState("");
@@ -87,12 +92,11 @@ export default function ChangeRequests() {
           Solicitar mudança
         </button>
       )}
-      {erro && <p role="alert">{erro}</p>}
       <DataTable<ChangeRequestOut>
         colunas={[
           { key: "id", title: "ID", render: (cr) => <Link to={`/change-requests/${cr.id}`}>#{cr.id}</Link> },
           { key: "circuit", title: "Circuito", render: (cr) => circuits?.find((c) => c.id === cr.circuit_id)?.code ?? `#${cr.circuit_id}` },
-          { key: "acao", title: "Ação", render: (cr) => cr.acao },
+          { key: "acao", title: "Ação", render: (cr) => ACAO_LABELS[cr.acao] },
           { key: "criticidade", title: "Criticidade", render: (cr) => cr.criticidade },
           { key: "status", title: "Status", render: (cr) => <StatusBadge estado={cr.status} /> },
           { key: "motivo", title: "Motivo", render: (cr) => cr.motivo },
@@ -115,8 +119,8 @@ export default function ChangeRequests() {
             </FormField>
             <FormField label="Ação *">
               <select value={form.acao} onChange={(e) => setForm({ ...form, acao: e.target.value as "provision" | "remove" })}>
-                <option value="provision">provision — aplicar configuração</option>
-                <option value="remove">remove — remover configuração</option>
+                <option value="provision">Aplicar configuração</option>
+                <option value="remove">Remover configuração</option>
               </select>
             </FormField>
             <FormField label="Criticidade *">
@@ -141,6 +145,7 @@ export default function ChangeRequests() {
               </button>
             </div>
           </form>
+          {erro && <p role="alert">{erro}</p>}
         </Modal>
       )}
     </main>

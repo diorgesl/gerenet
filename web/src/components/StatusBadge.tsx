@@ -7,9 +7,9 @@ type Estado =
 
 export function StatusBadge({ estado }: { estado: Estado }) {
   const cls =
-    ["ok", "success", "ativo"].includes(estado) ? "ok"
-    : ["fail", "error"].includes(estado) ? "fail"
-    : ["running", "queued"].includes(estado) ? "warn"
+    ["ok", "success", "ativo", "aprovado", "aplicado", "aprovar"].includes(estado) ? "ok"
+    : ["fail", "error", "erro", "rejeitado", "cancelado", "falhou", "critica", "rejeitar"].includes(estado) ? "fail"
+    : ["running", "queued", "aguardando_aprovacao", "executando", "pendente", "parcial", "com_divergencia"].includes(estado) ? "warn"
     : "unknown";
   return <span className={`badge badge-${cls}`}>{estado}</span>;
 }

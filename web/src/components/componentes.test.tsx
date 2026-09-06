@@ -17,6 +17,32 @@ describe("kit", () => {
     expect(screen.getByText("success")).toBeInTheDocument();
   });
 
+  it("StatusBadge mapeia os estados do ciclo D (additivo)", () => {
+    const casos: [string, string][] = [
+      ["aprovado", "ok"],
+      ["aplicado", "ok"],
+      ["aprovar", "ok"],
+      ["aguardando_aprovacao", "warn"],
+      ["executando", "warn"],
+      ["pendente", "warn"],
+      ["parcial", "warn"],
+      ["com_divergencia", "warn"],
+      ["rejeitado", "fail"],
+      ["cancelado", "fail"],
+      ["falhou", "fail"],
+      ["erro", "fail"],
+      ["critica", "fail"],
+      ["rejeitar", "fail"],
+      ["rascunho", "unknown"],
+      ["pulado", "unknown"],
+    ];
+    for (const [estado, classe] of casos) {
+      const { container, unmount } = render(<StatusBadge estado={estado} />);
+      expect(container.querySelector(`.badge-${classe}`)).toBeInTheDocument();
+      unmount();
+    }
+  });
+
   it("SeverityBadge critica → danger", () => {
     const { container } = render(<SeverityBadge severidade="critica" />);
     expect(container.querySelector(".badge-danger")).toBeInTheDocument();

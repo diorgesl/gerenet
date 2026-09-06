@@ -16,6 +16,12 @@ import {
 import { StatusBadge } from "@/components/StatusBadge";
 import { PageHeader } from "@/components/PageHeader";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import type { ChangeRequestOut } from "@/api/types";
+
+const ACAO_LABELS: Record<ChangeRequestOut["acao"], string> = {
+  provision: "Aplicar configuração",
+  remove: "Remover configuração",
+};
 
 const CONFIRMACOES: Record<string, { titulo: string; mensagem: string }> = {
   cancelar: {
@@ -96,7 +102,7 @@ export default function ChangeRequestDetail() {
     <main>
       <PageHeader
         titulo={`Change request #${cr.id}`}
-        sub={`${cr.acao} · ${cr.criticidade} · ${new Date(cr.created_at).toLocaleString("pt-BR")}`}
+        sub={`${ACAO_LABELS[cr.acao]} · ${cr.criticidade} · ${new Date(cr.created_at).toLocaleString("pt-BR")}`}
         acoes={
           <>
             <Link to="/change-requests">← Voltar</Link>
@@ -133,7 +139,7 @@ export default function ChangeRequestDetail() {
         <tbody>
           <tr><th>Status</th><td><StatusBadge estado={status} /></td></tr>
           <tr><th>Circuito</th><td>{circuito ? <Link to={`/circuits/${circuito.id}`}>{circuito.code}</Link> : `#${cr.circuit_id}`}</td></tr>
-          <tr><th>Solicitante</th><td>{cr.solicitante_id ?? "cli"}</td></tr>
+          <tr><th>Solicitante</th><td>{cr.solicitante_id ?? "API/CLI"}</td></tr>
           <tr><th>Ticket</th><td>{cr.ticket ?? "—"}</td></tr>
           <tr><th>Rollback de</th><td>{cr.rollback_de ? <Link to={`/change-requests/${cr.rollback_de}`}>#{cr.rollback_de}</Link> : "—"}</td></tr>
           <tr><th>Motivo</th><td>{cr.motivo}</td></tr>
