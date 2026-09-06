@@ -380,11 +380,12 @@ def _re_diff(blocos: list[dict], recursos: dict, texto: str) -> tuple[list[dict]
             a_pular.append(bloco)
         else:
             a_aplicar.append(bloco)
-    if a_aplicar and a_pular:
-        bloco = next(
-            (b for b in a_pular if b.get("acao", "create") == "create"),
-            a_pular[0],
-        )
+    if a_aplicar and any(bloco.get("acao", "create") == "create" for bloco in a_pular):
+        # Só create consta+ausente no mesmo plano é divergência (plano congelado
+        # desatualizado, §12.2). Remove (delete) parcial é natural: pular o que
+        # já não existe e remover o que existe é a própria idempotência (§3.2) —
+        # sem abort, o step reexecutável converge sem reconciliar o plano.
+        bloco = next(b for b in a_pular if b.get("acao", "create") == "create")
         return [], [], (
             f"Estado divergente no objeto {bloco['tipo']} (#{bloco.get('objeto_id')}): apenas "
             "parte do plano consta do encontrado (config inalterada? §12.2) — "
