@@ -54,7 +54,6 @@ export const HELP = {
   "circuit.edge_trunk": "Eth-Trunk de borda (opcional) que agrega o acesso do cliente.",
   "circuit.description": "Descrição livre (1–255).",
   "circuit.notes": "Observações livres.",
-  "circuit.ip_p2p_nota": "Endereços v4/v6 do enlace são derivados pelo IPAM: v6 = /126 com sufixo dos octetos 2–4 do IPv4 relidos como hex; local :1, remoto :2.",
 
   // BGP sessions
   "bgp.circuit_id": "Circuito/serviço atendido pela sessão.",
@@ -83,7 +82,6 @@ export const HELP = {
 
   // Policy profiles
   "policy.name": "Nome único do perfil (1–64; catálogo pode ter nomes fixos seedados).",
-  "policy.label": "Rótulo exibido (1–64) — nome lógico × efetivo.",
   "policy.product": "Produto de roteamento do catálogo: Somente default, Default + internas, Tabela parcial, Full routing, CDN ou Personalizado — a route-policy de exportação é construída a partir do produto (Default + internas e Tabela parcial ainda viram comentário de dívida no MVP).",
   "policy.direction": "Direção do perfil: import (entrada) ou export (saída) — a sessão só aceita o perfil da direção correspondente.",
   "policy.kind": "Tipo do perfil: produto (catálogo) — route-policy clássico; XPL é evolução do produto e a seleção de sintaxe por capacidade é recurso futuro.",

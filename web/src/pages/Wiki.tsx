@@ -12,6 +12,8 @@ export default function Wiki() {
   // Links internos do HTML sanitizado (ex.: /wiki/outra-pagina) devem navegar
   // na SPA, sem reload — o servidor é a fonte das páginas, não o GitHub.
   const aoClicar = (e: MouseEvent<HTMLDivElement>) => {
+    // cmd/ctrl+click (abrir em nova aba) e botões diferentes de esquerdo não são interceptados
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
     const alvo = (e.target as HTMLElement).closest("a[href^='/wiki/']");
     if (alvo) {
       e.preventDefault();
@@ -32,7 +34,7 @@ export default function Wiki() {
   return (
     <section className="wiki">
       <aside className="wiki-nav">
-        <h2 className="wiki-titulo-nav">Documentação</h2>
+        <h2>Documentação</h2>
         {[...grupos.entries()].map(([secao, itens]) => (
           <div key={secao}>
             <span className="wiki-secao">{secao}</span>
@@ -47,7 +49,7 @@ export default function Wiki() {
       </aside>
       <article className="wiki-conteudo" onClick={aoClicar}>
         {pagina.isError && (
-          <p role="status">
+          <p role="alert">
             Página não encontrada. <Link to="/wiki">Voltar ao índice</Link>.
           </p>
         )}
