@@ -44,8 +44,12 @@ def _resolver_aprovador(session, aprovador: str) -> int:
 
 @app.command("add")
 def add(
-    circuit_id: int = typer.Option(..., "--circuit-id", help="ID do circuito."),
     motivo: str = typer.Option(..., help="Motivo da mudança."),
+    escopo: Literal["circuito", "l2vc", "vsi"] = typer.Option(
+        "circuito", "--escopo", help="circuito, l2vc ou vsi."
+    ),
+    circuit_id: int | None = typer.Option(None, "--circuit-id", help="ID do circuito (escopo circuito)."),
+    l2vc_id: int | None = typer.Option(None, "--l2vc-id", help="ID do serviço L2VC (escopo l2vc)."),
     ticket: str | None = typer.Option(None, help="Ticket de referência."),
     acao: Literal["provision", "remove"] = typer.Option("provision", "--acao", help="provision ou remove."),
     criticidade: Literal["baixa", "media", "alta"] = typer.Option(
@@ -58,8 +62,8 @@ def add(
             cr = svc.create_change_request(
                 session,
                 ChangeRequestCreate(
-                    circuit_id=circuit_id, acao=acao, criticidade=criticidade,
-                    motivo=motivo, ticket=ticket,
+                    escopo=escopo, circuit_id=circuit_id, l2vc_id=l2vc_id,
+                    acao=acao, criticidade=criticidade, motivo=motivo, ticket=ticket,
                 ),
                 actor="cli",
             )
@@ -78,13 +82,18 @@ def add(
 @app.command("list")
 def listar(
     status: str | None = typer.Option(None, "--status", help="Filtra por status."),
+    escopo: Literal["circuito", "l2vc", "vsi"] | None = typer.Option(
+        None, "--escopo", help="Filtra por escopo."
+    ),
     circuit_id: int | None = typer.Option(None, "--circuit-id", help="Filtra por circuito."),
 ) -> None:
     """Lista change requests (mais recentes primeiro)."""
     with get_session() as session:
-        for cr in svc.list_change_requests(session, status=status, circuit_id=circuit_id):
+        for cr in svc.list_change_requests(
+            session, status=status, escopo=escopo, circuit_id=circuit_id
+        ):
             typer.echo(
-                f"CR #{cr.id}  {cr.acao:<9} {cr.status:<18} "
+                f"CR #{cr.id}  {cr.acao:<9} {cr.status:<18} {cr.escopo:<9} "
                 f"circuito {cr.circuit_id:>4}  {cr.criticidade:<5}  {cr.motivo[:48]}"
             )
 

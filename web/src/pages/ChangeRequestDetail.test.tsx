@@ -11,7 +11,8 @@ let ME: Record<string, unknown>; // mutável por teste — define o papel do usu
 const circ = { id: 1, code: "CIRC-01", organization_id: 1, site_id: 1, access_device_id: 1, access_port: "GE0/0/1", edge_device_id: 2, backup_edge_device_id: null, stack: "dual", vlan_mode: "unica", qinq: false, vrf: null, mtu: 1500, bandwidth: "1G", bfd: true, p2p_v4_len: 31, description: null, notes: null, edge_trunk: null, admin_status: true };
 const dev1 = { id: 1, name: "ne-01", management_address: "10.9.0.2", site_id: 1, model: null, family: "NE8000", role: "edge", asn: 64600, tags: [], ssh_port: 22, vendor: "Huawei", vrp_version: null, comm_status: "ok", admin_status: true, last_collected_at: null };
 const crBase = {
-  id: 1, circuit_id: 1, acao: "provision", criticidade: "media", motivo: "Novo cliente GALAXIA",
+  id: 1, circuit_id: 1 as number | null, escopo: "circuito" as string, l2vc_id: null as number | null, l2vc_name: null as string | null,
+  acao: "provision", criticidade: "media", motivo: "Novo cliente GALAXIA",
   ticket: "TICKET-42", rollback_de: null, created_at: "2026-09-01T10:00:00Z",
   approvals: [{ id: 1, user_id: 9, decisao: "aprovar", comentario: "ok", created_at: "2026-09-02T10:00:00Z" }],
   steps: [{
@@ -102,5 +103,30 @@ describe("ChangeRequestDetail", () => {
     await screen.findByText("Change request #1");
     expect(screen.queryByRole("button", { name: "Aprovar" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Rejeitar" })).toBeNull();
+  });
+
+  it("exibe l2vc_name (sem #null) na linha Circuito para CR de escopo l2vc", async () => {
+    // CR de escopo l2vc: sem circuito, com nome do serviço — regressão do "#null"
+    crAtual = { ...crDe(2, "aguardando_aprovacao"), circuit_id: null, escopo: "l2vc", l2vc_id: 1, l2vc_name: "L2VC-0001" };
+    renderDetail();
+    expect(await screen.findByText("L2VC-0001")).toBeInTheDocument();
+    expect(screen.queryByText("#null")).toBeNull();
+  });
+
+  it("não mostra rollback/reconciliar para CR de escopo l2vc (circuito mantém)", async () => {
+    // parcial é o modo de falha desenhado do L2VC: onde o operador acharia o
+    // beco sem saída — os botões são truncados para o escopo l2vc (risco S2-1).
+    crAtual = { ...crDe(2, "parcial"), circuit_id: null, escopo: "l2vc", l2vc_id: 1, l2vc_name: "L2VC-0001" };
+    const { unmount } = renderDetail();
+    expect(await screen.findByText("Change request #1")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Gerar rollback" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reconciliar" })).toBeNull();
+    unmount();
+    // regressão: CR de escopo circuito no mesmo estado continua com os botões
+    crAtual = crDe(2, "parcial");
+    renderDetail();
+    expect(await screen.findByText("Change request #1")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Gerar rollback" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reconciliar" })).toBeInTheDocument();
   });
 });

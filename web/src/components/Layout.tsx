@@ -24,6 +24,14 @@ const GRUPOS_NAV: { rotulo: string; itens: { para: string; rotulo: string; admin
     ],
   },
   {
+    rotulo: "MPLS",
+    itens: [
+      { para: "/mpls/domains", rotulo: "Domínios" },
+      { para: "/mpls/l2vc", rotulo: "Serviços L2VC" },
+      { para: "/mpls/vsi", rotulo: "VSIs" },
+    ],
+  },
+  {
     rotulo: "Organização",
     itens: [
       { para: "/organizations", rotulo: "Organizações" },

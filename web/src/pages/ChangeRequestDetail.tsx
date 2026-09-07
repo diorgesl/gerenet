@@ -23,6 +23,12 @@ const ACAO_LABELS: Record<ChangeRequestOut["acao"], string> = {
   remove: "Remover configuração",
 };
 
+// Rótulo do objeto da CR sem vínculo com circuito: circuitos usam #N;
+// CRs de escopo l2vc exibem o nome do serviço (ou "—" quando ausente).
+function rotuloObjeto(cr: ChangeRequestOut): string {
+  return cr.circuit_id !== null ? `#${cr.circuit_id}` : (cr.l2vc_name ?? "—");
+}
+
 const CONFIRMACOES: Record<string, { titulo: string; mensagem: string }> = {
   cancelar: {
     titulo: "Cancelar a change request?",
@@ -125,10 +131,10 @@ export default function ChangeRequestDetail() {
             {status === "aprovado" && ehExecutor && (
               <button className="primary" type="button" onClick={() => setDialogo("executar")}>Executar</button>
             )}
-            {(status === "erro" || status === "parcial") && podeEscrever && (
+            {(status === "erro" || status === "parcial") && podeEscrever && cr.escopo === "circuito" && (
               <button type="button" onClick={() => setDialogo("reconciliar")}>Reconciliar</button>
             )}
-            {(status === "aplicado" || status === "com_divergencia" || status === "parcial") && podeEscrever && (
+            {(status === "aplicado" || status === "com_divergencia" || status === "parcial") && podeEscrever && cr.escopo === "circuito" && (
               <button type="button" onClick={() => setDialogo("rollback")}>Gerar rollback</button>
             )}
           </>
@@ -138,7 +144,7 @@ export default function ChangeRequestDetail() {
       <table>
         <tbody>
           <tr><th>Status</th><td><StatusBadge estado={status} /></td></tr>
-          <tr><th>Circuito</th><td>{circuito ? <Link to={`/circuits/${circuito.id}`}>{circuito.code}</Link> : `#${cr.circuit_id}`}</td></tr>
+          <tr><th>Circuito</th><td>{circuito ? <Link to={`/circuits/${circuito.id}`}>{circuito.code}</Link> : rotuloObjeto(cr)}</td></tr>
           <tr><th>Solicitante</th><td>{cr.solicitante_id ?? "API/CLI"}</td></tr>
           <tr><th>Ticket</th><td>{cr.ticket ?? "—"}</td></tr>
           <tr><th>Rollback de</th><td>{cr.rollback_de ? <Link to={`/change-requests/${cr.rollback_de}`}>#{cr.rollback_de}</Link> : "—"}</td></tr>

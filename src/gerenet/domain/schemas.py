@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class DeviceCreate(BaseModel):
@@ -536,11 +536,23 @@ class JobRunOut(BaseModel):
 
 
 class ChangeRequestCreate(BaseModel):
-    circuit_id: int
+    escopo: Literal["circuito", "l2vc", "vsi"] = "circuito"
+    circuit_id: int | None = None
+    l2vc_id: int | None = None
     acao: Literal["provision", "remove"] = "provision"
     criticidade: Literal["baixa", "media", "alta"] = "media"
     motivo: str = Field(min_length=1, max_length=2000)
     ticket: str | None = Field(default=None, max_length=64)
+
+    @model_validator(mode="after")
+    def _valida_escopo(self) -> "ChangeRequestCreate":
+        if self.escopo == "circuito" and self.circuit_id is None:
+            raise ValueError("circuit_id é obrigatório para escopo 'circuito'.")
+        if self.escopo == "l2vc" and self.l2vc_id is None:
+            raise ValueError("l2vc_id é obrigatório para escopo 'l2vc'.")
+        if self.escopo == "vsi":
+            raise ValueError("Escopo 'vsi' não está disponível neste ciclo.")
+        return self
 
 
 class ApprovalIn(BaseModel):
@@ -577,7 +589,10 @@ class ChangeRequestOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    circuit_id: int
+    circuit_id: int | None
+    escopo: str
+    l2vc_id: int | None = None
+    l2vc_name: str | None = None
     acao: str
     criticidade: str
     motivo: str
@@ -588,3 +603,133 @@ class ChangeRequestOut(BaseModel):
     created_at: datetime
     steps: list[ChangeStepOut] = []
     approvals: list[ApprovalOut] = []
+
+
+class MplsMemberOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    device_id: int
+    device_name: str | None = None
+    loopback_address: str
+    role: str
+
+
+class MplsDomainCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    description: str | None = Field(default=None, max_length=255)
+
+
+class MplsDomainUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+    description: str | None = Field(default=None, max_length=255)
+    admin_status: bool | None = None
+
+
+class MplsMemberIn(BaseModel):
+    device_id: int
+    loopback_address: str = Field(max_length=64)  # conteúdo validado no serviço (vazio → ValidationError)
+    role: Literal["pe", "core"] = "pe"
+
+
+class MplsDomainOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    name: str
+    description: str | None
+    admin_status: bool
+    created_at: datetime
+    updated_at: datetime
+    members: list[MplsMemberOut] = Field(default_factory=list)
+
+
+class L2vcEndpointIn(BaseModel):
+    device_id: int
+    interface: str = Field(min_length=1, max_length=64)
+    encapsulation: Literal["dot1q", "qinq"] = "dot1q"  # ethernet_raw: fora do ciclo (§10)
+    vid: int | None = Field(default=None, ge=2, le=4094)  # None ⇒ auto-reserva no device
+    inner_vlan: int | None = Field(default=None, ge=1, le=4094)  # QinQ: obrigatório
+    mtu: int | None = Field(default=None, ge=576, le=9216)  # None ⇒ herda service.mtu
+
+
+class L2vcCreate(BaseModel):
+    domain_id: int
+    name: str = Field(min_length=1, max_length=64)
+    vc_id: int | None = Field(default=None, ge=1, le=4294967295)  # None ⇒ proximo_vc_id
+    organization_id: int | None = None
+    mtu: int = Field(default=1500, ge=576, le=9216)
+    control_word: bool = False
+    flow_label: bool = False
+    redundancy: str | None = None
+    description: str | None = Field(default=None, max_length=255)
+    endpoints: list[L2vcEndpointIn] = Field(min_length=2, max_length=2)
+
+
+class ServiceEndpointOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    kind: str
+    device_id: int
+    device_name: str | None = None
+    interface: str
+    encapsulation: str
+    vlan_id: int | None = None
+    vid: int | None = None
+    inner_vlan: int | None = None
+    mtu: int | None = None
+    operational_status: str
+
+
+class L2vcOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    domain_id: int
+    vc_id: int
+    name: str
+    organization_id: int | None
+    mtu: int
+    control_word: bool
+    flow_label: bool
+    redundancy: str | None
+    description: str | None
+    admin_status: bool
+    operational_status: str
+    last_collected_at: datetime | None
+    created_at: datetime
+    endpoints: list[ServiceEndpointOut] = Field(default_factory=list)
+    domain_name: str | None = None
+
+
+class VsiMemberOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    device_id: int
+    device_name: str | None = None
+
+
+class VsiCreate(BaseModel):
+    domain_id: int
+    name: str = Field(min_length=1, max_length=64)
+    vsi_id: int | None = Field(default=None, ge=1, le=4294967295)  # None ⇒ proximo_vsi_id
+    mtu: int = Field(default=1500, ge=576, le=9216)
+    split_horizon: bool = True
+    mac_learning: bool = True
+    mac_limit: int | None = Field(default=None, ge=0)
+    members: list[int] = Field(default_factory=list, min_length=1)
+
+
+class VsiOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    domain_id: int
+    vsi_id: int
+    name: str
+    vrp_name: str
+    signaling: str
+    mtu: int
+    split_horizon: bool
+    mac_learning: bool
+    mac_limit: int | None
+    admin_status: bool
+    operational_status: str
+    last_collected_at: datetime | None
+    created_at: datetime
+    members: list[VsiMemberOut] = Field(default_factory=list)
+    domain_name: str | None = None

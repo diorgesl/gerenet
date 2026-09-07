@@ -4,6 +4,8 @@ Nomes ≤ 63 chars, maiúsculas, separador '-', base = ASN do par em decimal
 sem padding. Ex.: rp_import(64500, "ipv4") -> "RP-64500-IMPORT-V4".
 Prefix-list por produto (IP-PFX-DEFAULT-V4 etc.) usada em T4/T5.
 """
+import re
+
 from gerenet.domain.services.errors import ValidationError
 
 _AFIS = {"ipv4": "V4", "ipv6": "V6"}
@@ -42,6 +44,23 @@ def pfx_produto(produto: str, afi: str) -> str:
     if len(base) > 20:  # folga para o nome completo ficar ≤ 63
         raise ValidationError(f"Produto longo demais para nome VRP: {produto}.")
     return f"IP-PFX-{base}-{_afi_valida(afi)}"
+
+
+def vsi_nome(name_logico: str, vsi_id: int) -> str:
+    """Nome VRP do VSI: VSI-<SIGLA>-<ID> (≤63, maiúsculas, separador '-').
+
+    SIGLA = nome lógico sanitizado (não alfanumérico vira '-', caixa alta),
+    limitado a 20 chars — o restante do nome não pode tornar o total > 63
+    quando somado ao ID. Ex.: vsi_nome("cliente acme", 12) -> "VSI-CLIENTE-ACME-12".
+    """
+    if not name_logico.strip():
+        raise ValidationError("Nome lógico do VSI vazio.")
+    sigla = re.sub(r"[^A-Z0-9]+", "-", name_logico.strip().upper()).strip("-")
+    if not sigla:
+        raise ValidationError(f"Nome lógico do VSI sem letras/dígitos: {name_logico}.")
+    if len(sigla) > 20:
+        raise ValidationError(f"Nome longo demais para nome VRP: {name_logico} (máx. 20 chars na sigla).")
+    return f"VSI-{sigla}-{vsi_id}"
 
 
 def subinterface(trunk: str, vid: int) -> str:

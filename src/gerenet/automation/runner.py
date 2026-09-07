@@ -30,6 +30,7 @@ from gerenet.db import SessionLocal
 from gerenet.domain.models import AuditEvent, ChangeRequest, ChangeStep, DeviceSnapshot, JobRun
 from gerenet.domain.services import devices as device_svc
 from gerenet.domain.services.circuits import get_circuit
+from gerenet.domain.services.mpls import sincronizar_mpls
 from gerenet.secrets.vault_store import VaultSecretStore
 
 
@@ -88,17 +89,23 @@ def _mascarar_texto(texto: str) -> str:
     return _VAZAMENTO.sub("[mascarado]", texto)
 
 
-# Recursos que o re-diff §5.3 (e o pós-check) consome. Coleta parcial destes
-# (chave em erros ou ausente de recursos) não pode seguir: a ausência viraria
-# "objeto ausente" e o plano congelado seria aplicado às cegas (config
-# inalterada? §12.2). `bgp_peers_verbose` fica fora — sem sessões o coletor
-# nem o coleta (chave ausente é o normal, não uma coleta incompleta).
-_RE_DIFF_KEYS = ("interfaces", "bgp_peers", "config_backup")
+# Recursos que o re-diff §5.3 (e o pós-check) consome, por escopo da CR.
+# Coleta parcial destes (chave em erros ou ausente de recursos) não pode
+# seguir: a ausência viraria "objeto ausente" e o plano congelado seria
+# aplicado às cegas (config inalterada? §12.2). `bgp_peers_verbose` fica fora
+# — sem sessões o coletor nem o coleta (chave ausente é o normal, não uma
+# coleta incompleta). Escopo `l2vc` omite `bgp_peers`: switch sem BGP tem
+# `display bgp peer` em erro na coleta (fase 4, §5).
+_CHAVES_POR_ESCOPO = {
+    "circuito": ("interfaces", "bgp_peers", "config_backup"),
+    "l2vc": ("interfaces", "l2vc", "config_backup"),
+}
 
 
-def _chaves_incompletas(recursos: dict, erros: dict) -> list[str]:
+def _chaves_incompletas(recursos: dict, erros: dict, escopo: str = "circuito") -> list[str]:
     """Chaves do re-diff ausentes ou com falha de coleta (gate §5.3)."""
-    return [k for k in _RE_DIFF_KEYS if k in erros or k not in recursos]
+    chaves = _CHAVES_POR_ESCOPO.get(escopo, _CHAVES_POR_ESCOPO["circuito"])
+    return [k for k in chaves if k in erros or k not in recursos]
 
 
 def run_collection(
@@ -178,6 +185,9 @@ def run_collection(
                     AuditEvent(type="collect.errors", actor=actor, details={"device_id": dev.id, "errors": erros})
                 )
                 session.commit()
+
+            # Após o commit do snapshot: estado operacional MPLS (coleta → SoT §8).
+            sincronizar_mpls(session, snapshot)
 
             return {"status": snapshot.status, "snapshot_id": snapshot.id}
         except Exception as exc:  # noqa: BLE001 — contrato dict preservado em qualquer falha
@@ -279,6 +289,8 @@ def _grava_snapshot(
         uptime=versao.get("uptime") if isinstance(versao, dict) else None,
     )
     session.commit()
+    # Após o commit do snapshot: estado operacional MPLS (coleta → SoT §8).
+    sincronizar_mpls(session, snap)
     return snap
 
 
@@ -443,6 +455,9 @@ def _estado_do_bloco(bloco: dict, recursos: dict, texto: str) -> str:
         else:
             return "ausente"
         return "consta" if f"route-policy {nome} permit node" in texto else "ausente"
+    if tipo == "l2vc_ac":
+        from gerenet.automation.l2vc import estado_bloco_l2vc
+        return estado_bloco_l2vc(bloco, recursos)
     return "ausente"  # tipo fora do repertório: reaplica (o comando é do nosso render)
 
 
@@ -575,13 +590,23 @@ def _executa_step(
         # Gate de coleta (§5.3): sem os recursos que o re-diff consome não há
         # re-diff confiável — o missing viraria "objeto ausente" e o plano
         # congelado seria aplicado às cegas (config inalterada? §12.2).
-        incompletos_pre = _chaves_incompletas(recursos_pre, erros_pre)
+        incompletos_pre = _chaves_incompletas(recursos_pre, erros_pre, cr.escopo)
         if incompletos_pre:
             raise ValueError(
                 f"Coleta pré-mudança incompleta — recursos "
                 f"{', '.join(sorted(incompletos_pre))} não coletados; "
                 "colete antes de executar (§5.3)."
             )
+
+        # Pré-check do escopo (§9.2): peer LDP UP, sem binding conflitante,
+        # simetria — antes do re-diff (aplicar sem o par UP quebraria o VC).
+        if cr.escopo == "l2vc":
+            from gerenet.automation import l2vc as l2vc_auto
+            from gerenet.domain.services.mpls import get_l2vc
+            servico = get_l2vc(session, cr.l2vc_id)
+            pre_erro = l2vc_auto.valida_pre_checks_l2vc(session, servico, dev, recursos_pre)
+            if pre_erro is not None:
+                raise ValueError(pre_erro)
 
         # re-diff §5.3 do plano congelado contra o encontrado fresco
         texto_pre = removal.texto_backup(snap_pre)
@@ -609,7 +634,7 @@ def _executa_step(
         # pós-coleta de verificação (a "validação do resultado" §12.3/§13)
         recursos_pos, erros_pos, arquivos_pos = _coleta_recursos(session, dev, cred, settings, base / "pos")
         snap_pos = _grava_snapshot(session, dev, datetime.now(UTC), recursos_pos, erros_pos, arquivos_pos, actor)
-        incompletos_pos = _chaves_incompletas(recursos_pos, erros_pos)
+        incompletos_pos = _chaves_incompletas(recursos_pos, erros_pos, cr.escopo)
         if incompletos_pos:
             raise ValueError(
                 f"Coleta pós-mudança incompleta — recursos "
@@ -626,11 +651,15 @@ def _executa_step(
             # — subinterface ausente/sem o endereço esperado, peer ausente/ASN,
             # filtros divergentes viram itens críticos ⇒ CR com_divergencia.
             resultado = reconciliar_device(session, dev.id, snapshot_id=snap_pos.id)
-            step.post_check_json = {
-                "snapshot_id": snap_pos.id,
-                "aviso": resultado.aviso,
-                "items": [asdict(i) for i in resultado.items],
-            }
+            itens = [asdict(i) for i in resultado.items]
+            if cr.escopo == "l2vc":
+                # Pós-check do escopo (§13): VC presente e UP no encontrado —
+                # um switch não tem BGP, o reconciliador de circuito nada acusa.
+                from gerenet.automation import l2vc as l2vc_auto
+                from gerenet.domain.services.mpls import get_l2vc
+                servico = get_l2vc(session, cr.l2vc_id)
+                itens += l2vc_auto.valida_pos_l2vc(session, servico, snap_pos)
+            step.post_check_json = {"snapshot_id": snap_pos.id, "aviso": resultado.aviso, "items": itens}
 
         label = "aplicado" if a_aplicar else "pulado"
         step.status = label
@@ -762,7 +791,11 @@ def run_change(
                 session.commit()
                 return {"status": "error", "error": f"Change request não executável (estado {cr.status})."}
 
-            get_circuit(session, cr.circuit_id)  # setup: NotFoundError propaga (falha de setup)
+            if cr.escopo == "l2vc":
+                from gerenet.domain.services.mpls import get_l2vc
+                get_l2vc(session, cr.l2vc_id)  # setup: NotFoundError propaga
+            else:
+                get_circuit(session, cr.circuit_id)  # setup: NotFoundError propaga (falha de setup)
             base = settings.backups_dir / f"change-{cr.id}" / datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
             resultados: list[str] = []
             for step in cr.steps:

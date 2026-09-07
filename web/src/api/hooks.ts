@@ -15,7 +15,15 @@ import type {
   DesiredConfigOut,
   DeviceOut,
   JobRunOut,
+  L2vcCreateIn,
+  L2vcOut,
+  MplsDomainCreateIn,
+  MplsDomainOut,
+  MplsDomainUpdateIn,
+  MplsMemberIn,
+  MplsMemberOut,
   OrganizationOut,
+  PlanoL2vcOut,
   PolicyProfileOut,
   PolicyProfileUpdateIn,
   PrefixAuthorizationOut,
@@ -23,6 +31,8 @@ import type {
   SiteOut,
   SnapshotOut,
   UserOut,
+  VsiCreateIn,
+  VsiOut,
   WikiIndiceItem,
   WikiPagina,
 } from "./types";
@@ -374,6 +384,81 @@ export function useChangeRequestExecutar() {
     },
   });
 }
+
+// ---- MPLS (spec §9; rotas da T8) ------------------------------------------
+export function useMplsDomains(opts: { includeDisabled?: boolean } = {}) {
+  return useLista<MplsDomainOut>("mpls-domains", "/api/v1/mpls/domains", opts);
+}
+export function useMplsDomainCriar() {
+  return useCriar<MplsDomainCreateIn, MplsDomainOut>("mpls-domains", "/api/v1/mpls/domains");
+}
+export function useMplsDomainAtualizar() {
+  return useAtualizar<MplsDomainUpdateIn, MplsDomainOut>("mpls-domains", "/api/v1/mpls/domains");
+}
+export function useMplsMemberAdicionar() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ domainId, ...body }: { domainId: number } & MplsMemberIn) =>
+      apiFetch<MplsMemberOut>(`/api/v1/mpls/domains/${domainId}/members`, { method: "POST", body }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["mpls-domains"] }),
+  });
+}
+export function useMplsMemberRemover() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ domainId, deviceId }: { domainId: number; deviceId: number }) =>
+      apiFetch<void>(`/api/v1/mpls/domains/${domainId}/members/${deviceId}`, { method: "DELETE" }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["mpls-domains"] }),
+  });
+}
+export function useL2vc(opts: { domainId?: number; includeDisabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: ["mpls-l2vc", opts.domainId ?? null, opts.includeDisabled ?? false],
+    queryFn: () => {
+      const qs = new URLSearchParams();
+      if (opts.domainId) qs.set("domain_id", String(opts.domainId));
+      if (opts.includeDisabled) qs.set("include_disabled", "true");
+      const suf = qs.size > 0 ? `?${qs.toString()}` : "";
+      return apiFetch<L2vcOut[]>(`/api/v1/mpls/l2vc${suf}`);
+    },
+  });
+}
+export const useL2vcCriar = () => useCriar<L2vcCreateIn, L2vcOut>("mpls-l2vc", "/api/v1/mpls/l2vc");
+export const useL2vcDetalhe = (id: number) =>
+  useQuery({ queryKey: ["mpls-l2vc", id], queryFn: () => apiFetch<L2vcOut>(`/api/v1/mpls/l2vc/${id}`), enabled: id > 0 });
+export function useL2vcStatus() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, admin_status }: { id: number; admin_status: boolean }) =>
+      apiFetch<L2vcOut>(`/api/v1/mpls/l2vc/${id}/status`, { method: "PATCH", body: { admin_status } }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["mpls-l2vc"] });
+      void qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+}
+export function useL2vcPlano(id: number) {
+  return useQuery({
+    queryKey: ["mpls-l2vc-plano", id],
+    queryFn: () => apiFetch<PlanoL2vcOut[]>(`/api/v1/mpls/l2vc/${id}/plano`),
+    enabled: id > 0,
+  });
+}
+export function useVsi(opts: { domainId?: number; includeDisabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: ["mpls-vsi", opts.domainId ?? null, opts.includeDisabled ?? false],
+    queryFn: () => {
+      const qs = new URLSearchParams();
+      if (opts.domainId) qs.set("domain_id", String(opts.domainId));
+      if (opts.includeDisabled) qs.set("include_disabled", "true");
+      const suf = qs.size > 0 ? `?${qs.toString()}` : "";
+      return apiFetch<VsiOut[]>(`/api/v1/mpls/vsi${suf}`);
+    },
+  });
+}
+export const useVsiCriar = () => useCriar<VsiCreateIn, VsiOut>("mpls-vsi", "/api/v1/mpls/vsi");
+export const useVsiDetalhe = (id: number) =>
+  useQuery({ queryKey: ["mpls-vsi", id], queryFn: () => apiFetch<VsiOut>(`/api/v1/mpls/vsi/${id}`), enabled: id > 0 });
 
 export const usePolicyProfiles = (filtros?: { direction?: string; include_disabled?: boolean }) =>
   useQuery({

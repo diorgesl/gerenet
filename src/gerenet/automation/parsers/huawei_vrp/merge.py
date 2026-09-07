@@ -96,10 +96,70 @@ def merge_bgp_peers_detalhes(por_comando: dict[str, list[dict]]) -> list[dict]:
     ]
 
 
+def _primeiras_linhas(por_comando: dict[str, list[dict]]) -> list[dict]:
+    """Um comando por recurso nos coletores MPLS: a única fonte do dict é a linha."""
+    return next(iter(por_comando.values())) if por_comando else []
+
+
+def normaliza_ldp(por_comando: dict[str, list[dict]]) -> list[dict]:
+    """`display mpls ldp peer` -> peers sem o sufixo `:0` do LDP ID e estado up/down.
+
+    Keys: {peer_id, estado}; linhas sem peer_id são descartadas.
+    """
+    saida: list[dict] = []
+    for linha in _primeiras_linhas(por_comando):
+        peer = str(linha.get("peer_id", "")).split(":")[0].strip()
+        if not peer:
+            continue
+        saida.append({
+            "peer_id": peer,
+            "estado": "up" if str(linha.get("estado", "")).lower() == "up" else "down",
+        })
+    return saida
+
+
+def normaliza_l2vc(por_comando: dict[str, list[dict]]) -> list[dict]:
+    """`display l2vc` -> vc_id int, interface (None quando ausente) e estado up/down.
+
+    Keys: {vc_id, interface, estado}; linhas sem vc_id são descartadas.
+    """
+    saida: list[dict] = []
+    for linha in _primeiras_linhas(por_comando):
+        vc = linha.get("vc_id")
+        if vc is None:
+            continue
+        saida.append({
+            "vc_id": int(vc),
+            "interface": linha.get("interface"),
+            "estado": "up" if str(linha.get("estado", "")).lower() == "up" else "down",
+        })
+    return saida
+
+
+def normaliza_vsi(por_comando: dict[str, list[dict]]) -> list[dict]:
+    """`display vsi` -> name, vsi_id (None quando ausente) e estado up/down.
+
+    Keys: {name, vsi_id, estado}; linhas sem name são descartadas.
+    """
+    saida: list[dict] = []
+    for linha in _primeiras_linhas(por_comando):
+        if not linha.get("name"):
+            continue
+        saida.append({
+            "name": linha["name"],
+            "vsi_id": int(linha["vsi_id"]) if linha.get("vsi_id") not in (None, "") else None,
+            "estado": "up" if str(linha.get("estado", "")).lower() == "up" else "down",
+        })
+    return saida
+
+
 _MERGES = {
     "interfaces": merge_interfaces,
     "bgp_peers": merge_bgp_peers,
     "bgp_peers_detalhes": merge_bgp_peers_detalhes,
+    "mpls_ldp_peer": normaliza_ldp,
+    "l2vc": normaliza_l2vc,
+    "vsi": normaliza_vsi,
 }
 
 

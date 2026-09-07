@@ -1,0 +1,6 @@
+Value Required vc_id (\d+)
+Value interface (\S+)
+Value estado (\S+)
+
+Start
+  ^\s*(?:\s*\d+\s*:\s*)?VC-ID\s*:\s*${vc_id},\s*Interface\s*:\s*${interface},\s*State\s*:\s*${estado}\s*$$ -> Record

@@ -11,10 +11,19 @@ let criarFalhar = false; // mutável por teste — simula 422/409 na criação
 const ME = { id: 1, username: "ops", role: "operador", is_active: true, last_login_at: null, created_at: "" };
 const circ = { id: 1, code: "CIRC-01", organization_id: 1, site_id: 1, access_device_id: 1, access_port: "GE0/0/1", edge_device_id: 2, backup_edge_device_id: null, stack: "dual", vlan_mode: "unica", qinq: false, vrf: null, mtu: 1500, bandwidth: "1G", bfd: true, p2p_v4_len: 31, description: null, notes: null, edge_trunk: null, admin_status: true };
 const cr = {
-  id: 1, circuit_id: 1, acao: "provision", criticidade: "media", motivo: "Novo cliente GALAXIA",
+  id: 1, circuit_id: 1 as number | null, escopo: "circuito" as string, l2vc_id: null as number | null, l2vc_name: null as string | null,
+  acao: "provision", criticidade: "media", motivo: "Novo cliente GALAXIA",
   ticket: "TICKET-42", solicitante_id: 1, status: "rascunho", rollback_de: null,
   created_at: "2026-09-01T10:00:00Z", steps: [], approvals: [],
 };
+// CR de escopo l2vc: sem circuito, com nome do serviço — regressão do "#null"
+const crL2vc = {
+  id: 2, circuit_id: null, escopo: "l2vc" as string, l2vc_id: 1, l2vc_name: "L2VC-0001",
+  acao: "provision", criticidade: "media", motivo: "Montar L2VC entre SW-01 e SW-02",
+  ticket: "TICKET-43", solicitante_id: 1, status: "rascunho", rollback_de: null,
+  created_at: "2026-09-03T10:00:00Z", steps: [], approvals: [],
+};
+let listaCRs = [cr]; // mutável por teste — cobre o cenário de CR de escopo l2vc
 
 beforeAll(() => {
   vi.stubGlobal(
@@ -30,7 +39,7 @@ beforeAll(() => {
           { status: 201, headers: { "Content-Type": "application/json" } },
         );
       }
-      if (url.startsWith("/api/v1/change-requests")) return new Response(JSON.stringify([cr]), { status: 200, headers: { "Content-Type": "application/json" } });
+      if (url.startsWith("/api/v1/change-requests")) return new Response(JSON.stringify(listaCRs), { status: 200, headers: { "Content-Type": "application/json" } });
       if (url === "/api/v1/circuits") return new Response(JSON.stringify([circ]), { status: 200, headers: { "Content-Type": "application/json" } });
       if (url === "/api/v1/auth/me") return new Response(JSON.stringify(ME), { status: 200, headers: { "Content-Type": "application/json" } });
       return new Response("null", { status: 404 });
@@ -40,6 +49,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   criarFalhar = false;
+  listaCRs = [cr];
 });
 
 function renderChangeRequests() {
@@ -64,6 +74,13 @@ describe("ChangeRequests", () => {
     expect(await screen.findByText("Novo cliente GALAXIA")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("link", { name: "#1" }));
     expect(await screen.findByText("detail-page")).toBeInTheDocument();
+  });
+
+  it("exibe l2vc_name (sem #null) na coluna Circuito para CR de escopo l2vc", async () => {
+    listaCRs = [crL2vc];
+    renderChangeRequests();
+    expect(await screen.findByText("L2VC-0001")).toBeInTheDocument();
+    expect(screen.queryByText("#null")).toBeNull();
   });
 
   it("cria CR solicitando pela API", async () => {

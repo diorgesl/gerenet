@@ -34,6 +34,11 @@ SAIDAS = {
     "display ipv6 interface brief": _texto_fixture("ne8000_display_ipv6_interface_brief.txt"),
     "display bgp peer": _texto_fixture("ne8000_display_bgp_peer.txt"),
     "display bgp ipv6 peer": _texto_fixture("ne8000_display_bgp_ipv6_peer.txt"),
+    # MPLS (fase 4 T9): saída vazia nos fakes — parse de vazio tolerado ([]),
+    # sem quebrar a coleta fake (KeyError em SAIDAS derruba o recurso).
+    "display mpls ldp peer": "",
+    "display l2vc": "",
+    "display vsi": "",
 }
 
 
@@ -293,7 +298,15 @@ def test_coleta_completa_registra_snapshot_estruturado(
     # O coletor dirigido pelo SoT (bgp_peers_verbose) chega na T9, junto com o
     # ramo alvo_sessoes do runner; sem sessões ativas o recurso é pulado (§4.1/§12).
     assert "bgp_peers_detalhes" not in snap.resources
-    assert set(snap.raw_files) == {"version", "config_backup", "interfaces", "bgp_peers"}
+    # MPLS: coletores novos presentes como listas vazias (saída vazia tolerada;
+    # nunca "erro" nem KeyError). raw_files do catálogo completo em uma coleta.
+    assert snap.resources["mpls_ldp_peer"] == []
+    assert snap.resources["l2vc"] == []
+    assert snap.resources["vsi"] == []
+    assert set(snap.raw_files) == {
+        "version", "config_backup", "interfaces", "bgp_peers",
+        "mpls_ldp_peer", "l2vc", "vsi",
+    }
 
     interfaces = snap.resources["interfaces"]
     assert len(interfaces) == 38  # união canônica das três tabelas das fixtures

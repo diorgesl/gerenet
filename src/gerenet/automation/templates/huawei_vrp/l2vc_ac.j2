@@ -1,0 +1,8 @@
+interface {{ interface }}
+undo portswitch
+{% if mtu %}
+mtu {{ mtu }}
+{% endif %}
+mpls l2vc {{ remote_loopback }} {{ vc_id }}{% if control_word %} control-word{% endif %}
+
+{% if flow_label %}mpls l2vpn flow-label both{% endif %}

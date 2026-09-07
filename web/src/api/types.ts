@@ -273,7 +273,10 @@ export interface ChangeStepOut {
 }
 export interface ChangeRequestOut {
   id: number;
-  circuit_id: number;
+  circuit_id: number | null;
+  escopo: "circuito" | "l2vc" | "vsi";
+  l2vc_id: number | null;
+  l2vc_name: string | null;
   acao: "provision" | "remove";
   criticidade: "baixa" | "media" | "alta";
   motivo: string;
@@ -286,9 +289,139 @@ export interface ChangeRequestOut {
   approvals: ApprovalOut[];
 }
 export type ChangeRequestCreateIn = {
-  circuit_id: number;
+  escopo?: "circuito" | "l2vc" | "vsi";
+  circuit_id?: number | null;
+  l2vc_id?: number | null;
   acao: "provision" | "remove";
   criticidade: "baixa" | "media" | "alta";
   motivo: string;
   ticket?: string | null;
 };
+
+// Ciclo F4 — MPLS (spec §9): domínios, L2VC e VSI (espelha schemas.py do backend).
+export interface MplsMemberOut {
+  device_id: number;
+  device_name: string | null;
+  loopback_address: string;
+  role: "pe" | "core";
+}
+export interface MplsDomainOut {
+  id: number;
+  name: string;
+  description: string | null;
+  admin_status: boolean;
+  created_at: string;
+  updated_at: string;
+  members: MplsMemberOut[];
+}
+export interface MplsDomainCreateIn {
+  name: string;
+  description?: string | null;
+}
+export interface MplsDomainUpdateIn {
+  name?: string;
+  description?: string | null;
+  admin_status?: boolean;
+}
+export interface MplsMemberIn {
+  device_id: number;
+  loopback_address: string;
+  role?: "pe" | "core";
+}
+export interface ServiceEndpointOut {
+  id: number;
+  kind: "l2vc" | "vsi";
+  device_id: number;
+  device_name?: string | null;
+  interface: string;
+  encapsulation: "dot1q" | "qinq" | "ethernet_raw";
+  vlan_id: number | null;
+  vid: number | null;
+  inner_vlan: number | null;
+  mtu: number | null;
+  operational_status: string;
+}
+export interface L2vcOut {
+  id: number;
+  domain_id: number;
+  domain_name?: string | null;
+  vc_id: number;
+  name: string;
+  organization_id: number | null;
+  mtu: number;
+  control_word: boolean;
+  flow_label: boolean;
+  redundancy: string | null;
+  description: string | null;
+  admin_status: boolean;
+  operational_status: string;
+  last_collected_at: string | null;
+  created_at: string;
+  endpoints: ServiceEndpointOut[];
+}
+export interface L2vcEndpointIn {
+  device_id: number;
+  interface: string;
+  encapsulation?: "dot1q" | "qinq";
+  vid?: number | null;
+  inner_vlan?: number | null;
+  mtu?: number | null;
+}
+export interface L2vcCreateIn {
+  domain_id: number;
+  name: string;
+  vc_id?: number | null;
+  organization_id?: number | null;
+  mtu?: number;
+  control_word?: boolean;
+  flow_label?: boolean;
+  redundancy?: string | null;
+  description?: string | null;
+  endpoints: L2vcEndpointIn[];
+}
+// Blocos do plano L2VC — mesma forma do `plano_json` das CRs (automation/changes.py
+// `_bloco_para_plano`), com o nome `objeto` incluído.
+export interface PlanoBlocoL2vc {
+  tipo: string;
+  objeto: string;
+  acao: "create" | "delete";
+  objeto_id: number;
+  comandos: string[];
+}
+export interface PlanoL2vcOut {
+  device_id: number;
+  blocos: PlanoBlocoL2vc[];
+  aviso: string | null;
+  baseline_snapshot_id: number | null;
+}
+export interface VsiMemberOut {
+  device_id: number;
+  device_name?: string | null;
+}
+export interface VsiOut {
+  id: number;
+  domain_id: number;
+  domain_name?: string | null;
+  vsi_id: number;
+  name: string;
+  vrp_name: string;
+  signaling: string;
+  mtu: number;
+  split_horizon: boolean;
+  mac_learning: boolean;
+  mac_limit: number | null;
+  admin_status: boolean;
+  operational_status: string;
+  last_collected_at: string | null;
+  members: VsiMemberOut[];
+}
+export interface VsiCreateIn {
+  domain_id: number;
+  name: string;
+  vsi_id?: number | null;
+  mtu?: number;
+  split_horizon?: boolean;
+  mac_learning?: boolean;
+  mac_limit?: number | null;
+  members: number[];
+}

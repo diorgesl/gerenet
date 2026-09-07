@@ -13,6 +13,10 @@ from gerenet.domain.schemas import (
     BgpSessionCreate,
     CircuitCreate,
     DeviceCreate,
+    L2vcCreate,
+    L2vcEndpointIn,
+    MplsDomainCreate,
+    MplsMemberIn,
     OrganizationCreate,
     SiteCreate,
 )
@@ -21,6 +25,7 @@ from gerenet.domain.services.bgp_sessions import create_session
 from gerenet.domain.services.circuits import create_circuit
 from gerenet.domain.services.devices import create_device
 from gerenet.domain.services.ipam import reservar_circuito
+from gerenet.domain.services.mpls import add_domain_member, create_domain, create_l2vc
 from gerenet.domain.services.organizations import create_organization
 from gerenet.domain.services.sites import create_site, link_device
 
@@ -124,6 +129,7 @@ def test_criar_listar_detalhar_404(client: TestClient, db_session: Session) -> N
     cid = _cria_cenario(db_session)
     cr = _cria_cr(client, cid)
     assert cr["status"] == "rascunho"
+    assert cr["l2vc_name"] is None  # CR de circuito nunca exibe nome de L2VC
     assert len(cr["steps"]) == 1
     assert cr["steps"][0]["plano_json"]
     assert cr["approvals"] == []
@@ -269,3 +275,127 @@ def test_rollback_sem_baseline_rejeita_422(client: TestClient, db_session: Sessi
     filhos = db_session.scalars(select(models.ChangeRequest).where(models.ChangeRequest.rollback_de == cr["id"])).all()
     assert filhos == []
     assert len(db_session.scalars(select(models.ChangeRequest)).all()) == antes
+
+
+def _l2vc_api(db_session: Session) -> int:
+    """L2VC com site + 2 switches (site_id em ambos — regra T3 da reserva de VLAN de AC)."""
+    site = create_site(db_session, SiteCreate(name="pop-cr-api-l2vc"), actor="cli")
+    d1 = create_device(db_session, DeviceCreate(
+        name="sw-cr-api-a", management_address="10.0.0.91", site_id=site.id), actor="cli")
+    d2 = create_device(db_session, DeviceCreate(
+        name="sw-cr-api-b", management_address="10.0.0.92", site_id=site.id), actor="cli")
+    dom = create_domain(db_session, MplsDomainCreate(name="dom-cr-api"), actor="cli")
+    add_domain_member(db_session, dom.id,
+                      MplsMemberIn(device_id=d1.id, loopback_address="10.255.9.1"), actor="cli")
+    add_domain_member(db_session, dom.id,
+                      MplsMemberIn(device_id=d2.id, loopback_address="10.255.9.2"), actor="cli")
+    svc = create_l2vc(db_session, L2vcCreate(
+        domain_id=dom.id, name="l2vc-cr-api", vc_id=900,
+        endpoints=[
+            L2vcEndpointIn(device_id=d1.id, interface="10GE0/0/1", encapsulation="dot1q", vid=421),
+            L2vcEndpointIn(device_id=d2.id, interface="10GE0/0/2", encapsulation="dot1q", vid=422),
+        ],
+    ), actor="cli")
+    db_session.commit()
+    return svc.id
+
+
+def test_criar_cr_escopo_l2vc(client: TestClient, db_session: Session) -> None:
+    l2vc_id = _l2vc_api(db_session)
+    resp = client.post(
+        "/api/v1/change-requests",
+        json={"escopo": "l2vc", "l2vc_id": l2vc_id, "acao": "provision",
+              "motivo": "Ativar L2VC.", "criticidade": "baixa"},
+        headers=_auth(),
+    )
+    assert resp.status_code == 201, resp.text
+    cr = resp.json()
+    assert cr["escopo"] == "l2vc"
+    assert cr["l2vc_id"] == l2vc_id
+    assert len(cr["steps"]) == 2
+    # escopo l2vc sem l2vc_id → erro de validação do schema (422)
+    sem_id = client.post(
+        "/api/v1/change-requests",
+        json={"escopo": "l2vc", "acao": "provision", "motivo": "sem id"},
+        headers=_auth(),
+    )
+    assert sem_id.status_code == 422
+
+
+def test_cr_escopo_l2vc_popula_l2vc_name(
+    client: TestClient, db_session: Session
+) -> None:
+    """Fix R1 (T12): o ORM expõe l2vc_name — criação, lista e detalhe da CR
+    trazem o nome do serviço (a UI não mostra mais '—' no lugar do nome)."""
+    l2vc_id = _l2vc_api(db_session)
+    resp = client.post(
+        "/api/v1/change-requests",
+        json={"escopo": "l2vc", "l2vc_id": l2vc_id, "acao": "provision",
+              "motivo": "Ativar L2VC.", "criticidade": "baixa"},
+        headers=_auth(),
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["l2vc_name"] == "l2vc-cr-api"
+    lista = client.get("/api/v1/change-requests", headers=_auth())
+    assert lista.status_code == 200
+    assert [c["l2vc_name"] for c in lista.json()] == ["l2vc-cr-api"]
+    detalhe = client.get(f"/api/v1/change-requests/{resp.json()['id']}", headers=_auth())
+    assert detalhe.status_code == 200
+    assert detalhe.json()["l2vc_name"] == "l2vc-cr-api"
+
+
+def test_rollback_cr_escopo_l2vc_truncado_400(
+    client: TestClient, db_session: Session
+) -> None:
+    """Fix R2 (revisão final S2-1): `gerar_rollback` é circuitocêntrico — CR
+    de escopo l2vc recebe 400 claro (antes: 404 "Circuito None"), sem CR filha
+    e com status inalterado: a guarda dispara antes de qualquer side effect."""
+    l2vc_id = _l2vc_api(db_session)
+    criada = client.post(
+        "/api/v1/change-requests",
+        json={"escopo": "l2vc", "l2vc_id": l2vc_id, "acao": "provision",
+              "motivo": "Ativar L2VC.", "criticidade": "baixa"},
+        headers=_auth(),
+    )
+    assert criada.status_code == 201, criada.text
+    cr_id = criada.json()["id"]
+    modelo = db_session.get(models.ChangeRequest, cr_id)
+    modelo.status = "aplicado"
+    modelo.steps[0].status = "aplicado"  # estado coerente; a guarda é anterior
+    db_session.commit()
+    antes = len(db_session.scalars(select(models.ChangeRequest)).all())
+    resp = client.post(f"/api/v1/change-requests/{cr_id}/rollback", headers=_auth())
+    assert resp.status_code == 400, resp.text
+    assert "l2vc" in resp.json()["detail"].lower()
+    filhos = db_session.scalars(
+        select(models.ChangeRequest).where(models.ChangeRequest.rollback_de == cr_id)
+    ).all()
+    assert filhos == []
+    assert len(db_session.scalars(select(models.ChangeRequest)).all()) == antes
+    assert db_session.get(models.ChangeRequest, cr_id).status == "aplicado"
+
+
+def test_reconciliar_cr_escopo_l2vc_truncado_400(
+    client: TestClient, db_session: Session
+) -> None:
+    """Fix R2 (revisão final S2-1): `reconciliar` é circuitocêntrico — CR de
+    escopo l2vc recebe 400 claro, sem CR nova e sem transição de status
+    (parcial é o modo de falha desenhado do L2VC)."""
+    l2vc_id = _l2vc_api(db_session)
+    criada = client.post(
+        "/api/v1/change-requests",
+        json={"escopo": "l2vc", "l2vc_id": l2vc_id, "acao": "provision",
+              "motivo": "Ativar L2VC.", "criticidade": "baixa"},
+        headers=_auth(),
+    )
+    assert criada.status_code == 201, criada.text
+    cr_id = criada.json()["id"]
+    modelo = db_session.get(models.ChangeRequest, cr_id)
+    modelo.status = "parcial"
+    db_session.commit()
+    antes = len(db_session.scalars(select(models.ChangeRequest)).all())
+    resp = client.post(f"/api/v1/change-requests/{cr_id}/reconciliar", headers=_auth())
+    assert resp.status_code == 400, resp.text
+    assert "l2vc" in resp.json()["detail"].lower()
+    assert len(db_session.scalars(select(models.ChangeRequest)).all()) == antes
+    assert db_session.get(models.ChangeRequest, cr_id).status == "parcial"
