@@ -76,3 +76,13 @@ def test_membro_de_outra_familia_nao_entra_em_dominio_desativado(db_session):
     ), actor="cli")
     update_domain(db_session, dominio.id, MplsDomainUpdate(admin_status=False), actor="cli")
     assert len(get_domain(db_session, dominio.id).members) == 1
+
+
+def test_nome_so_espacos_rejeitado_na_criacao(db_session):
+    with pytest.raises(ValidationError, match="Nome do domínio MPLS é obrigatório."):
+        create_domain(db_session, MplsDomainCreate(name="   "), actor="cli")
+
+
+def test_rename_para_so_espacos_rejeitado(db_session, dominio):
+    with pytest.raises(ValidationError, match="Nome do domínio MPLS é obrigatório."):
+        update_domain(db_session, dominio.id, MplsDomainUpdate(name="   "), actor="cli")

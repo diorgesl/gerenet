@@ -2,6 +2,7 @@
 import ipaddress
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from gerenet.domain import models
@@ -31,6 +32,8 @@ def _dom(session: Session, domain_id: int) -> models.MplsDomain:
 
 def create_domain(session: Session, data: MplsDomainCreate, *, actor: str = "cli") -> models.MplsDomain:
     nome = data.name.strip()
+    if not nome:
+        raise ValidationError("Nome do domínio MPLS é obrigatório.")
     ja_existe = session.scalars(
         select(models.MplsDomain.id).where(models.MplsDomain.name == nome).limit(1)
     ).first()
@@ -38,10 +41,14 @@ def create_domain(session: Session, data: MplsDomainCreate, *, actor: str = "cli
         raise ConflictError(f"Domínio MPLS '{nome}' já existe.")
     dom = models.MplsDomain(name=nome, description=data.description)
     session.add(dom)
-    session.flush()
-    registrar(session, tipo="mpls.domain.create", ator=actor, objeto="mpls_domain",
-              objeto_id=dom.id, antes=None, depois={"name": dom.name})
-    session.commit()
+    try:
+        session.flush()  # define dom.id e valida unicidade antes da auditoria
+        registrar(session, tipo="mpls.domain.create", ator=actor, objeto="mpls_domain",
+                  objeto_id=dom.id, antes=None, depois={"name": dom.name})
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise ConflictError(f"Domínio MPLS '{nome}' já existe.") from exc
     return _dom(session, dom.id)
 
 
@@ -61,23 +68,35 @@ def get_domain(session: Session, domain_id: int) -> models.MplsDomain:
 def update_domain(session: Session, domain_id: int, data: MplsDomainUpdate, *, actor: str = "cli") -> models.MplsDomain:
     dom = _dom(session, domain_id)
     antes = {"name": dom.name, "admin_status": dom.admin_status, "description": dom.description}
-    if data.name is not None and data.name.strip() != dom.name:
-        nomes = session.scalars(
-            select(models.MplsDomain.id).where(
-                models.MplsDomain.name == data.name.strip(), models.MplsDomain.id != dom.id,
-            ).limit(1)
-        ).first()
-        if nomes is not None:
-            raise ConflictError(f"Domínio MPLS '{data.name}' já existe.")
-        dom.name = data.name.strip()
+    novo_nome = dom.name
+    if data.name is not None:
+        novo_nome = data.name.strip()
+        if not novo_nome:
+            raise ValidationError("Nome do domínio MPLS é obrigatório.")
+        if novo_nome != dom.name:
+            nomes = session.scalars(
+                select(models.MplsDomain.id).where(
+                    models.MplsDomain.name == novo_nome, models.MplsDomain.id != dom.id,
+                ).limit(1)
+            ).first()
+            if nomes is not None:
+                raise ConflictError(f"Domínio MPLS '{novo_nome}' já existe.")
+            dom.name = novo_nome
     if data.description is not None:
         dom.description = data.description
     if data.admin_status is not None:
         dom.admin_status = data.admin_status
-    session.flush()
-    registrar(session, tipo="mpls.domain.update", ator=actor, objeto="mpls_domain", objeto_id=dom.id,
-              antes=antes, depois={"name": dom.name, "admin_status": dom.admin_status})
-    session.commit()
+    try:
+        session.flush()
+        registrar(session, tipo="mpls.domain.update", ator=actor, objeto="mpls_domain", objeto_id=dom.id,
+                  antes=antes, depois={
+                      "name": dom.name, "admin_status": dom.admin_status,
+                      "description": dom.description,
+                  })
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise ConflictError(f"Domínio MPLS '{novo_nome}' já existe.") from exc
     return _dom(session, dom.id)
 
 
@@ -105,11 +124,15 @@ def add_domain_member(session: Session, domain_id: int, data: MplsMemberIn, *, a
         domain_id=dom.id, device_id=device.id, loopback_address=loopback, role=data.role,
     )
     session.add(membro)
-    session.flush()
-    registrar(session, tipo="mpls.domain.member_add", ator=actor, objeto="mpls_domain",
-              objeto_id=dom.id, antes=None,
-              depois={"device_id": device.id, "loopback_address": loopback, "role": data.role})
-    session.commit()
+    try:
+        session.flush()
+        registrar(session, tipo="mpls.domain.member_add", ator=actor, objeto="mpls_domain",
+                  objeto_id=dom.id, antes=None,
+                  depois={"device_id": device.id, "loopback_address": loopback, "role": data.role})
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise ConflictError(f"Equipamento {device.name} já é membro do domínio {dom.name}.") from exc
     return membro
 
 
