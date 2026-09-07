@@ -882,6 +882,18 @@ Antes de habilitar produção, testar em equipamento ou imagem VRP de laboratór
 - API para ativação por sistemas externos;
 - relatórios operacionais.
 
+### Fase 7 — Segment Routing (SR-MPLS)
+
+- capacidades de SR por equipamento (§5.1): SRGB, SID de prefixo, de nó e de adjacência, IGP estendido (OSPF com `opaque-capability`, IS-IS com `cost-style wide`) e faixa de labels livre de conflito com LDP;
+- SR-MPLS BE no domínio MPLS (§9.1): transporte best-effort via IGP estendido, substituindo LDP+IGP; sem interface de túnel, com ECMP e SRGB homogêneo recomendado;
+- SR-MPLS TE: SIDs de adjacência estáticos, `explicit-path`, interface `Tunnel` e `tunnel-policy`, para levar serviços L2VC/VSI por caminho de transporte explícito;
+- SR Policy: identificação por `headend`, `color` e `endpoint`, candidate path com preferência (escolhe o caminho principal) e peso (pondera segment-lists), BSID e direcionamento por cor (`extcommunity color`) na seleção de transporte;
+- proteção: TI-LFA (local), Anycast FRR e Hot Standby (fim a fim), com BFD para detecção de falhas;
+- verificação: `display tunnel-info`, `display segment-routing prefix mpls forwarding`, `display segment-routing adjacency mpls forwarding`, `ping`/`tracert lsp segment-routing` e `display sr-te policy`, integrados à coleta e à divergência desejado × encontrado (§10);
+- SRv6: apenas comparação conceitual, sem laboratório completo; fora de escopo até o SR-MPLS estar estável em produção.
+
+Base de referência: `Segment_Routing_Base_IA.md`, síntese em português do treinamento Huawei da Connectoway Academy (novembro de 2025), com blocos de configuração por equipamento e comandos de verificação.
+
 ---
 
 ## 23. MVP recomendado
