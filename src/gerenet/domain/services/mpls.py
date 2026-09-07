@@ -16,6 +16,9 @@ from gerenet.domain.schemas import (
     MplsMemberIn,
     MplsMemberOut,
     ServiceEndpointOut,
+    VsiCreate,
+    VsiMemberOut,
+    VsiOut,
 )
 from gerenet.domain.services.devices import get_device
 from gerenet.domain.services.errors import ConflictError, NotFoundError, ValidationError
@@ -444,5 +447,123 @@ def out_l2vc(svc: models.L2vcService) -> L2vcOut:
         last_collected_at=svc.last_collected_at,
         created_at=svc.created_at,
         endpoints=[_out_endpoint(e) for e in svc.endpoints],
+        domain_name=svc.domain.name if svc.domain is not None else None,
+    )
+
+
+# ---- Serviços VSI (§9.3: modelo + consulta; sem render/CR neste ciclo) --
+
+def _vsi(session: Session, vsi_id: int) -> models.VsiService:
+    svc = session.scalars(
+        select(models.VsiService)
+        .options(
+            selectinload(models.VsiService.members).selectinload(models.VsiMember.device),
+            selectinload(models.VsiService.domain),
+        )
+        .where(models.VsiService.id == vsi_id)
+        .execution_options(populate_existing=True)
+    ).first()
+    if svc is None:
+        raise NotFoundError(f"VSI {vsi_id} não encontrado.")
+    return svc
+
+
+def create_vsi(session: Session, data: VsiCreate, *, actor: str = "cli") -> models.VsiService:
+    from gerenet.automation.naming import vsi_nome
+    dom = _dom(session, data.domain_id)
+    if not dom.admin_status:
+        raise ConflictError(f"Domínio MPLS {dom.name} desativado não recebe serviços.")
+    vsi_id = data.vsi_id or proximo_vsi_id(session, dom.id)
+    nome = data.name.strip()
+    if not nome:
+        raise ValidationError("Nome do VSI é obrigatório.")
+    ja_nome = session.scalars(
+        select(models.VsiService.id).where(
+            models.VsiService.domain_id == dom.id, models.VsiService.name == nome,
+        ).limit(1)
+    ).first()
+    if ja_nome is not None:
+        raise ConflictError(f"VSI '{nome}' já existe no domínio {dom.name}.")
+    ja_id = session.scalars(
+        select(models.VsiService.id).where(
+            models.VsiService.domain_id == dom.id, models.VsiService.vsi_id == vsi_id,
+        ).limit(1)
+    ).first()
+    if ja_id is not None:
+        raise ConflictError(f"VSI-ID {vsi_id} já usado no domínio {dom.name}.")
+    vrp = vsi_nome(nome, vsi_id)
+    ja_vrp = session.scalars(
+        select(models.VsiService.id).where(
+            models.VsiService.domain_id == dom.id, models.VsiService.vrp_name == vrp,
+        ).limit(1)
+    ).first()
+    if ja_vrp is not None:
+        raise ConflictError(f"Nome VRP {vrp} já usado no domínio {dom.name}.")
+    devices = [get_device(session, did) for did in dict.fromkeys(data.members)]
+    for dev in devices:
+        if _membro_loopback(session, dom.id, dev.id) is None:
+            raise ValidationError(f"Equipamento {dev.name} sem loopback LDP no domínio (membro inexistente).")
+    vsi = models.VsiService(
+        domain_id=dom.id, vsi_id=vsi_id, name=nome, vrp_name=vrp,
+        mtu=data.mtu, split_horizon=data.split_horizon, mac_learning=data.mac_learning,
+        mac_limit=data.mac_limit,
+    )
+    session.add(vsi)
+    try:
+        session.flush()
+    except IntegrityError as exc:
+        session.rollback()
+        raise ConflictError(f"VSI-ID ou nome já em uso no domínio {dom.name}.") from exc
+    for dev in devices:
+        session.add(models.VsiMember(vsi_id=vsi.id, device_id=dev.id))
+    session.flush()
+    registrar(session, tipo="mpls.vsi.create", ator=actor, objeto="vsi", objeto_id=vsi.id,
+              antes=None, depois={"vsi_id": vsi_id, "name": nome, "vrp_name": vrp})
+    session.commit()
+    return _vsi(session, vsi.id)
+
+
+def list_vsi(session: Session, domain_id: int | None = None, include_disabled: bool = False) -> list[models.VsiService]:
+    q = select(models.VsiService).options(
+        selectinload(models.VsiService.members).selectinload(models.VsiMember.device),
+        selectinload(models.VsiService.domain),
+    ).order_by(models.VsiService.domain_id, models.VsiService.vsi_id).execution_options(populate_existing=True)
+    if domain_id is not None:
+        q = q.where(models.VsiService.domain_id == domain_id)
+    if not include_disabled:
+        q = q.where(models.VsiService.admin_status.is_(True))
+    return list(session.scalars(q))
+
+
+def get_vsi(session: Session, vsi_id: int) -> models.VsiService:
+    return _vsi(session, vsi_id)
+
+
+# ---- Serialização VSI (padrão dashboard.py: Out explícito) --------------
+
+def _out_vsi_membro(m: models.VsiMember) -> VsiMemberOut:
+    return VsiMemberOut(
+        device_id=m.device_id,
+        device_name=m.device.name if m.device is not None else None,
+    )
+
+
+def out_vsi(svc: models.VsiService) -> VsiOut:
+    return VsiOut(
+        id=svc.id,
+        domain_id=svc.domain_id,
+        vsi_id=svc.vsi_id,
+        name=svc.name,
+        vrp_name=svc.vrp_name,
+        signaling=svc.signaling,
+        mtu=svc.mtu,
+        split_horizon=svc.split_horizon,
+        mac_learning=svc.mac_learning,
+        mac_limit=svc.mac_limit,
+        admin_status=svc.admin_status,
+        operational_status=svc.operational_status,
+        last_collected_at=svc.last_collected_at,
+        created_at=svc.created_at,
+        members=[_out_vsi_membro(m) for m in svc.members],
         domain_name=svc.domain.name if svc.domain is not None else None,
     )

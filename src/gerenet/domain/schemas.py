@@ -681,3 +681,40 @@ class L2vcOut(BaseModel):
     created_at: datetime
     endpoints: list[ServiceEndpointOut] = Field(default_factory=list)
     domain_name: str | None = None
+
+
+class VsiMemberOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    device_id: int
+    device_name: str | None = None
+
+
+class VsiCreate(BaseModel):
+    domain_id: int
+    name: str = Field(min_length=1, max_length=64)
+    vsi_id: int | None = None  # None ⇒ proximo_vsi_id
+    mtu: int = Field(default=1500, ge=576, le=9216)
+    split_horizon: bool = True
+    mac_learning: bool = True
+    mac_limit: int | None = Field(default=None, ge=0)
+    members: list[int] = Field(default_factory=list, min_length=1)
+
+
+class VsiOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    domain_id: int
+    vsi_id: int
+    name: str
+    vrp_name: str
+    signaling: str
+    mtu: int
+    split_horizon: bool
+    mac_learning: bool
+    mac_limit: int | None
+    admin_status: bool
+    operational_status: str
+    last_collected_at: datetime | None
+    created_at: datetime
+    members: list[VsiMemberOut] = Field(default_factory=list)
+    domain_name: str | None = None
