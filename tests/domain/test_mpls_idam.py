@@ -28,10 +28,10 @@ def test_proximo_vc_id_sequencial(db_session):
 def test_proximo_vc_id_pula_ocupados(db_session):
     from gerenet.domain import models
     dom = _dominio(db_session)
-    db_session.add(models.L2vcService(domain_id=dom.id, vc_id=101, name="a"))
-    db_session.add(models.L2vcService(domain_id=dom.id, vc_id=103, name="b"))
+    db_session.add(models.L2vcService(domain_id=dom.id, vc_id=100, name="a"))
+    db_session.add(models.L2vcService(domain_id=dom.id, vc_id=102, name="b"))
     db_session.commit()
-    assert proximo_vc_id(db_session, dom.id, inicio=100) in (100, 102, 104)
+    assert proximo_vc_id(db_session, dom.id, inicio=100) == 101  # pula 100/102
 
 
 def test_proximo_vsi_id(db_session):

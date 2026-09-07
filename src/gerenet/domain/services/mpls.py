@@ -220,23 +220,27 @@ def reservar_vlan_ac(session: Session, *, device_id: int, vid: int | None = None
                      notes: str | None = None, actor: str = "cli") -> models.Vlan:
     """Reserva a VLAN de AC do endpoint (§4) — idempotente; escopo por device.
 
-    vid None ⇒ menor livre no device (helper acima). Repetição da mesma ponta
-    devolve a linha existente (no-op auditado); (device, vid) ocupado por OUTRA
-    linha mpls_ac ⇒ ConflictError (índice parcial uq_vlans_device_vid).
-    Equipamento sem site é rejeitado: vlans.site_id é NOT NULL e vem do device.
+    vid None ⇒ menor VID livre no device (helper acima). Repetição da mesma
+    ponta com vid explícito devolve a linha existente (no-op auditado);
+    (device, vid) ocupado por OUTRA linha mpls_ac ⇒ ConflictError (índice
+    parcial uq_vlans_device_vid). Equipamento sem site é rejeitado:
+    vlans.site_id é NOT NULL e vem do device. A idempotência vale para vid
+    explícito; com vid=None cada chamada aloca o menor VID livre no device
+    daquele momento, sem re-idempotência. Os consumidores (T4/T5) chamam com
+    o vid da ponta quando o têm.
     """
     device = get_device(session, device_id)
     if device.site_id is None:
         raise ValidationError(
             f"Equipamento {device.name} sem site não pode reservar VLAN de AC."
         )
-    ja = session.scalars(
-        select(models.Vlan).where(
-            models.Vlan.device_id == device.id, models.Vlan.kind == "mpls_ac",
-        )
-    ).all()
     if vid is not None:
         validar_vid(vid)
+        ja = session.scalars(
+            select(models.Vlan).where(
+                models.Vlan.device_id == device.id, models.Vlan.kind == "mpls_ac",
+            )
+        ).all()
         existente = next((v for v in ja if v.vid == vid), None)
     else:
         vid = _primeiro_vid_device(session, device.id)
