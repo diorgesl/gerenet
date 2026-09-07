@@ -129,6 +129,7 @@ def test_criar_listar_detalhar_404(client: TestClient, db_session: Session) -> N
     cid = _cria_cenario(db_session)
     cr = _cria_cr(client, cid)
     assert cr["status"] == "rascunho"
+    assert cr["l2vc_name"] is None  # CR de circuito nunca exibe nome de L2VC
     assert len(cr["steps"]) == 1
     assert cr["steps"][0]["plano_json"]
     assert cr["approvals"] == []
@@ -319,3 +320,25 @@ def test_criar_cr_escopo_l2vc(client: TestClient, db_session: Session) -> None:
         headers=_auth(),
     )
     assert sem_id.status_code == 422
+
+
+def test_cr_escopo_l2vc_popula_l2vc_name(
+    client: TestClient, db_session: Session
+) -> None:
+    """Fix R1 (T12): o ORM expõe l2vc_name — criação, lista e detalhe da CR
+    trazem o nome do serviço (a UI não mostra mais '—' no lugar do nome)."""
+    l2vc_id = _l2vc_api(db_session)
+    resp = client.post(
+        "/api/v1/change-requests",
+        json={"escopo": "l2vc", "l2vc_id": l2vc_id, "acao": "provision",
+              "motivo": "Ativar L2VC.", "criticidade": "baixa"},
+        headers=_auth(),
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["l2vc_name"] == "l2vc-cr-api"
+    lista = client.get("/api/v1/change-requests", headers=_auth())
+    assert lista.status_code == 200
+    assert [c["l2vc_name"] for c in lista.json()] == ["l2vc-cr-api"]
+    detalhe = client.get(f"/api/v1/change-requests/{resp.json()['id']}", headers=_auth())
+    assert detalhe.status_code == 200
+    assert detalhe.json()["l2vc_name"] == "l2vc-cr-api"

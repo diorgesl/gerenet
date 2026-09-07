@@ -7,7 +7,7 @@ transições inválidas ⇒ ValidationError; rollback = novo CR inverso em
 recomputa só os steps não aplicados.
 """
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from gerenet.automation import changes, removal
 from gerenet.domain import models, schemas
@@ -139,7 +139,10 @@ def _create_l2vc(
 
 
 def get_change_request(session: Session, cr_id: int) -> models.ChangeRequest:
-    cr = session.get(models.ChangeRequest, cr_id)
+    cr = session.get(
+        models.ChangeRequest, cr_id,
+        options=[selectinload(models.ChangeRequest.l2vc)],
+    )
     if cr is None:
         from gerenet.domain.services.errors import NotFoundError
         raise NotFoundError(f"Change request {cr_id} não encontrada.")
@@ -151,7 +154,11 @@ def list_change_requests(
     solicitante_id: int | None = None, circuit_id: int | None = None,
     escopo: str | None = None,
 ) -> list[models.ChangeRequest]:
-    stmt = select(models.ChangeRequest).order_by(models.ChangeRequest.id.desc())
+    stmt = (
+        select(models.ChangeRequest)
+        .options(selectinload(models.ChangeRequest.l2vc))
+        .order_by(models.ChangeRequest.id.desc())
+    )
     if status is not None:
         stmt = stmt.where(models.ChangeRequest.status == status)
     if solicitante_id is not None:

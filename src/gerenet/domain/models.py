@@ -519,6 +519,7 @@ class ChangeRequest(Base):
     )
 
     circuito: Mapped[Circuit] = relationship()
+    l2vc: Mapped["L2vcService | None"] = relationship()
     solicitante: Mapped[User | None] = relationship()
     steps: Mapped[list["ChangeStep"]] = relationship(
         back_populates="change_request", order_by="ChangeStep.id", cascade="all, delete-orphan"
@@ -526,6 +527,11 @@ class ChangeRequest(Base):
     approvals: Mapped[list["Approval"]] = relationship(
         back_populates="change_request", order_by="Approval.id", cascade="all, delete-orphan"
     )
+
+    @property
+    def l2vc_name(self) -> str | None:
+        """Nome do serviço L2VC (CR de escopo l2vc) — exposto via ChangeRequestOut."""
+        return self.l2vc.name if self.l2vc else None
 
 
 class ChangeStep(Base):

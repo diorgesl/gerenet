@@ -145,12 +145,14 @@ test("mpls: domínio + L2VC + solicitar mudança (rejeitada pelo aprovador)", as
   await expect(page.getByRole("heading", { level: 3, name: new RegExp(nomeA) })).toBeVisible();
   await expect(page.getByRole("heading", { level: 3, name: new RegExp(nomeB) })).toBeVisible();
   await expect(page.locator("details").first()).toBeVisible();
-  // O objeto da CR de escopo l2vc na linha "Circuito" nunca exibe "#null"
-  // (T11: l2vc_name quando o backend o popula — hoje ainda não chega, a linha
-  // fica "—"; o guard abaixo regride se o "antigo" bug voltar).
+  // O objeto da CR de escopo l2vc na linha "Circuito" é o NOME do serviço —
+  // l2vc_name vindo do backend (fix R1 T12; a linha "—" morreu com o bug
+  // #null). Pin exato: o td renderiza rotuloObjeto(cr) = cr.l2vc_name ?? "—",
+  // sem wrappers extras no DOM (ChangeRequestDetail.tsx) — regride se o
+  // backend parar de popular o campo.
   const celulaCircuito = page.locator("tr", { hasText: "Circuito" }).locator("td");
   await expect(celulaCircuito).toBeVisible();
-  await expect(celulaCircuito).not.toHaveText("#null");
+  await expect(celulaCircuito).toHaveText(nomeL2vc);
 
   // 4. Enviar para aprovação (pré-condição da rejeição).
   await page.getByRole("button", { name: "Enviar para aprovação" }).click();
