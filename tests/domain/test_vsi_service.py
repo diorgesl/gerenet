@@ -17,6 +17,7 @@ from gerenet.domain.services.mpls import (
     create_vsi,
     get_vsi,
     list_vsi,
+    out_vsi,
 )
 from gerenet.domain.services.sites import create_site
 
@@ -71,3 +72,25 @@ def test_vsi_id_duplicado_no_dominio(db_session):
         create_vsi(db_session, VsiCreate(domain_id=dom.id, name="b", vsi_id=570, members=[d1.id]), actor="cli")
     with pytest.raises(ConflictError):
         create_vsi(db_session, VsiCreate(domain_id=dom.id, name="a", vsi_id=571, members=[d1.id]), actor="cli")
+
+
+def test_vsi_nome_so_whitespace_rejeitado(db_session):
+    create_site(db_session, SiteCreate(name="pop-vsi4"), actor="cli")
+    d1 = create_device(db_session, DeviceCreate(name="sw-6", management_address="10.0.0.66"), actor="cli")
+    dom = create_domain(db_session, MplsDomainCreate(name="dom-vsi4"), actor="cli")
+    add_domain_member(db_session, dom.id, MplsMemberIn(device_id=d1.id, loopback_address="10.255.5.1"), actor="cli")
+    with pytest.raises(ValidationError):
+        create_vsi(db_session, VsiCreate(domain_id=dom.id, name="   ", vsi_id=571, members=[d1.id]), actor="cli")
+
+
+def test_out_vsi_preenche_device_e_domain_name(db_session):
+    create_site(db_session, SiteCreate(name="pop-vsi5"), actor="cli")
+    d1 = create_device(db_session, DeviceCreate(name="sw-7", management_address="10.0.0.67"), actor="cli")
+    dom = create_domain(db_session, MplsDomainCreate(name="dom-vsi5"), actor="cli")
+    add_domain_member(db_session, dom.id, MplsMemberIn(device_id=d1.id, loopback_address="10.255.6.1"), actor="cli")
+    vsi = create_vsi(db_session, VsiCreate(
+        domain_id=dom.id, name="cliente-out", vsi_id=572, members=[d1.id],
+    ), actor="cli")
+    out = out_vsi(vsi)
+    assert out.members[0].device_name == d1.name
+    assert out.domain_name == dom.name

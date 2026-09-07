@@ -692,7 +692,7 @@ class VsiMemberOut(BaseModel):
 class VsiCreate(BaseModel):
     domain_id: int
     name: str = Field(min_length=1, max_length=64)
-    vsi_id: int | None = None  # None ⇒ proximo_vsi_id
+    vsi_id: int | None = Field(default=None, ge=1, le=4294967295)  # None ⇒ proximo_vsi_id
     mtu: int = Field(default=1500, ge=576, le=9216)
     split_horizon: bool = True
     mac_learning: bool = True

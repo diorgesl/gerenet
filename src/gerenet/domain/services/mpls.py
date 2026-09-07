@@ -492,6 +492,9 @@ def create_vsi(session: Session, data: VsiCreate, *, actor: str = "cli") -> mode
     if ja_id is not None:
         raise ConflictError(f"VSI-ID {vsi_id} já usado no domínio {dom.name}.")
     vrp = vsi_nome(nome, vsi_id)
+    # Defensivo — redundante com (domain_id, vsi_id): mesma sigla + mesmo ID
+    # já colide no pre-check/acima e no UNIQUE; siglas iguais com IDs distintos
+    # geram vrps distintos.
     ja_vrp = session.scalars(
         select(models.VsiService.id).where(
             models.VsiService.domain_id == dom.id, models.VsiService.vrp_name == vrp,
