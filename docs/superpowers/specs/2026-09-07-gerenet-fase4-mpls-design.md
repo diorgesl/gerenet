@@ -175,10 +175,29 @@ Pós-check: `display l2vc` pós-aplicação ⇒ estado `up` e simetria ⇒
 
 Regra §5: não gerar comandos incompatíveis com família/versão. Para o MVP:
 `flow_label` renderizado **somente** se a capacidade do equipamento
-indicar suporte (campo `capabilities` do Device — mecanismo do ciclo B2) e
-`control-word` se marcado. A validação de lab (runbook) confirma os comandos
-contra os switches alvo (família S, VRP V2xx). Se o comportamento divergir
-por versão, a solução é nova template por versão (padrão já existente).
+indicar suporte e `control-word` se marcado. **Nota (pós-escrita do spec):
+o campo `capabilities` do Device referido nunca foi materializado — o ciclo
+B2 não o criou (o Device tem apenas `tags` JSON). Ajuste acordado no plano:
+esta fase adiciona `devices.capabilities` (JSON, default `[]`; o §5 do spec
+principal exige capacidades por equipamento) e o flag de suporte é a string
+`"mpls_flow_label"` dentro dela.** A validação de lab (runbook) confirma os
+comandos contra os switches alvo (família S, VRP V2xx). Se o comportamento
+divergir por versão, a solução é nova template por versão (padrão já
+existente).
+
+**Nota (pós-escrita do spec) — runner da CR usado por L2VC:** o §5 diz
+"máquina de estados e runner intocados", mas o runner tem dois pontos
+circuitocêntricos que uma CR de L2VC em switch dispara: (1) `run_change`
+chama `get_circuit(cr.circuit_id)` no setup — com `circuit_id` NULL a CR
+falha; (2) o gate `_chaves_incompletas` exige os recursos `("interfaces",
+"bgp_peers", "config_backup")` para todo re-diff — num switch sem BGP a
+coleta de `display bgp peer` falha e o gate bloqueia. Ajuste no plano (sem
+tocar na máquina de estados): gate e setup **escopo-aware**
+(`escopo="circuito"` ⇒ comportamento atual; `escopo="l2vc"` ⇒ chaves
+`("interfaces","l2vc","config_backup")` e validação do serviço L2VC no
+lugar de `get_circuit`) + pré-checks e pós-checks L2VC chamados do runner
+quando `escopo="l2vc"` (`valida_pre_checks_l2vc`/`valida_pos_l2vc`,
+§6).
 
 ## 8. Coleta e parsers
 
