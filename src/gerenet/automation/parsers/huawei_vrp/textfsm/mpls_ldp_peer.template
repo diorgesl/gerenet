@@ -1,0 +1,6 @@
+Value Required peer_id (\S+)
+Value estado (\S+)
+
+Start
+  ^\s*Peer LDP ID\s*:\s*${peer_id}\s*$$ -> Continue
+  ^\s*State\s*:\s*${estado}\s*$$ -> Record

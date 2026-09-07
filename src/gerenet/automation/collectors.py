@@ -40,6 +40,21 @@ COLLECTORS = {
         "parser_alvo": "bgp_peer_verbose",
         "merge": "bgp_peers_detalhes",
     },
+    "mpls_ldp_peer": {
+        "commands": ["display mpls ldp peer"],
+        "parsers": {"display mpls ldp peer": "mpls_ldp_peer"},
+        "merge": "mpls_ldp_peer",
+    },
+    "l2vc": {
+        "commands": ["display l2vc"],
+        "parsers": {"display l2vc": "l2vc"},
+        "merge": "l2vc",
+    },
+    "vsi": {
+        "commands": ["display vsi"],
+        "parsers": {"display vsi": "vsi"},
+        "merge": "vsi",
+    },
 }
 
 
