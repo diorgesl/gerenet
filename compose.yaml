@@ -71,6 +71,9 @@ services:
       - ./alembic:/srv/app/alembic
       - ./alembic.ini:/srv/app/alembic.ini
       - ./tests:/srv/app/tests
+      # Páginas do wiki operacional (ciclo E) — o código usa docs/wiki relativo
+      # ao CWD (/srv/app); sem o mount, o índice vem vazio e toda página 404.
+      - ./docs:/srv/app/docs:ro
       - uv-cache:/root/.cache/uv
     depends_on:
       db:
