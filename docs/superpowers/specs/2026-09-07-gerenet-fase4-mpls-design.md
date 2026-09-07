@@ -229,15 +229,19 @@ Automatizados (padrão do repo — pytest/ruff/vitest/e2e):
 - **API/CLI/web**: CRUD + 409 + `--escopo l2vc`; Vitest das 3 páginas e nav;
   fumo e2e: criar domínio + L2VC e "Solicitar mudança" (sem execução).
 
-**Lab** (correção do ciclo — mesma importância do runbook do B):
+**Validação em equipamento real — produção, sem lab** (decisão do usuário em
+2026-09-07: há switches de produção disponíveis; nada impede subir L2VC/VSI
+de teste neles — segue a implantação gradual do §21):
 1. Task **read-only** contra switches reais (família S): comandos MPLS/L2VC
    e outputs de `display` — ajusta templates/parsers e documenta no
    `docs/runbook-validacao-switch-mpls.md`.
-2. Geração sem execução revisada; depois execução em lab via CR aprovada
-   (2 switches, 1 VC-ID), pós-check e rollback.
-3. Registrado em ledger: se não houver lab disponível durante o ciclo, o
-   encerramento declara "comandos validados apenas por fixtures + revisão
-   humana" como limitação explícita.
+2. Geração sem execução, revisada pelo usuário (diff por bloco na CR em
+   `rascunho`), antes de qualquer execução.
+3. Execução de teste: **serviço L2VC de teste** (cliente/finalidade "teste"),
+   em **switch não crítico**, via CR aprovada no fluxo normal (backup
+   pré-mudança, pós-check, rollback disponível) — registrado em ledger que a
+   validação é em produção com escolha consciente do escopo; nada de execução
+   automática sem aprovação (regra §3.3 inegociável).
 
 ## 11. Decisões registradas (brainstorming 2026-09-07)
 
@@ -254,3 +258,6 @@ Automatizados (padrão do repo — pytest/ruff/vitest/e2e):
    CR de VSI (pós-estabilização L2VC, §23).
 4. YAGNI: sem tabela de estados por pseudowire; sem `ethernet_raw` como
    requisito (opcional); sem card de métricas avançado; sem NetBox.
+5. **Validação sem lab**: equipamento real de produção como banco de testes
+   (read-only → geração + diff → um L2VC de teste em switch não crítico via
+   CR aprovada); decisão do usuário 2026-09-07.
