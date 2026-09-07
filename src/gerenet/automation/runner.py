@@ -443,6 +443,9 @@ def _estado_do_bloco(bloco: dict, recursos: dict, texto: str) -> str:
         else:
             return "ausente"
         return "consta" if f"route-policy {nome} permit node" in texto else "ausente"
+    if tipo == "l2vc_ac":
+        from gerenet.automation.l2vc import estado_bloco_l2vc
+        return estado_bloco_l2vc(bloco, recursos)
     return "ausente"  # tipo fora do repertório: reaplica (o comando é do nosso render)
 
 
