@@ -1,6 +1,7 @@
 """Serviço L2VC — fase 4, validações §9.2."""
 import pytest
 from pydantic import ValidationError as PydanticValidationError
+from sqlalchemy import select
 
 from gerenet.domain import models
 from gerenet.domain.schemas import (
@@ -150,3 +151,50 @@ def test_list_get_status(db_session, pares):
     assert list_l2vc(db_session) == []  # desativado some da lista padrão
     with pytest.raises(NotFoundError):
         get_l2vc(db_session, 99999)
+
+
+def test_falha_na_segunda_ponta_nao_deixa_sobras(db_session, pares):
+    """F1 (revisão R1): ocupar (device, vid) da ponta B com linha de kind
+    NÃO-mpls_ac torna o flush da 2ª reserva falível — e a transação inteira
+    (serviço, VLAN da ponta A, auditorias) deve ser descartada."""
+    site, d1, d2, dom = pares
+    db_session.add(models.Vlan(site_id=site.id, device_id=d2.id, vid=102,
+                               kind="vlan", status="reservada"))
+    db_session.commit()  # linha concorrente já existente (determinístico)
+    with pytest.raises(ConflictError):
+        _create(db_session, dom, d1, d2)
+    db_session.rollback()  # limpa a sessão antes das asserções
+    assert db_session.scalars(select(models.L2vcService)).first() is None
+    assert db_session.scalars(
+        select(models.Vlan).where(models.Vlan.kind == "mpls_ac")
+    ).first() is None
+    auditorias = db_session.scalars(
+        select(models.AuditEvent).where(
+            models.AuditEvent.type.in_(["mpls.vlan.reserve", "mpls.l2vc.create"]),
+        )
+    ).all()
+    assert auditorias == []
+
+
+def test_vlan_de_outro_servico_bloqueia_nova_reserva(db_session, pares):
+    """F2 (revisão R1): o no-op idempotente do helper devolve a VLAN de OUTRO
+    serviço — o dono atual deve bloquear o novo L2VC."""
+    _, d1, d2, dom = pares
+    _create(db_session, dom, d1, d2, name="a-777", endpoints=[
+        L2vcEndpointIn(device_id=d1.id, interface="10GE0/0/1", encapsulation="dot1q", vid=777),
+        L2vcEndpointIn(device_id=d2.id, interface="10GE0/0/2", encapsulation="dot1q", vid=778),
+    ])
+    with pytest.raises(ConflictError):
+        _create(db_session, dom, d1, d2, name="b-777", endpoints=[
+            L2vcEndpointIn(device_id=d1.id, interface="10GE0/0/1", encapsulation="dot1q", vid=777),
+            L2vcEndpointIn(device_id=d2.id, interface="10GE0/0/2", encapsulation="dot1q", vid=778),
+        ])
+    db_session.rollback()
+    svcs = db_session.scalars(select(models.L2vcService)).all()
+    assert len(svcs) == 1 and svcs[0].name == "a-777"
+
+
+def test_nome_so_whitespace_rejeitado(db_session, pares):
+    _, d1, d2, dom = pares
+    with pytest.raises(ValidationError):
+        _create(db_session, dom, d1, d2, name="   ")

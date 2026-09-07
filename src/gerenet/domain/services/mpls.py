@@ -231,6 +231,10 @@ def reservar_vlan_ac(session: Session, *, device_id: int, vid: int | None = None
     explícito; com vid=None cada chamada aloca o menor VID livre no device
     daquele momento, sem re-idempotência. Os consumidores (T4/T5) chamam com
     o vid da ponta quando o têm.
+
+    A função NÃO commita: o chamador fecha a transação (o visitante do
+    create_l2vc precisa de atomicidade — o flush das duas pontas falha junto
+    ou não falha nada).
     """
     device = get_device(session, device_id)
     if device.site_id is None:
@@ -251,7 +255,7 @@ def reservar_vlan_ac(session: Session, *, device_id: int, vid: int | None = None
     if existente is not None:
         registrar(session, tipo="mpls.vlan.reserve", ator=actor, objeto="vlan",
                   objeto_id=existente.id, antes=None, depois={"repetida": True, "vid": vid})
-        session.commit()
+        session.flush()
         return existente
     linha = models.Vlan(
         site_id=device.site_id, device_id=device.id, vid=vid, kind="mpls_ac",
@@ -266,7 +270,7 @@ def reservar_vlan_ac(session: Session, *, device_id: int, vid: int | None = None
     registrar(session, tipo="mpls.vlan.reserve", ator=actor, objeto="vlan",
               objeto_id=linha.id, antes=None,
               depois={"device_id": device.id, "vid": vid, "kind": "mpls_ac"})
-    session.commit()
+    session.flush()
     return linha
 
 
@@ -281,6 +285,7 @@ def _l2vc(session: Session, l2vc_id: int) -> models.L2vcService:
             selectinload(models.L2vcService.domain),
         )
         .where(models.L2vcService.id == l2vc_id)
+        .execution_options(populate_existing=True)
     ).first()
     if svc is None:
         raise NotFoundError(f"Serviço L2VC {l2vc_id} não encontrado.")
@@ -312,6 +317,8 @@ def create_l2vc(session: Session, data: L2vcCreate, *, actor: str = "cli") -> mo
     if mtu_a != mtu_b:
         raise ValidationError(f"MTU das pontas diverge ({mtu_a} × {mtu_b}); ajuste o MTU do serviço ou das pontas.")
     for ep in (a, b):
+        if not ep.interface.strip():
+            raise ValidationError(f"Ponta {ep.device_id}: interface é obrigatória.")
         if ep.encapsulation == "qinq" and ep.inner_vlan is None:
             raise ValidationError(f"Ponta {ep.interface}: encapsulamento qinq exige inner-vlan.")
         if _membro_loopback(session, dom.id, ep.device_id) is None:
@@ -321,6 +328,8 @@ def create_l2vc(session: Session, data: L2vcCreate, *, actor: str = "cli") -> mo
 
     vc_id = data.vc_id or proximo_vc_id(session, dom.id)
     nome = data.name.strip()
+    if not nome:
+        raise ValidationError("Nome do serviço L2VC é obrigatório.")
     qtd = session.scalars(
         select(models.L2vcService.id).where(
             models.L2vcService.domain_id == dom.id,
@@ -347,9 +356,20 @@ def create_l2vc(session: Session, data: L2vcCreate, *, actor: str = "cli") -> mo
         session.flush()
     except IntegrityError as exc:
         session.rollback()
-        raise ConflictError(f"VC-ID {vc_id} já usado no domínio {dom.name}.") from exc
+        raise ConflictError(f"Nome ou VC-ID já em uso no domínio {dom.name}.") from exc
     for ep in (a, b):
         vlan = reservar_vlan_ac(session, device_id=ep.device_id, vid=ep.vid, actor=actor)
+        # Idempotência do helper só serve ao re-run do MESMO serviço: VLAN
+        # de outro service_endpoint bloqueia (a ponta não pode ser compartilhada).
+        dono = session.scalars(
+            select(models.ServiceEndpoint.l2vc_id).where(
+                models.ServiceEndpoint.vlan_id == vlan.id,
+                models.ServiceEndpoint.l2vc_id != svc.id,
+            ).limit(1)
+        ).first()
+        if dono is not None:
+            session.rollback()
+            raise ConflictError(f"VLAN {vlan.vid} já pertence ao serviço L2VC {dono}.")
         session.add(models.ServiceEndpoint(
             kind="l2vc", l2vc_id=svc.id, device_id=ep.device_id, interface=ep.interface.strip(),
             encapsulation=ep.encapsulation, vlan_id=vlan.id, inner_vlan=ep.inner_vlan,
@@ -367,7 +387,7 @@ def list_l2vc(session: Session, domain_id: int | None = None, include_disabled: 
         selectinload(models.L2vcService.endpoints).selectinload(models.ServiceEndpoint.vlan),
         selectinload(models.L2vcService.endpoints).selectinload(models.ServiceEndpoint.device),
         selectinload(models.L2vcService.domain),
-    ).order_by(models.L2vcService.domain_id, models.L2vcService.vc_id)
+    ).order_by(models.L2vcService.domain_id, models.L2vcService.vc_id).execution_options(populate_existing=True)
     if domain_id is not None:
         q = q.where(models.L2vcService.domain_id == domain_id)
     if not include_disabled:
