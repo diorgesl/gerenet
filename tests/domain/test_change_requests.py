@@ -4,7 +4,7 @@ from sqlalchemy import select
 
 from gerenet.domain import models
 from gerenet.domain.services import change_requests as crsvc
-from gerenet.domain.services.errors import ValidationError
+from gerenet.domain.services.errors import PlanoVazio, ValidationError
 
 
 def _usuario(db_session, username, role):
@@ -102,6 +102,29 @@ def test_criar_gera_steps_e_auditoria(db_session):
         select(models.AuditEvent.type).where(models.AuditEvent.actor == "operador").order_by(models.AuditEvent.id.desc()).limit(1)
     )
     assert tipo == "change.created"
+
+
+def test_criar_plano_vazio_rejeitado_sem_cr_orfã(db_session):
+    """Fix B (revisão final): circuito sem sessões ativas ⇒ PlanoVazio do SERVIÇO
+    antes do commit — nem CR, nem auditoria (espelho do PlanoRollbackVazio)."""
+    from gerenet.domain.schemas import ChangeRequestCreate
+
+    circ, _ = _circuito_reservado(db_session)  # sem _sessao: nada a planejar
+    antes = len(crsvc.list_change_requests(db_session))
+    with pytest.raises(PlanoVazio, match="sem sessões ativas"):
+        crsvc.create_change_request(
+            db_session,
+            ChangeRequestCreate(
+                circuit_id=circ.id, acao="provision", motivo="Ativação.", criticidade="media"
+            ),
+            ator_id=_usuario(db_session, "operador-vazio", "operador").id,
+            actor="operador",
+        )
+    # nenhuma CR órfã no banco: a criação abortou antes do commit (o flush()
+    # inseriu a linha na transação aberta e o SELECT da MESMA sessão a veria —
+    # o rollback descarta e a reconta prova que nada foi persistido)
+    db_session.rollback()
+    assert len(crsvc.list_change_requests(db_session)) == antes
 
 
 def test_transicao_invalida_levanta_validation(db_session):

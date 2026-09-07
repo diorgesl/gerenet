@@ -12,11 +12,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from gerenet.api.deps import Actor, SessionDep, require_actor, require_papel
 from gerenet.domain.schemas import ApprovalIn, ChangeRequestCreate, ChangeRequestOut
 from gerenet.domain.services import change_requests as svc
-from gerenet.domain.services.bgp_sessions import list_sessions
 from gerenet.domain.services.errors import (
     ConflictError,
     NotFoundError,
     PlanoRollbackVazio,
+    PlanoVazio,
     ValidationError,
 )
 from gerenet.worker.tasks import enqueue_change
@@ -30,8 +30,6 @@ router = APIRouter(
 ApproverDep = Annotated[Actor, Depends(require_papel("aprovador", "administrador"))]
 ExecutorDep = Annotated[Actor, Depends(require_papel("executor", "administrador"))]
 
-_MSG_SEM_SESSOES = "Circuito sem sessões ativas — cadastre sessões do circuito antes de planejar."
-
 
 @router.post("", response_model=ChangeRequestOut, status_code=201)
 def criar(
@@ -40,12 +38,9 @@ def criar(
     actor: Annotated[Actor, Depends(require_actor)],
 ) -> object:
     """Cria a CR já planejada (nasce `rascunho`). Nota T3: CR sem steps é
-    inexplicável — circuito sem sessões ativas ⇒ 422, sem órfão no banco."""
+    inexplicável — circuito sem sessões ativas ⇒ 422 via PlanoVazio do
+    serviço, antes do commit (sem órfão no banco)."""
     try:
-        if data.acao == "provision":
-            circ = svc.get_circuit(session, data.circuit_id)
-            if not list_sessions(session, circuit_id=circ.id):
-                raise HTTPException(status_code=422, detail=_MSG_SEM_SESSOES)
         return svc.create_change_request(
             session,
             data,
@@ -56,6 +51,8 @@ def criar(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PlanoVazio as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

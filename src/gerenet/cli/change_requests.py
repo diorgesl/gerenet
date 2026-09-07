@@ -9,6 +9,7 @@ exista; `aprovador ≠ solicitante` não se aplica (solicitante é None no CLI).
 from typing import Literal
 
 import typer
+from pydantic import ValidationError as SchemaValidationError
 
 from gerenet.db import get_session
 from gerenet.domain.schemas import ChangeRequestCreate
@@ -62,7 +63,7 @@ def add(
                 ),
                 actor="cli",
             )
-        except GerenetError as exc:
+        except (GerenetError, SchemaValidationError) as exc:
             typer.echo(f"Erro: {exc}", err=True)
             raise typer.Exit(1) from exc
         # steps contados dentro da sessão (lazy): após o close, viraria

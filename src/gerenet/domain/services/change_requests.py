@@ -16,6 +16,7 @@ from gerenet.domain.services.circuits import get_circuit
 from gerenet.domain.services.errors import (
     ConflictError,
     PlanoRollbackVazio,
+    PlanoVazio,
     ValidationError,
 )
 
@@ -75,6 +76,10 @@ def create_change_request(
     session.add(cr)
     session.flush()
     _cria_steps(session, cr, plano)
+    if not cr.steps:
+        raise PlanoVazio(
+            "Circuito sem sessões ativas — cadastre sessões do circuito antes de planejar."
+        )
     registrar(
         session, tipo="change.created", ator=actor, objeto="change_request",
         objeto_id=cr.id, antes=None,

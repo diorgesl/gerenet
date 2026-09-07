@@ -25,7 +25,7 @@ from gerenet.domain.services.sites import create_site, link_device
 runner = CliRunner()
 
 
-def _circuito(db_session: Session) -> int:
+def _circuito(db_session: Session, *, com_sessao: bool = True) -> int:
     site = create_site(
         db_session, SiteCreate(name="pop-cr-cli", p2p_ipv4_block="10.0.0.0/24"), actor="cli"
     )
@@ -53,19 +53,20 @@ def _circuito(db_session: Session) -> int:
         actor="cli",
     )
     reservar_circuito(db_session, circ.id, actor="cli")
-    create_session(
-        db_session,
-        BgpSessionCreate(
-            circuit_id=circ.id,
-            device_id=dev.id,
-            afi="ipv4",
-            local_address="10.0.0.1",
-            remote_address="10.0.0.2",
-            asn_local=65000,
-            asn_remote=64512,
-        ),
-        actor="cli",
-    )
+    if com_sessao:
+        create_session(
+            db_session,
+            BgpSessionCreate(
+                circuit_id=circ.id,
+                device_id=dev.id,
+                afi="ipv4",
+                local_address="10.0.0.1",
+                remote_address="10.0.0.2",
+                asn_local=65000,
+                asn_remote=64512,
+            ),
+            actor="cli",
+        )
     # Snapshot com recursos (encontrado real, sem nada deste circuito): o
     # plano da ativação sai cheio, baseline congelado — sem ele o rollback do
     # CLI falharia com PlanoRollbackVazio (baseline ausente, §5.2).
@@ -191,3 +192,32 @@ def test_cli_rollback_gera_filho(db_session: Session) -> None:
     assert filho.acao == "remove"
     assert filho.status == "aguardando_aprovacao"
     assert "rollback" in rb.output
+
+
+def test_add_motivo_vazio_erro_limpo(db_session: Session) -> None:
+    """Fix A (revisão final): SchemaValidationError do create é erro limpo de CLI
+    (exit 1 + "Erro:"), sem traceback — parity com circuits.py."""
+    cid = _circuito(db_session)
+    add = runner.invoke(
+        app, ["change-requests", "add", "--circuit-id", str(cid), "--motivo", ""]
+    )
+    assert add.exit_code == 1
+    assert "Erro:" in add.output
+    assert "Traceback" not in add.output
+
+
+def test_add_sem_sessoes_ativas_nao_cria_cr(db_session: Session) -> None:
+    """Fix B (revisão final): circuito sem sessões ativas ⇒ erro limpo do serviço
+    (exit 1) e nenhuma CR persistida."""
+    cid = _circuito(db_session, com_sessao=False)
+    add = runner.invoke(
+        app, ["change-requests", "add", "--circuit-id", str(cid), "--motivo", "Ativação."]
+    )
+    assert add.exit_code == 1
+    assert "Erro: Circuito sem sessões ativas" in add.output
+    assert (
+        db_session.scalar(
+            select(models.ChangeRequest).where(models.ChangeRequest.circuit_id == cid)
+        )
+        is None
+    )

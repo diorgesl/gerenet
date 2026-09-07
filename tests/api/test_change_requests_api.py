@@ -242,7 +242,8 @@ def test_criar_provision_sem_sessoes_rejeita_422(client: TestClient, db_session:
     body = resp.json()["detail"].lower()
     assert "sem sessões" in body
     assert "cadastre" in body
-    # nada órfão: a rejeição é anterior à criação (pre-check por sessões ativas)
+    # nada órfão: a rejeição é anterior à criação (guard do serviço — PlanoVazio
+    # 422 antes do commit, mesmo mecanismo do test_rollback_sem_baseline)
     assert client.get("/api/v1/change-requests", headers=_auth()).json() == []
 
 

@@ -20,3 +20,11 @@ class PlanoRollbackVazio(ValidationError):
     Sinaliza rollback automático indisponível SEM persistir o CR inverso
     (a exceção sobe antes do commit; HTTP 422).
     """
+
+
+class PlanoVazio(ValidationError):
+    """Plano de mudança vazio no create — CR sem steps é inexplicável (HTTP 422).
+
+    Sinaliza que nada há a planejar (circuito sem sessões ativas); a criação
+    é abortada antes do commit — sem CR órfã no banco.
+    """
