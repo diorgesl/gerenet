@@ -45,6 +45,22 @@ function renderSolicitar() {
   );
 }
 
+function renderSolicitarL2vc() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={["/l2vc/7"]}>
+        <AuthProvider>
+          <Routes>
+            <Route path="/l2vc/7" element={<SolicitarMudanca l2vc_id={7} />} />
+            <Route path="/change-requests/:id" element={<div>detail-page</div>} />
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
 describe("SolicitarMudanca", () => {
   it("cria CR do circuito e navega ao detalhe", async () => {
     renderSolicitar();
@@ -54,6 +70,25 @@ describe("SolicitarMudanca", () => {
     await waitFor(() => {
       const chamadas = vi.mocked(fetch).mock.calls as unknown as [string, RequestInit][];
       expect(chamadas.some((c) => c[1]?.method === "POST" && String(c[1]?.body).includes('"circuit_id":1'))).toBe(true);
+    });
+    expect(await screen.findByText("detail-page")).toBeInTheDocument();
+  });
+
+  it("cria CR do L2VC com escopo l2vc e navega ao detalhe", async () => {
+    renderSolicitarL2vc();
+    await userEvent.click(await screen.findByRole("button", { name: "Solicitar mudança no L2VC" }));
+    await userEvent.type(screen.getByLabelText("Motivo *"), "Provisionar L2VC do cliente");
+    await userEvent.click(screen.getByRole("button", { name: "Criar" }));
+    await waitFor(() => {
+      const chamadas = vi.mocked(fetch).mock.calls as unknown as [string, RequestInit][];
+      expect(
+        chamadas.some(
+          (c) =>
+            c[1]?.method === "POST" &&
+            String(c[1]?.body).includes('"escopo":"l2vc"') &&
+            String(c[1]?.body).includes('"l2vc_id":7'),
+        ),
+      ).toBe(true);
     });
     expect(await screen.findByText("detail-page")).toBeInTheDocument();
   });

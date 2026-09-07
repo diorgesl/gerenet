@@ -25,6 +25,11 @@ import Reconcile from "@/pages/Reconcile";
 import Jobs from "@/pages/Jobs";
 import JobDetail from "@/pages/JobDetail";
 import Wiki from "@/pages/Wiki";
+import MplsDomains from "@/pages/MplsDomains";
+import MplsL2vc from "@/pages/MplsL2vc";
+import MplsL2vcDetail from "@/pages/MplsL2vcDetail";
+import MplsVsi from "@/pages/MplsVsi";
+import MplsVsiDetail from "@/pages/MplsVsiDetail";
 
 export default function App() {
   return (
@@ -49,6 +54,12 @@ export default function App() {
         <Route path="/bgp-sessions/:id" element={<BgpSessionDetail />} />
         <Route path="/change-requests" element={<ChangeRequests />} />
         <Route path="/change-requests/:id" element={<ChangeRequestDetail />} />
+        <Route path="/mpls/domains" element={<MplsDomains />} />
+        <Route path="/mpls/domains/:id" element={<MplsDomains />} />
+        <Route path="/mpls/l2vc" element={<MplsL2vc />} />
+        <Route path="/mpls/l2vc/:id" element={<MplsL2vcDetail />} />
+        <Route path="/mpls/vsi" element={<MplsVsi />} />
+        <Route path="/mpls/vsi/:id" element={<MplsVsiDetail />} />
         <Route path="/policy-profiles" element={<PolicyProfiles />} />
         <Route path="/communities" element={<Communities />} />
         <Route path="/prefix-authorizations" element={<PrefixAuthorizations />} />

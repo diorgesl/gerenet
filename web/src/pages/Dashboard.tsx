@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { ApiError } from "@/api/client";
-import { useChangeRequests, useDashboard } from "@/api/hooks";
+import { useChangeRequests, useDashboard, useL2vc, useVsi } from "@/api/hooks";
 import { StatusBadge } from "@/components/StatusBadge";
 import { TimeAgo } from "@/components/TimeAgo";
 import { PageHeader } from "@/components/PageHeader";
@@ -24,6 +24,8 @@ function formatarIdade(seconds: number | null | undefined): string {
 export default function Dashboard() {
   const { data, isLoading, error } = useDashboard();
   const { data: pendentes } = useChangeRequests({ status: "aguardando_aprovacao" });
+  const { data: l2vc } = useL2vc();
+  const { data: vsi } = useVsi();
 
   const idades = (data?.per_device ?? [])
     .map((d) => d.snapshot_age_seconds)
@@ -79,6 +81,11 @@ export default function Dashboard() {
               <span className={`led ${(pendentes?.length ?? 0) > 0 ? "amber" : "gray"}`} aria-hidden="true" />
               <span className="val">{pendentes?.length ?? 0}</span>
               <span className="label">mudanças<br />aguardando aprovação</span>
+            </div>
+            <div className="metric">
+              <span className={`led ${((l2vc?.length ?? 0) + (vsi?.length ?? 0)) > 0 ? "green" : "gray"}`} aria-hidden="true" />
+              <span className="val">{(l2vc?.length ?? 0) + (vsi?.length ?? 0)}</span>
+              <span className="label">serviços<br />MPLS</span>
             </div>
           </section>
           <p className="estados-equipamentos">

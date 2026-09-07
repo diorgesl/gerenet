@@ -52,6 +52,12 @@ describe("Dashboard", () => {
             { status: 200, headers: { "Content-Type": "application/json" } },
           );
         }
+        if (url === "/api/v1/mpls/l2vc") {
+          return new Response(JSON.stringify([]), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        if (url === "/api/v1/mpls/vsi") {
+          return new Response(JSON.stringify([]), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
         return new Response(null, { status: 404 });
       }),
     );

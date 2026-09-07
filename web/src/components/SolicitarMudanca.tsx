@@ -14,7 +14,7 @@ const FORM_VAZIO = {
   ticket: "",
 };
 
-export default function SolicitarMudanca({ circuit_id }: { circuit_id: number }) {
+export default function SolicitarMudanca({ circuit_id, l2vc_id }: { circuit_id?: number; l2vc_id?: number }) {
   const { podeEscrever } = useAuth();
   const navigate = useNavigate();
   const criar = useChangeRequestCriar();
@@ -27,7 +27,9 @@ export default function SolicitarMudanca({ circuit_id }: { circuit_id: number })
     setErro(null);
     try {
       const cr = await criar.mutateAsync({
-        circuit_id,
+        escopo: l2vc_id ? "l2vc" : "circuito",
+        circuit_id: circuit_id ?? null,
+        l2vc_id: l2vc_id ?? null,
         acao: form.acao,
         criticidade: form.criticidade,
         motivo: form.motivo,
@@ -54,7 +56,7 @@ export default function SolicitarMudanca({ circuit_id }: { circuit_id: number })
           setAberto(true);
         }}
       >
-        Solicitar mudança
+        {l2vc_id ? "Solicitar mudança no L2VC" : "Solicitar mudança"}
       </button>
       {aberto && (
         <Modal aberto titulo="Solicitar mudança" onFechar={() => setAberto(false)}>
