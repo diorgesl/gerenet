@@ -30,6 +30,7 @@ from gerenet.db import SessionLocal
 from gerenet.domain.models import AuditEvent, ChangeRequest, ChangeStep, DeviceSnapshot, JobRun
 from gerenet.domain.services import devices as device_svc
 from gerenet.domain.services.circuits import get_circuit
+from gerenet.domain.services.mpls import sincronizar_mpls
 from gerenet.secrets.vault_store import VaultSecretStore
 
 
@@ -185,6 +186,9 @@ def run_collection(
                 )
                 session.commit()
 
+            # Após o commit do snapshot: estado operacional MPLS (coleta → SoT §8).
+            sincronizar_mpls(session, snapshot)
+
             return {"status": snapshot.status, "snapshot_id": snapshot.id}
         except Exception as exc:  # noqa: BLE001 — contrato dict preservado em qualquer falha
             if job is not None:
@@ -285,6 +289,8 @@ def _grava_snapshot(
         uptime=versao.get("uptime") if isinstance(versao, dict) else None,
     )
     session.commit()
+    # Após o commit do snapshot: estado operacional MPLS (coleta → SoT §8).
+    sincronizar_mpls(session, snap)
     return snap
 
 

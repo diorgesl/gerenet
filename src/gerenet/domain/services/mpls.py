@@ -1,5 +1,6 @@
 """Domínios MPLS (§9.1) — serviço transacional no padrão dos demais."""
 import ipaddress
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -573,3 +574,71 @@ def out_vsi(svc: models.VsiService) -> VsiOut:
         members=[_out_vsi_membro(m) for m in svc.members],
         domain_name=svc.domain.name if svc.domain is not None else None,
     )
+
+
+# ---- Sincronização de estado operacional (coleta → SoT, spec §8) ----------
+
+def _status_agregado(session: Session, endpoints: list) -> str:
+    """Aggregate do serviço a partir do estado das pontas (up/partial/down)."""
+    estados = {ep.operational_status for ep in endpoints}
+    if not estados or estados == {"unknown"}:
+        return "unknown"
+    if estados == {"up"}:
+        return "up"
+    if "up" not in estados:
+        return "down"
+    return "partial"
+
+
+def sincronizar_mpls(session: Session, snapshot: models.DeviceSnapshot) -> None:
+    """Atualiza estado operacional dos serviços MPLS do device (coleta → SoT §8).
+
+    Match L2VC: (vc_id, device, interface guard) sobre os endpoints do device;
+    Match VSI: (vsi_id, membro do VSI no device). Linha ausente na coleta
+    mantém o status anterior. Dispositivo sem MPLS: no-op.
+    """
+    recursos = snapshot.resources or {}
+    mexeu = False
+    # pre-scan R3: finished_at é nullable; fallback para não gravar None
+    agora = snapshot.finished_at or datetime.now(UTC)
+    for linha in recursos.get("l2vc", []) or []:
+        vc_id = linha.get("vc_id")
+        if vc_id is None:
+            continue
+        eps = session.scalars(
+            select(models.ServiceEndpoint)
+            .options(selectinload(models.ServiceEndpoint.l2vc))
+            .where(models.ServiceEndpoint.device_id == snapshot.device_id,
+                   models.ServiceEndpoint.kind == "l2vc",
+                   models.ServiceEndpoint.l2vc_id.isnot(None))
+        ).all()
+        ep = next((e for e in eps if e.l2vc.vc_id == int(vc_id) and
+                   (linha.get("interface") in (None, e.interface))), None)  # interface guard
+        if ep is None:
+            continue
+        estado = linha.get("estado", "unknown")
+        ep.operational_status = estado
+        svc = ep.l2vc
+        svc.last_collected_at = agora or svc.last_collected_at
+        svc.operational_status = _status_agregado(session, svc.endpoints)
+        mexeu = True
+    for linha in recursos.get("vsi", []) or []:
+        vsi_id = linha.get("vsi_id")
+        if vsi_id is None:
+            continue
+        membro = session.scalars(
+            select(models.VsiMember)
+            .options(selectinload(models.VsiMember.vsi))
+            .join(models.VsiService)
+            .where(models.VsiMember.device_id == snapshot.device_id,
+                   models.VsiService.vsi_id == int(vsi_id)).limit(1)
+        ).first()
+        if membro is None:
+            continue
+        vsi = membro.vsi
+        vsi.operational_status = linha.get("estado", "unknown")
+        vsi.last_collected_at = agora or vsi.last_collected_at
+        mexeu = True
+    if mexeu:
+        session.flush()
+        session.commit()
