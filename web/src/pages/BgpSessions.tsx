@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "@/auth/auth-context";
@@ -7,8 +7,10 @@ import {
   useBgpSessionAtualizar,
   useBgpSessionCriar,
   useBgpSessions,
+  useCircuitDetail,
   useCircuits,
   useDevices,
+  useOrganizations,
   usePolicyProfiles,
 } from "@/api/hooks";
 import { help } from "@/help";
@@ -18,7 +20,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { PageHeader } from "@/components/PageHeader";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Modal } from "@/components/Modal";
-import type { BgpSessionOut } from "@/api/types";
+import type { BgpSessionOut, CircuitDetailOut, CircuitOut } from "@/api/types";
 
 const FORM_VAZIO = {
   circuit_id: "",
@@ -53,6 +55,7 @@ export default function BgpSessions() {
   const { data, isLoading, error } = useBgpSessions({ include_disabled: incluirInativos });
   const { data: circuits } = useCircuits();
   const { data: devices } = useDevices();
+  const { data: organizations } = useOrganizations({ includeDisabled: true });
   const { data: profiles } = usePolicyProfiles();
   const criar = useBgpSessionCriar();
   const atualizar = useBgpSessionAtualizar();
@@ -63,8 +66,65 @@ export default function BgpSessions() {
   const [editando, setEditando] = useState<BgpSessionOut | null>(null);
   const [formEdit, setFormEdit] = useState<FormEdit>(FORM_VAZIO);
   const [erroEdit, setErroEdit] = useState<string | null>(null);
+  // Autopreenchimento a partir do circuito escolhido:
+  // preencherDoCircuito é síncrono (device/ASNs das listas); as pontas vêm do
+  // detalhe (useCircuitDetail) e só valem para o formulário onde a troca ocorreu.
+  const origemRef = useRef<"criar" | "editar" | null>(null);
+  const [circuitoSelecionado, setCircuitoSelecionado] = useState<number | null>(null);
+  const [troca, setTroca] = useState(0);
+  const [detalhe, setDetalhe] = useState<CircuitDetailOut | null>(null);
+  const { data: detalheApi } = useCircuitDetail(circuitoSelecionado ?? 0);
 
   const num = (v: string) => (v === "" ? null : Number(v));
+
+  function preencherDoCircuito(f: FormEdit, circ: CircuitOut | undefined): FormEdit {
+    if (!circ) return { ...f, device_id: "", asn_local: "", asn_remote: "" };
+    const devSel = (devices ?? []).find((d) => d.id === circ.edge_device_id);
+    const org = (organizations ?? []).find((o) => o.id === circ.organization_id);
+    return {
+      ...f,
+      device_id: String(circ.edge_device_id),
+      asn_local: devSel?.asn != null ? String(devSel.asn) : "",
+      asn_remote: org?.asn != null ? String(org.asn) : "",
+    };
+  }
+
+  function comPontasDe(f: FormEdit, d: CircuitDetailOut | null): FormEdit {
+    // Só preenche pontas quando o circuito tem reserva da família; sem reserva (ou
+    // com detalhe de outro circuito) não toca no formulário.
+    if (!d || Number(f.circuit_id) !== d.id) return f;
+    const [local, remoto] = f.afi === "ipv4" ? [d.ipv4_local, d.ipv4_remote] : [d.ipv6_local, d.ipv6_remote];
+    if (local === null && remoto === null) return f;
+    const semMascara = (v: string | null) => (v === null ? "" : v.split("/")[0]);
+    return { ...f, local_address: semMascara(local), remote_address: semMascara(remoto) };
+  }
+
+  function aoMudarCircuito(valor: string, origem: "criar" | "editar") {
+    const id = valor === "" ? null : Number(valor);
+    origemRef.current = id === null ? null : origem;
+    setCircuitoSelecionado(id);
+    setTroca((n) => n + 1);
+    setDetalhe(null); // próximo detalhe é do circuito recém-escolhido
+    const circ = (circuits ?? []).find((c) => c.id === id);
+    if (origem === "editar")
+      setFormEdit((f) => preencherDoCircuito({ ...f, circuit_id: valor, local_address: "", remote_address: "" }, circ));
+    else setForm((f) => preencherDoCircuito({ ...f, circuit_id: valor, local_address: "", remote_address: "" }, circ));
+  }
+
+  useEffect(() => {
+    if (!detalheApi || circuitoSelecionado !== detalheApi.id) return;
+    setDetalhe(detalheApi);
+    if (origemRef.current === "editar") setFormEdit((f) => comPontasDe(f, detalheApi));
+    else if (origemRef.current === "criar") setForm((f) => comPontasDe(f, detalheApi));
+  }, [detalheApi, circuitoSelecionado, troca]);
+
+  function aoMudarAfiCriar(afi: "ipv4" | "ipv6") {
+    setForm((f) => comPontasDe({ ...f, afi }, detalhe));
+  }
+
+  function aoMudarAfiEditar(afi: "ipv4" | "ipv6") {
+    setFormEdit((f) => comPontasDe({ ...f, afi }, detalhe));
+  }
 
   function abrirEdicao(s: BgpSessionOut) {
     setFormEdit({
@@ -179,7 +239,7 @@ export default function BgpSessions() {
       {podeEscrever && (
         <form onSubmit={onSubmit} className="grid-form">
           <FormField label="Circuito *" help={help("bgp.circuit_id")}>
-            <select value={form.circuit_id} onChange={(e) => setForm({ ...form, circuit_id: e.target.value })} required>
+            <select value={form.circuit_id} onChange={(e) => aoMudarCircuito(e.target.value, "criar")} required>
               <option value="">—</option>
               {(circuits ?? []).map((c) => (
                 <option key={c.id} value={c.id}>{c.code}</option>
@@ -195,7 +255,7 @@ export default function BgpSessions() {
             </select>
           </FormField>
           <FormField label="Família" help={help("bgp.afi")}>
-            <select value={form.afi} onChange={(e) => setForm({ ...form, afi: e.target.value as "ipv4" | "ipv6" })}>
+            <select value={form.afi} onChange={(e) => aoMudarAfiCriar(e.target.value as "ipv4" | "ipv6")}>
               <option value="ipv4">ipv4</option>
               <option value="ipv6">ipv6</option>
             </select>
@@ -339,7 +399,7 @@ export default function BgpSessions() {
         <Modal aberto titulo={`Editar sessão BGP #${editando.id}`} onFechar={() => setEditando(null)}>
           <form onSubmit={salvarEdicao} className="grid-form">
             <FormField label="Circuito *" help={help("bgp.circuit_id")}>
-              <select value={formEdit.circuit_id} onChange={(e) => setFormEdit({ ...formEdit, circuit_id: e.target.value })} required>
+              <select value={formEdit.circuit_id} onChange={(e) => aoMudarCircuito(e.target.value, "editar")} required>
                 <option value="">—</option>
                 {(circuits ?? []).map((c) => (
                   <option key={c.id} value={c.id}>{c.code}</option>
@@ -355,7 +415,7 @@ export default function BgpSessions() {
               </select>
             </FormField>
             <FormField label="Família" help={help("bgp.afi")}>
-              <select value={formEdit.afi} onChange={(e) => setFormEdit({ ...formEdit, afi: e.target.value as "ipv4" | "ipv6" })}>
+              <select value={formEdit.afi} onChange={(e) => aoMudarAfiEditar(e.target.value as "ipv4" | "ipv6")}>
                 <option value="ipv4">ipv4</option>
                 <option value="ipv6">ipv6</option>
               </select>

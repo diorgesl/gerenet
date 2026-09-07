@@ -277,7 +277,8 @@ h2 {
 }
 .dialog h2 { margin-top: 0; border-bottom: none; padding-bottom: 0; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1.1rem; }
-.dialog-scroll { max-height: 85vh; overflow-y: auto; }
+/* A rolagem fica no backdrop para não recortar dicas do formulário. */
+.dialog-scroll { max-height: none; overflow: visible; }
 
 /* Estrutura do app: topbar + sidebar de console */
 .app-shell {
@@ -527,4 +528,387 @@ h2 {
 .field-help:hover .field-help-dica,
 .field-help:focus-visible .field-help-dica {
   display: block;
+}
+
+/* ========================================================================
+   Refinamento visual e responsivo — substitua o CSS anterior por este arquivo.
+   Mantém todas as classes originais. Sem fontes ou dependências externas.
+   No HTML, use: <meta name="viewport" content="width=device-width, initial-scale=1">
+   Menu móvel: navegação horizontal rolável, sem exigir JavaScript.
+   ======================================================================== */
+:root {
+  --ink: #0b121b;
+  --ink-2: #121d29;
+  --ink-3: #1c2c3c;
+  --ink-4: #080f17;
+  --line: #2a3b4d;
+  --line-strong: #526b83;
+  --paper: #edf2f7;
+  --paper-dim: #b0bfce;
+  --paper-faint: #93a7bb;
+  --led-amber: #f3b34c;
+  --led-amber-deep: #eaa335;
+  --led-green: #5cdda4;
+  --led-red: #ff8585;
+  --led-cyan: #79ccdf;
+  --sub: var(--paper-dim);
+  --radius: 12px;
+  --sidebar-width: 238px;
+  --header-height: 64px;
+  line-height: 1.5;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --ink: #f0f3f7; --ink-2: #ffffff; --ink-3: #e7edf4;
+    --ink-4: #e9eef4; --line: #d1dbe6; --line-strong: #8799ad;
+    --paper: #18283b; --paper-dim: #4d6178; --paper-faint: #596e85;
+    --led-amber: #f3b34c; --led-amber-deep: #eaa335;
+    --led-green: #177449; --led-red: #bd3434; --led-cyan: #156c84;
+    --text-on-amber: #17202b;
+  }
+}
+:root[data-theme="light"] {
+  --ink: #f0f3f7; --ink-2: #fff; --ink-3: #e7edf4; --ink-4: #e9eef4;
+  --line: #d1dbe6; --line-strong: #8799ad; --paper: #18283b;
+  --paper-dim: #4d6178; --paper-faint: #596e85;
+  --led-green: #177449; --led-red: #bd3434; --led-cyan: #156c84;
+  --text-on-amber: #17202b; color-scheme: light;
+}
+html { min-width: 320px; scroll-padding-top: 80px; }
+body { min-height: 100vh; }
+button, input, select, textarea, a {
+  -webkit-tap-highlight-color: transparent;
+}
+button, input, select, textarea {
+  transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+}
+button {
+  min-height: 40px; padding: 0.55rem 1rem; border-radius: 8px;
+  font-size: 0.875rem; font-weight: 500; line-height: 1.35;
+}
+button.primary { padding-inline: 1.4rem; }
+button:disabled { cursor: not-allowed; }
+button:disabled:hover { border-color: var(--line); }
+input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]), select, textarea {
+  min-height: 44px; min-width: 0; max-width: 100%;
+  border-radius: 8px; padding: 0.65rem 0.8rem; line-height: 1.4;
+}
+input::placeholder, textarea::placeholder { color: var(--paper-faint); opacity: 1; }
+input:hover, select:hover, textarea:hover { border-color: var(--line-strong); }
+input:focus, select:focus, textarea:focus {
+  border-color: var(--led-amber);
+  outline: 2px solid color-mix(in srgb, var(--led-amber) 32%, transparent);
+  outline-offset: 2px;
+}
+input:disabled, select:disabled, textarea:disabled { opacity: 0.55; cursor: not-allowed; }
+input[aria-invalid="true"], select[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--led-red); }
+textarea { resize: vertical; min-height: 104px; }
+input[type="checkbox"], input[type="radio"], .field input[type="checkbox"], .field input[type="radio"] {
+  width: 18px; height: 18px; min-height: 18px; flex: 0 0 auto;
+  margin: 0; padding: 0; accent-color: var(--led-amber);
+}
+.field { min-width: 0; gap: 0.5rem; margin-bottom: 0; font-size: 0.85rem; }
+.field > span { line-height: 1.5; }
+.field:has(> input[type="checkbox"]), .field:has(> input[type="radio"]) { justify-content: center; }
+.field > input[type="checkbox"], .field > input[type="radio"] {
+  align-self: flex-start;
+  margin-block: 0.75rem;
+}
+.grid-form {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 245px), 1fr));
+  gap: 1.25rem; align-items: start;
+  background: var(--ink-2); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: clamp(16px, 2vw, 28px); margin-bottom: 1.75rem;
+}
+.grid-form > * { min-width: 0; }
+.grid-form > button { align-self: end; justify-self: start; min-height: 44px; margin: 0; }
+.form-inline { gap: 0.85rem; }
+.form-inline .field { flex: 1 1 180px; }
+.inline-check { min-height: 44px; gap: 0.65rem; margin: 0 0 1rem; }
+/* O controle acompanha o centro do texto na linha clicável de 44 px. */
+.inline-check > input[type="checkbox"], .inline-check > input[type="radio"] {
+  align-self: center;
+  margin: 0;
+}
+
+/* Filtro do cabeçalho: atende tanto ao label logo após .page-header
+   quanto ao label dentro dele, sem alterar o HTML ou os eventos do checkbox. */
+:is(.page-header + .inline-check, .page-header .inline-check) {
+  min-height: 44px;
+  max-width: 100%;
+  padding: 0.5rem 0.8rem;
+  gap: 0.65rem;
+  margin: 0 0 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--ink-2);
+  color: var(--paper-dim);
+  font-size: 0.85rem;
+  font-weight: 500;
+  line-height: 1.4;
+  transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease;
+}
+.page-header .inline-check { margin: 0; }
+:is(.page-header + .inline-check, .page-header .inline-check):not(:has(input:disabled)):hover {
+  background: var(--ink-3);
+  border-color: var(--line-strong);
+  color: var(--paper);
+}
+:is(.page-header + .inline-check, .page-header .inline-check):has(input:checked) {
+  background: color-mix(in srgb, var(--led-amber) 8%, var(--ink-2));
+  border-color: color-mix(in srgb, var(--led-amber) 45%, var(--line));
+  color: var(--paper);
+}
+:is(.page-header + .inline-check, .page-header .inline-check) > input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  flex: 0 0 38px;
+  width: 38px;
+  height: 22px;
+  min-height: 22px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--line-strong);
+  cursor: inherit;
+}
+:is(.page-header + .inline-check, .page-header .inline-check) > input[type="checkbox"]::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--paper);
+  transform: translateX(0);
+  transition: transform 150ms ease, background-color 150ms ease;
+}
+:is(.page-header + .inline-check, .page-header .inline-check) > input[type="checkbox"]:checked {
+  background: var(--led-amber);
+  border-color: var(--led-amber);
+}
+:is(.page-header + .inline-check, .page-header .inline-check) > input[type="checkbox"]:checked::before {
+  transform: translateX(16px);
+  background: var(--text-on-amber);
+}
+:is(.page-header + .inline-check, .page-header .inline-check) > input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--led-amber);
+  outline-offset: 3px;
+}
+:is(.page-header + .inline-check, .page-header .inline-check):has(input:disabled) {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+:is(.page-header + .inline-check, .page-header .inline-check) > input[type="checkbox"]:disabled { opacity: 1; }
+/* Em alto contraste, o controle nativo usa as cores escolhidas pelo usuário. */
+@media (forced-colors: active) {
+  :is(.page-header + .inline-check, .page-header .inline-check) > input[type="checkbox"] {
+    appearance: auto;
+    -webkit-appearance: auto;
+    flex-basis: 18px;
+    width: 18px;
+    height: 18px;
+    min-height: 18px;
+    border: initial;
+    border-radius: initial;
+    background: initial;
+  }
+  :is(.page-header + .inline-check, .page-header .inline-check) > input[type="checkbox"]::before { display: none; }
+}
+.app-shell {
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  grid-template-rows: var(--header-height) 1fr; min-height: 100dvh;
+}
+.app-header {
+  position: sticky; top: 0; z-index: 30; min-width: 0;
+  padding-inline: 1.5rem; gap: 1.25rem;
+}
+.app-marca { font-size: 1.15rem; letter-spacing: -0.04em; flex-shrink: 0; }
+.app-marca .led { width: 9px; height: 9px; }
+.app-breadcrumb { color: var(--paper-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-usuario { min-width: 0; overflow-wrap: anywhere; }
+.app-header button { min-height: 36px; flex-shrink: 0; }
+.app-corpo { grid-template-columns: var(--sidebar-width) minmax(0, 1fr); min-width: 0; align-items: start; }
+.app-nav {
+  position: sticky; top: var(--header-height); height: calc(100dvh - var(--header-height));
+  padding: 1.25rem 0.85rem; background: var(--ink-2); gap: 4px;
+  scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent;
+}
+.nav-label { font-size: 0.7rem; font-weight: 650; letter-spacing: 0.08em; text-transform: uppercase; margin: 1.2rem 0.75rem 0.35rem; }
+.app-nav a { padding: 0.6rem 0.8rem; border-radius: 7px; font-size: 0.875rem; }
+.app-nav a.active {
+  background: color-mix(in srgb, var(--led-amber) 10%, var(--ink-2));
+  color: var(--paper); font-weight: 600;
+}
+.app-conteudo { width: 100%; padding: clamp(20px, 2.4vw, 40px); overflow-x: auto; }
+.page-header { align-items: center; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1.75rem; }
+.page-header h1 { font-size: clamp(1.5rem, 2vw, 1.9rem); letter-spacing: -0.035em; font-weight: 650; }
+.page-header .sub { margin-top: 0.25rem; }
+h2 { font-size: 1.05rem; padding-bottom: 0.75rem; }
+table { background: var(--ink-2); font-size: 0.875rem; }
+th, td { padding: 0.9rem 1rem; vertical-align: middle; }
+th { background: var(--ink-3); color: var(--paper-dim); font-size: 0.76rem; font-weight: 600; white-space: nowrap; }
+td { line-height: 1.5; }
+table a { font-size: 0.95em; }
+td button { min-height: 36px; margin: 2px 4px 2px 0; padding: 0.45rem 0.75rem; }
+/* Wrapper opcional para rolagem isolada, sem alterar a semântica da tabela. */
+.table-wrap { width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); }
+.badge { padding: 0.3rem 0.5rem; border-radius: 5px; background: var(--ink-3); font-size: 0.75rem; }
+.badge-ok { background: color-mix(in srgb, var(--led-green) 9%, var(--ink-2)); }
+.badge-fail, .badge-danger { background: color-mix(in srgb, var(--led-red) 9%, var(--ink-2)); }
+.badge-warn { background: color-mix(in srgb, var(--led-amber) 9%, var(--ink-2)); }
+.health { border-radius: var(--radius); gap: 1px; overflow: hidden; background: var(--line); }
+.metric { flex: 1 1 165px; padding: 1.2rem; border: 0; background: var(--ink-2); gap: 0.8rem; }
+.metric .val { font-size: 1.4rem; }
+.metric .label { line-height: 1.4; }
+.mono-block, .wiki-conteudo { min-width: 0; }
+.mono-block pre { padding: 1.2rem 4rem 1.2rem 1.2rem; overflow-wrap: anywhere; border-radius: 10px; }
+.dialog-backdrop {
+  z-index: 100;
+  padding: 16px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.dialog {
+  width: 100%;
+  padding: 1.5rem;
+  border-radius: 16px;
+  max-height: none;
+  overflow: visible;
+  flex: 0 0 auto;
+  /* Centraliza se couber; em telas baixas começa no topo e rola inteiro. */
+  margin-block: auto;
+}
+.dialog-actions { flex-wrap: wrap; gap: 0.65rem; }
+
+/* Modais: a grade depende da largura disponível no diálogo.
+   A maior especificidade evita herdar as quatro colunas da página.
+   Diálogos de confirmação mantêm a largura compacta original. */
+.dialog:has(.grid-form) { max-width: 760px; }
+.dialog .grid-form {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+  gap: 1.25rem;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.dialog:has(.grid-form) > h2 {
+  margin: 0 0 1.5rem;
+  padding: 0 0 1rem;
+  border-bottom: 1px solid var(--line);
+  font-size: 1.3rem;
+  line-height: 1.3;
+  letter-spacing: -0.02em;
+}
+.dialog .field { position: relative; }
+.dialog .field:has(.field-help:hover),
+.dialog .field:has(.field-help:focus-within) { z-index: 2; }
+.dialog .field > span {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+.dialog .field-help {
+  position: static;
+  flex: 0 0 auto;
+  margin-left: 0;
+}
+.dialog .field-help-dica {
+  z-index: 1000;
+  left: 0;
+  bottom: calc(100% + 0.5rem);
+  width: max-content;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+/* Dicas longas da primeira linha abrem abaixo do campo, longe do topo.
+   A largura continua limitada ao campo para não vazar lateralmente. */
+.dialog .grid-form > .field:nth-child(-n + 2) .field-help-dica {
+  top: calc(100% + 0.5rem);
+  bottom: auto;
+}
+.dialog .dialog-actions {
+  grid-column: 1 / -1;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--line);
+}
+.dialog .grid-form > .dialog-actions { margin-top: 0.25rem; }
+.dialog .dialog-actions > button {
+  flex: 0 1 auto;
+  min-width: 110px;
+  min-height: 44px;
+  margin: 0;
+}
+.vazio { padding: 2.5rem 1.5rem; text-align: center; background: var(--ink-2); }
+.erro-banner { margin-bottom: 1rem; }
+.login { width: calc(100% - 32px); max-width: 420px; padding: 2rem; border-radius: 16px; }
+.login form { gap: 1rem; }
+.wiki-nav { padding: 1rem; background: var(--ink-2); border: 1px solid var(--line); border-radius: var(--radius); }
+.wiki-nav a { padding: 0.45rem 0; }
+.wiki-conteudo img { max-width: 100%; height: auto; }
+.field-help { background: var(--ink-3); color: var(--paper-dim); border: 1px solid var(--line-strong); }
+.field-help:hover, .field-help:focus-visible { color: var(--led-amber); border-color: var(--led-amber); }
+.field-help-dica { padding: 0.75rem; border-radius: 8px; line-height: 1.5; }
+.field-help:focus-within .field-help-dica { display: block; }
+@media (min-width: 1600px) {
+  .grid-form { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (max-width: 1100px) and (min-width: 861px) {
+  :root { --sidebar-width: 208px; }
+  .app-conteudo { padding: 24px; }
+}
+@media (max-width: 860px) {
+  .app-shell { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
+  .app-header { min-height: 60px; padding: 0.75rem 1rem; gap: 0.75rem; flex-wrap: wrap; }
+  .app-corpo { grid-template-columns: minmax(0, 1fr); }
+  .app-nav {
+    position: static; height: auto; min-width: 0; max-width: 100%;
+    flex-direction: row; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
+    padding: 0.75rem 1rem; gap: 0.4rem; border-right: 0;
+  }
+  .nav-label { flex: 0 0 auto; margin: 0 0.35rem 0 0.8rem; font-size: 0.65rem; }
+  .app-nav a { flex: 0 0 auto; white-space: nowrap; min-height: 44px; display: flex; align-items: center; }
+  .app-conteudo { grid-column: 1; overflow-x: auto; padding: 24px 16px; }
+  .wiki { flex-direction: column; gap: 1rem; }
+  .wiki-nav { flex: auto; width: 100%; }
+  .wiki-conteudo { width: 100%; overflow-x: auto; }
+  /* Sem wrapper, o conteúdo mantém a rolagem horizontal da tabela. */
+  table { min-width: 680px; }
+}
+@media (max-width: 560px) {
+  .app-breadcrumb { display: none; }
+  .app-usuario { font-size: 0.75rem; }
+  .page-header { align-items: flex-start; }
+  .grid-form { grid-template-columns: minmax(0, 1fr); padding: 16px; gap: 1rem; }
+  .grid-form > button { width: 100%; justify-self: stretch; }
+  .form-inline { align-items: stretch; }
+  .form-inline .field { flex-basis: 100%; }
+  input:not([type="checkbox"]):not([type="radio"]), select, textarea { font-size: 16px; }
+  button { min-height: 44px; }
+  .app-header button, td button { min-height: 44px; }
+  .field-help-dica { left: -4rem; max-width: min(240px, calc(100vw - 48px)); }
+  .dialog { padding: 1.25rem; }
+  .dialog-actions > button { flex: 1 1 auto; }
+  .dialog .grid-form { grid-template-columns: minmax(0, 1fr); }
+  .dialog .dialog-actions > button { flex: 1 1 110px; }
+  .login { margin-block: 8vh; padding: 1.5rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
 }
