@@ -624,3 +624,60 @@ class MplsDomainOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     members: list[MplsMemberOut] = Field(default_factory=list)
+
+
+class L2vcEndpointIn(BaseModel):
+    device_id: int
+    interface: str = Field(min_length=1, max_length=64)
+    encapsulation: Literal["dot1q", "qinq"] = "dot1q"  # ethernet_raw: fora do ciclo (§10)
+    vid: int | None = Field(default=None, ge=2, le=4094)  # None ⇒ auto-reserva no device
+    inner_vlan: int | None = Field(default=None, ge=1, le=4094)  # QinQ: obrigatório
+    mtu: int | None = Field(default=None, ge=576, le=9216)  # None ⇒ herda service.mtu
+
+
+class L2vcCreate(BaseModel):
+    domain_id: int
+    name: str = Field(min_length=1, max_length=64)
+    vc_id: int | None = Field(default=None, ge=1, le=4294967295)  # None ⇒ proximo_vc_id
+    organization_id: int | None = None
+    mtu: int = Field(default=1500, ge=576, le=9216)
+    control_word: bool = False
+    flow_label: bool = False
+    redundancy: str | None = None
+    description: str | None = Field(default=None, max_length=255)
+    endpoints: list[L2vcEndpointIn] = Field(min_length=2, max_length=2)
+
+
+class ServiceEndpointOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    kind: str
+    device_id: int
+    device_name: str | None = None
+    interface: str
+    encapsulation: str
+    vlan_id: int | None = None
+    vid: int | None = None
+    inner_vlan: int | None = None
+    mtu: int | None = None
+    operational_status: str
+
+
+class L2vcOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    domain_id: int
+    vc_id: int
+    name: str
+    organization_id: int | None
+    mtu: int
+    control_word: bool
+    flow_label: bool
+    redundancy: str | None
+    description: str | None
+    admin_status: bool
+    operational_status: str
+    last_collected_at: datetime | None
+    created_at: datetime
+    endpoints: list[ServiceEndpointOut] = Field(default_factory=list)
+    domain_name: str | None = None

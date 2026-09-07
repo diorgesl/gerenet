@@ -8,11 +8,14 @@ from sqlalchemy.orm import Session, selectinload
 from gerenet.domain import models
 from gerenet.domain.audit import registrar
 from gerenet.domain.schemas import (
+    L2vcCreate,
+    L2vcOut,
     MplsDomainCreate,
     MplsDomainOut,
     MplsDomainUpdate,
     MplsMemberIn,
     MplsMemberOut,
+    ServiceEndpointOut,
 )
 from gerenet.domain.services.devices import get_device
 from gerenet.domain.services.errors import ConflictError, NotFoundError, ValidationError
@@ -265,3 +268,161 @@ def reservar_vlan_ac(session: Session, *, device_id: int, vid: int | None = None
               depois={"device_id": device.id, "vid": vid, "kind": "mpls_ac"})
     session.commit()
     return linha
+
+
+# ---- Serviços L2VC (§9.2) ---------------------------------------------------
+
+def _l2vc(session: Session, l2vc_id: int) -> models.L2vcService:
+    svc = session.scalars(
+        select(models.L2vcService)
+        .options(
+            selectinload(models.L2vcService.endpoints).selectinload(models.ServiceEndpoint.vlan),
+            selectinload(models.L2vcService.endpoints).selectinload(models.ServiceEndpoint.device),
+            selectinload(models.L2vcService.domain),
+        )
+        .where(models.L2vcService.id == l2vc_id)
+    ).first()
+    if svc is None:
+        raise NotFoundError(f"Serviço L2VC {l2vc_id} não encontrado.")
+    return svc
+
+
+def _membro_loopback(session: Session, domain_id: int, device_id: int) -> str | None:
+    linha = session.scalars(
+        select(models.MplsDomainMember.loopback_address).where(
+            models.MplsDomainMember.domain_id == domain_id,
+            models.MplsDomainMember.device_id == device_id,
+        ).limit(1)
+    ).first()
+    return linha
+
+
+def create_l2vc(session: Session, data: L2vcCreate, *, actor: str = "cli") -> models.L2vcService:
+    dom = _dom(session, data.domain_id)  # NotFound/desativado? _dom não checa status — checar abaixo
+    if not dom.admin_status:
+        raise ConflictError(f"Domínio MPLS {dom.name} desativado não recebe serviços.")
+
+    a, b = data.endpoints
+    if a.device_id == b.device_id:
+        raise ValidationError("As duas pontas do L2VC devem ser equipamentos distintos.")
+    if a.encapsulation != b.encapsulation:
+        raise ValidationError("Encapsulamento das pontas deve ser simétrico (ambas dot1q ou ambas qinq).")
+    mtu_a = a.mtu or data.mtu
+    mtu_b = b.mtu or data.mtu
+    if mtu_a != mtu_b:
+        raise ValidationError(f"MTU das pontas diverge ({mtu_a} × {mtu_b}); ajuste o MTU do serviço ou das pontas.")
+    for ep in (a, b):
+        if ep.encapsulation == "qinq" and ep.inner_vlan is None:
+            raise ValidationError(f"Ponta {ep.interface}: encapsulamento qinq exige inner-vlan.")
+        if _membro_loopback(session, dom.id, ep.device_id) is None:
+            raise ValidationError(f"Equipamento {ep.device_id} sem loopback LDP no domínio (membro inexistente).")
+    if data.redundancy not in (None, "none", "single", "dual"):
+        raise ValidationError(f"Redundância inválida: {data.redundancy} (use none/single/dual).")
+
+    vc_id = data.vc_id or proximo_vc_id(session, dom.id)
+    nome = data.name.strip()
+    qtd = session.scalars(
+        select(models.L2vcService.id).where(
+            models.L2vcService.domain_id == dom.id,
+            models.L2vcService.name == nome,
+        ).limit(1)
+    ).first()
+    if qtd is not None:
+        raise ConflictError(f"Serviço L2VC '{nome}' já existe no domínio {dom.name}.")
+    duplicado = session.scalars(
+        select(models.L2vcService.id).where(
+            models.L2vcService.domain_id == dom.id, models.L2vcService.vc_id == vc_id,
+        ).limit(1)
+    ).first()
+    if duplicado is not None:
+        raise ConflictError(f"VC-ID {vc_id} já usado no domínio {dom.name}.")
+
+    svc = models.L2vcService(
+        domain_id=dom.id, vc_id=vc_id, name=nome, organization_id=data.organization_id,
+        mtu=data.mtu, control_word=data.control_word, flow_label=data.flow_label,
+        redundancy=data.redundancy, description=data.description,
+    )
+    session.add(svc)
+    try:
+        session.flush()
+    except IntegrityError as exc:
+        session.rollback()
+        raise ConflictError(f"VC-ID {vc_id} já usado no domínio {dom.name}.") from exc
+    for ep in (a, b):
+        vlan = reservar_vlan_ac(session, device_id=ep.device_id, vid=ep.vid, actor=actor)
+        session.add(models.ServiceEndpoint(
+            kind="l2vc", l2vc_id=svc.id, device_id=ep.device_id, interface=ep.interface.strip(),
+            encapsulation=ep.encapsulation, vlan_id=vlan.id, inner_vlan=ep.inner_vlan,
+            mtu=ep.mtu or data.mtu,
+        ))
+    session.flush()
+    registrar(session, tipo="mpls.l2vc.create", ator=actor, objeto="l2vc", objeto_id=svc.id,
+              antes=None, depois={"vc_id": vc_id, "name": nome, "domain_id": dom.id})
+    session.commit()
+    return _l2vc(session, svc.id)
+
+
+def list_l2vc(session: Session, domain_id: int | None = None, include_disabled: bool = False) -> list[models.L2vcService]:
+    q = select(models.L2vcService).options(
+        selectinload(models.L2vcService.endpoints).selectinload(models.ServiceEndpoint.vlan),
+        selectinload(models.L2vcService.endpoints).selectinload(models.ServiceEndpoint.device),
+        selectinload(models.L2vcService.domain),
+    ).order_by(models.L2vcService.domain_id, models.L2vcService.vc_id)
+    if domain_id is not None:
+        q = q.where(models.L2vcService.domain_id == domain_id)
+    if not include_disabled:
+        q = q.where(models.L2vcService.admin_status.is_(True))
+    return list(session.scalars(q))
+
+
+def get_l2vc(session: Session, l2vc_id: int) -> models.L2vcService:
+    return _l2vc(session, l2vc_id)
+
+
+def set_l2vc_status(session: Session, l2vc_id: int, *, admin_status: bool, actor: str = "cli") -> models.L2vcService:
+    svc = _l2vc(session, l2vc_id)
+    antes, svc.admin_status = svc.admin_status, admin_status
+    session.flush()
+    registrar(session, tipo="mpls.l2vc.status", ator=actor, objeto="l2vc", objeto_id=svc.id,
+              antes={"admin_status": antes}, depois={"admin_status": admin_status})
+    session.commit()
+    return _l2vc(session, svc.id)
+
+
+# ---- Serialização L2VC (padrão dashboard.py: Out explícito) ----------------
+
+def _out_endpoint(ep: models.ServiceEndpoint) -> ServiceEndpointOut:
+    return ServiceEndpointOut(
+        id=ep.id,
+        kind=ep.kind,
+        device_id=ep.device_id,
+        device_name=ep.device.name if ep.device is not None else None,
+        interface=ep.interface,
+        encapsulation=ep.encapsulation,
+        vlan_id=ep.vlan_id,
+        vid=ep.vlan.vid if ep.vlan is not None else None,
+        inner_vlan=ep.inner_vlan,
+        mtu=ep.mtu,
+        operational_status=ep.operational_status,
+    )
+
+
+def out_l2vc(svc: models.L2vcService) -> L2vcOut:
+    return L2vcOut(
+        id=svc.id,
+        domain_id=svc.domain_id,
+        vc_id=svc.vc_id,
+        name=svc.name,
+        organization_id=svc.organization_id,
+        mtu=svc.mtu,
+        control_word=svc.control_word,
+        flow_label=svc.flow_label,
+        redundancy=svc.redundancy,
+        description=svc.description,
+        admin_status=svc.admin_status,
+        operational_status=svc.operational_status,
+        last_collected_at=svc.last_collected_at,
+        created_at=svc.created_at,
+        endpoints=[_out_endpoint(e) for e in svc.endpoints],
+        domain_name=svc.domain.name if svc.domain is not None else None,
+    )
