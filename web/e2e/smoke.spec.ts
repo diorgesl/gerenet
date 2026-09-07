@@ -66,11 +66,15 @@ test("wiki abre pelo menu Ajuda e tooltip aparece em campo de formulário", asyn
   await expect(page.getByRole("heading", { name: "Visão geral e conceitos" })).toBeVisible();
 
   // Navega pela sidebar para uma página "em breve" e vê o badge de aviso.
-  // O nome acessível do link é o título da página + badge "(em breve)"
-  // ("... (em breve)"). A tabela "Navegação rápida" do próprio índice tem um
-  // link só com "Serviços MPLS" — usar o nome completo isola o link da sidebar
-  // (evita violação de strict mode do Playwright).
-  await page.getByRole("link", { name: "Serviços MPLS (L2VC e VSI) (em breve)" }).click();
+  // A página "Serviços MPLS (L2VC e VSI)" saiu do "(em breve)" na fase 4
+  // (virou conteúdo real — título sem badge). O alvo passou a ser "Mudanças
+  // controladas nos equipamentos", que ainda tem em_breve: true (badge na
+  // sidebar + aviso na página). O nome acessível do link é título + badge
+  // ("... (em breve)"); a tabela "Navegação rápida" do índice usa nomes curtos
+  // sem badge ("Mudanças controladas", "Serviços MPLS…") — usar o nome
+  // completo com "(em breve)" isola o link da sidebar (evita violação de
+  // strict mode do Playwright).
+  await page.getByRole("link", { name: "Mudanças controladas nos equipamentos (em breve)" }).click();
   await expect(page.getByText("Recurso planejado — não disponível ainda.")).toBeVisible();
 
   // Tooltip: o ícone de ajuda do campo "Nome *" mostra a dica no hover
