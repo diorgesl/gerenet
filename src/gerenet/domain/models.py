@@ -7,11 +7,13 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -39,6 +41,12 @@ CHANGE_STATUS = ("rascunho", "aguardando_aprovacao", "aprovado", "executando",
                  "aplicado", "com_divergencia", "parcial", "erro", "rejeitado", "cancelado")
 CHANGE_STEP_STATUS = ("pendente", "aplicado", "pulado", "falhou", "rollback")
 APPROVAL_DECISION = ("aprovar", "rejeitar")
+MPLS_ROLE = ("pe", "core")
+MPLS_OPER_STATUS = ("unknown", "up", "down", "partial")
+SERVICE_KIND = ("l2vc", "vsi")
+SERVICE_ENCAP = ("dot1q", "qinq", "ethernet_raw")
+SERVICE_SIGNALING = ("ldp",)
+VLAN_KIND = ("vlan", "s_vlan", "mpls_ac")
 
 
 class Device(Base):
@@ -65,6 +73,7 @@ class Device(Base):
     host_key_fingerprint: Mapped[str | None] = mapped_column(String(128))
     credential_group_id: Mapped[int | None] = mapped_column(ForeignKey("credential_groups.id"))
     tags: Mapped[list] = mapped_column(JSON, default=list)
+    capabilities: Mapped[list] = mapped_column(JSON, default=list)  # §5: suportes por equipamento (ex.: "mpls_flow_label")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -253,12 +262,18 @@ class Vlan(Base):
     __tablename__ = "vlans"
 
     __table_args__ = (
-        # S-VLAN e VLAN partilham o mesmo espaço de VID no switch (spec)
-        UniqueConstraint("site_id", "vid"),
+        # S-VLAN e VLAN partilham o mesmo espaço de VID no switch (spec).
+        # Filas de circuito: escopo de site (device_id NULL); filas MPLS:
+        # escopo de device (mesmo VID é legítimo em switches diferentes).
+        Index("uq_vlans_site_vid", "site_id", "vid", unique=True,
+              postgresql_where=text("device_id IS NULL")),
+        Index("uq_vlans_device_vid", "device_id", "vid", unique=True,
+              postgresql_where=text("device_id IS NOT NULL")),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     site_id: Mapped[int] = mapped_column(ForeignKey("sites.id"), nullable=False)
+    device_id: Mapped[int | None] = mapped_column(ForeignKey("devices.id"))
     vid: Mapped[int] = mapped_column(Integer, nullable=False)
     kind: Mapped[str] = mapped_column(Enum(*VLAN_KIND, name="vlan_kind"), default="vlan", nullable=False)
     family: Mapped[str | None] = mapped_column(Enum(*FAMILY, name="family"))
@@ -547,3 +562,171 @@ class Approval(Base):
 
     change_request: Mapped[ChangeRequest] = relationship(back_populates="approvals")
     user: Mapped[User] = relationship()
+
+
+class MplsDomain(Base):
+    """Domínio MPLS/LDP (§9.1): PEs e interfaces de core ficam nos membros."""
+
+    __tablename__ = "mpls_domains"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(String(255))
+    admin_status: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    members: Mapped[list["MplsDomainMember"]] = relationship(
+        back_populates="domain", order_by="MplsDomainMember.id", cascade="all, delete-orphan"
+    )
+
+
+class MplsDomainMember(Base):
+    """PE/core de um domínio com o loopback LDP (remote do L2VC, §9.1)."""
+
+    __tablename__ = "mpls_domain_members"
+
+    __table_args__ = (UniqueConstraint("domain_id", "device_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    domain_id: Mapped[int] = mapped_column(ForeignKey("mpls_domains.id"), nullable=False)
+    device_id: Mapped[int] = mapped_column(ForeignKey("devices.id"), nullable=False)
+    loopback_address: Mapped[str] = mapped_column(String(64), nullable=False)
+    role: Mapped[str] = mapped_column(Enum(*MPLS_ROLE, name="mpls_role"), default="pe", nullable=False)
+
+    domain: Mapped[MplsDomain] = relationship(back_populates="members")
+    device: Mapped[Device] = relationship()
+
+
+class L2vcService(Base):
+    """Serviço L2VC ponto a ponto (§9.2) — VC-ID único no domínio."""
+
+    __tablename__ = "l2vc_services"
+
+    __table_args__ = (
+        UniqueConstraint("domain_id", "vc_id"),
+        UniqueConstraint("domain_id", "name"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    domain_id: Mapped[int] = mapped_column(ForeignKey("mpls_domains.id"), nullable=False)
+    vc_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    organization_id: Mapped[int | None] = mapped_column(ForeignKey("organizations.id"))
+    mtu: Mapped[int] = mapped_column(Integer, default=1500, nullable=False)
+    control_word: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    flow_label: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    redundancy: Mapped[str | None] = mapped_column(Text())  # anotação §9.2
+    description: Mapped[str | None] = mapped_column(String(255))
+    admin_status: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    operational_status: Mapped[str] = mapped_column(
+        Enum(*MPLS_OPER_STATUS, name="mpls_oper_status"), default="unknown", nullable=False
+    )
+    last_collected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    domain: Mapped[MplsDomain] = relationship()
+    organization: Mapped[Organization | None] = relationship()
+    endpoints: Mapped[list["ServiceEndpoint"]] = relationship(
+        back_populates="l2vc", order_by="ServiceEndpoint.id", cascade="all, delete-orphan"
+    )
+
+
+class ServiceEndpoint(Base):
+    """Ponta de serviço MPLS (§14) — exatamente um de l2vc_id/vsi_id (validado no serviço)."""
+
+    __tablename__ = "service_endpoints"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kind: Mapped[str] = mapped_column(Enum(*SERVICE_KIND, name="service_kind"), nullable=False)
+    l2vc_id: Mapped[int | None] = mapped_column(ForeignKey("l2vc_services.id"))
+    vsi_id: Mapped[int | None] = mapped_column(ForeignKey("vsi_services.id"))
+    device_id: Mapped[int] = mapped_column(ForeignKey("devices.id"), nullable=False)
+    interface: Mapped[str] = mapped_column(String(64), nullable=False)  # da coleta, sem FK
+    encapsulation: Mapped[str] = mapped_column(
+        Enum(*SERVICE_ENCAP, name="service_encap"), default="dot1q", nullable=False
+    )
+    vlan_id: Mapped[int | None] = mapped_column(ForeignKey("vlans.id"))
+    inner_vlan: Mapped[int | None] = mapped_column(Integer)  # QinQ: espaço do cliente
+    mtu: Mapped[int | None] = mapped_column(Integer)
+    operational_status: Mapped[str] = mapped_column(
+        Enum(*MPLS_OPER_STATUS, name="mpls_oper_status"), default="unknown", nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    l2vc: Mapped[L2vcService | None] = relationship(back_populates="endpoints")
+    vsi: Mapped["VsiService | None"] = relationship()
+    device: Mapped[Device] = relationship()
+    vlan: Mapped[Vlan | None] = relationship()
+
+
+class VsiService(Base):
+    """VSI multiponto (§9.3) — somente modelo + consulta neste ciclo (§11.3)."""
+
+    __tablename__ = "vsi_services"
+
+    __table_args__ = (
+        UniqueConstraint("domain_id", "vsi_id"),
+        UniqueConstraint("domain_id", "vrp_name"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    domain_id: Mapped[int] = mapped_column(ForeignKey("mpls_domains.id"), nullable=False)
+    vsi_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    vrp_name: Mapped[str] = mapped_column(String(64), nullable=False)  # naming.vsi_nome, identidade VRP
+    signaling: Mapped[str] = mapped_column(
+        Enum(*SERVICE_SIGNALING, name="service_signaling"), default="ldp", nullable=False
+    )
+    mtu: Mapped[int] = mapped_column(Integer, default=1500, nullable=False)
+    split_horizon: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    mac_learning: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    mac_limit: Mapped[int | None] = mapped_column(Integer)
+    admin_status: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    operational_status: Mapped[str] = mapped_column(
+        Enum(*MPLS_OPER_STATUS, name="mpls_oper_status"), default="unknown", nullable=False
+    )
+    last_collected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    domain: Mapped[MplsDomain] = relationship()
+    members: Mapped[list["VsiMember"]] = relationship(
+        back_populates="vsi", order_by="VsiMember.id", cascade="all, delete-orphan"
+    )
+    endpoints: Mapped[list[ServiceEndpoint]] = relationship(
+        order_by="ServiceEndpoint.id", cascade="all, delete-orphan", overlaps="vsi"
+    )
+
+
+class VsiMember(Base):
+    """PE participante de um VSI (§9.3)."""
+
+    __tablename__ = "vsi_members"
+
+    __table_args__ = (UniqueConstraint("vsi_id", "device_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    vsi_id: Mapped[int] = mapped_column(ForeignKey("vsi_services.id"), nullable=False)
+    device_id: Mapped[int] = mapped_column(ForeignKey("devices.id"), nullable=False)
+
+    vsi: Mapped[VsiService] = relationship(back_populates="members")
+    device: Mapped[Device] = relationship()

@@ -38,7 +38,7 @@ def _limpa_tabelas(db_session: Session) -> None:
     # são seedados pela migration e imutáveis no ciclo A (ruling 2 do Plano 2).
     db_session.execute(
         text(
-            "TRUNCATE approvals, change_steps, change_requests, audit_events, user_sessions, users, job_runs, device_snapshots, vlans, ip_prefixes, circuits, contacts, organizations, sites, devices, credential_groups, bgp_sessions, bgp_session_communities, bgp_prefix_authorizations RESTART IDENTITY CASCADE"
+            "TRUNCATE approvals, change_steps, change_requests, audit_events, user_sessions, users, job_runs, device_snapshots, vlans, ip_prefixes, circuits, contacts, organizations, sites, devices, credential_groups, bgp_sessions, bgp_session_communities, bgp_prefix_authorizations, vsi_members, vsi_services, service_endpoints, l2vc_services, mpls_domain_members, mpls_domains RESTART IDENTITY CASCADE"
         )
     )
     db_session.commit()
