@@ -89,10 +89,18 @@ Status por pseudowire/AC na fase atual: campo agregado no VSI
 
 **VLANs de AC** (Q2): reuso da tabela `vlans` existente com **novo valor
 `mpls_ac`** no enum `vlan_kind` (ALTER TYPE ADD VALUE) — `site_id` = site do
-device da ponta, `circuit_id` NULL, `status='reservada'`. A constraint
-UNIQUE(site_id, vid) já existente garante duplicidade por POP (§9.4 "VLAN IDs
-por POP"); é conservadora (mesmo VID em dois switches do mesmo POP fica
-bloqueado — aceito, consistente com a semântica de "escopo" do §6.2).
+device da ponta, `device_id` = switch da ponta, `circuit_id` NULL,
+`status='reservada'`. **Escopo é por device** (a VLAN do switch é local ao
+equipamento, não ao POP): `device_id` nullable na tabela; a UNIQUE existente
+passa a ser **índice parcial** `(site_id, vid) WHERE device_id IS NULL`
+(linhas de circuito, inalterada de fato) + **índice parcial**
+`(device_id, vid) WHERE device_id IS NOT NULL` (linhas MPLS). Mesmo VID é
+permitido em devices diferentes do mesmo POP; dois serviços no **mesmo**
+switch com o mesmo VID é bloqueado (correto). VSI multiponto com o mesmo VID
+nas pontas = duas linhas (uma por device), cada uma referenciada pelo seu
+endpoint. Ajuste correlato: validadores de circuito (`_primeiro_vid` e afins)
+passam a filtrar somente linhas sem `device_id`, preservando o escopo de site
+atual.
 
 ## 4. Alocação (IDAM simples)
 
@@ -103,8 +111,9 @@ Sem tabela genérica (Q2): helpers no serviço de domínio/MPLS:
   banco; o helper é conveniência/UX.
 - `proximo_vsi_id(session, domain_id)` — idem.
 - `reservar_vlan_ac(session, service_endpoint)` — padrão `reservar_circuito`:
-  cria a linha `vlans` (`kind='mpls_ac'`, site do device, vid livre no site),
-  idempotente (ponta já com VLAN ⇒ no-op auditado).
+  cria a linha `vlans` (`kind='mpls_ac'`, site e device da ponta, vid livre no
+  device), idempotente (ponta já com VLAN ⇒ no-op auditado); outra linha
+  `mpls_ac` no mesmo device com o mesmo vid ⇒ ConflictError.
 
 ## 5. ChangeRequest generalizado (Q1)
 
@@ -237,7 +246,10 @@ Automatizados (padrão do repo — pytest/ruff/vitest/e2e):
    estados e runner reutilizados; `parcial` = §9.3.
 2. **Q2 — IDAM simples**: UNIQUEs + helpers (`proximo_vc_id`,
    `proximo_vsi_id`); VLAN de AC na tabela `vlans` existente com kind
-   `mpls_ac` (escopo site/POP); sem tabela `allocations` genérica.
+   `mpls_ac` e **escopo por device** (índices parciais: site×vid sem
+   device_id para circuitos, device×vid para MPLS — revisão do usuário em
+   2026-09-07: mesmo VID é legítimo em switches diferentes do mesmo POP);
+   sem tabela `allocations` genérica.
 3. **Q3 — VSI modelo + consulta**: parsers/estado no ciclo; sem render e sem
    CR de VSI (pós-estabilização L2VC, §23).
 4. YAGNI: sem tabela de estados por pseudowire; sem `ethernet_raw` como
