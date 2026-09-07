@@ -16,6 +16,7 @@ from gerenet.domain.schemas import (
 )
 from gerenet.domain.services.devices import get_device
 from gerenet.domain.services.errors import ConflictError, NotFoundError, ValidationError
+from gerenet.domain.validators import validar_vid
 
 
 def _dom(session: Session, domain_id: int) -> models.MplsDomain:
@@ -174,3 +175,89 @@ def out_domain(dom: models.MplsDomain) -> MplsDomainOut:
         updated_at=dom.updated_at,
         members=[_out_membro(m) for m in dom.members],
     )
+
+
+# ---- IDAM simples (§4): UNIQUEs garantem; helpers dão UX ---------------
+
+def proximo_vc_id(session: Session, domain_id: int, *, inicio: int = 100) -> int:
+    """Menor VC-ID livre no domínio a partir de `inicio` (conveniência — a UNIQUE garante)."""
+    ocupados = set(
+        session.scalars(select(models.L2vcService.vc_id).where(models.L2vcService.domain_id == domain_id))
+    )
+    vc = inicio
+    while vc in ocupados:
+        vc += 1
+    return vc
+
+
+def proximo_vsi_id(session: Session, domain_id: int, *, inicio: int = 500) -> int:
+    """Menor VSI-ID livre no domínio a partir de `inicio` (conveniência — a UNIQUE garante)."""
+    ocupados = set(
+        session.scalars(select(models.VsiService.vsi_id).where(models.VsiService.domain_id == domain_id))
+    )
+    vsi = inicio
+    while vsi in ocupados:
+        vsi += 1
+    return vsi
+
+
+def _primeiro_vid_device(session: Session, device_id: int) -> int:
+    """Menor VID 2-4094 livre **no device** (linhas mpls_ac + circuitos do device).
+    Linhas de circuito são de site — não bloqueiam o device (escopo distinto)."""
+    ocupados = set(
+        session.scalars(
+            select(models.Vlan.vid).where(models.Vlan.device_id == device_id)
+        )
+    )
+    for vid in range(2, 4095):
+        if vid not in ocupados:
+            validar_vid(vid)
+            return vid
+    raise ConflictError("VLANs esgotadas neste equipamento.")
+
+
+def reservar_vlan_ac(session: Session, *, device_id: int, vid: int | None = None,
+                     notes: str | None = None, actor: str = "cli") -> models.Vlan:
+    """Reserva a VLAN de AC do endpoint (§4) — idempotente; escopo por device.
+
+    vid None ⇒ menor livre no device (helper acima). Repetição da mesma ponta
+    devolve a linha existente (no-op auditado); (device, vid) ocupado por OUTRA
+    linha mpls_ac ⇒ ConflictError (índice parcial uq_vlans_device_vid).
+    Equipamento sem site é rejeitado: vlans.site_id é NOT NULL e vem do device.
+    """
+    device = get_device(session, device_id)
+    if device.site_id is None:
+        raise ValidationError(
+            f"Equipamento {device.name} sem site não pode reservar VLAN de AC."
+        )
+    ja = session.scalars(
+        select(models.Vlan).where(
+            models.Vlan.device_id == device.id, models.Vlan.kind == "mpls_ac",
+        )
+    ).all()
+    if vid is not None:
+        validar_vid(vid)
+        existente = next((v for v in ja if v.vid == vid), None)
+    else:
+        vid = _primeiro_vid_device(session, device.id)
+        existente = None
+    if existente is not None:
+        registrar(session, tipo="mpls.vlan.reserve", ator=actor, objeto="vlan",
+                  objeto_id=existente.id, antes=None, depois={"repetida": True, "vid": vid})
+        session.commit()
+        return existente
+    linha = models.Vlan(
+        site_id=device.site_id, device_id=device.id, vid=vid, kind="mpls_ac",
+        circuit_id=None, status="reservada", notes=notes,
+    )
+    session.add(linha)
+    try:
+        session.flush()  # UNIQUE parcial uq_vlans_device_vid valida a corrida
+    except IntegrityError as exc:
+        session.rollback()
+        raise ConflictError(f"VLAN {vid} já reservada neste equipamento.") from exc
+    registrar(session, tipo="mpls.vlan.reserve", ator=actor, objeto="vlan",
+              objeto_id=linha.id, antes=None,
+              depois={"device_id": device.id, "vid": vid, "kind": "mpls_ac"})
+    session.commit()
+    return linha

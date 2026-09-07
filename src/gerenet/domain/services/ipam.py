@@ -101,8 +101,13 @@ def pontas_v6(network: str) -> tuple[str, str]:
 
 
 def _primeiro_vid(session: Session, site_id: int, ignorar: set[int] | None = None) -> int:
-    """Menor VID 2-4094 não reservado no site (Ruling 6: só linhas existentes)."""
-    ocupados = set(session.scalars(select(models.Vlan.vid).where(models.Vlan.site_id == site_id)))
+    """Menor VID 2-4094 livre no site para circuitos (linhas MPLS — device_id NOT
+    NULL — têm escopo de device e não contam; Ruling 6: só linhas existentes)."""
+    ocupados = set(session.scalars(
+        select(models.Vlan.vid).where(
+            models.Vlan.site_id == site_id, models.Vlan.device_id.is_(None),
+        )
+    ))
     if ignorar:
         ocupados |= ignorar
     for vid in range(2, 4095):
