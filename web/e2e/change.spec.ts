@@ -9,7 +9,11 @@ const SENHA = process.env.E2E_PASSWORD ?? "e2e-super-8";
 const API_KEY = process.env.GERENET_API_KEY ?? "dev-key-change-me";
 
 const RODADA = Date.now();
-const REDE = `10.99.${(RODADA % 200) + 10}`; // 10.99.10..209 por execução
+// Dois octetos derivados do timestamp (~40 mil combos, no espaço 10.x): o
+// `_colidente_par` é global às sessões ativas do banco e2e acumulado — com um
+// só octeto (10.99.X) a chance de colisão seria de ~1/200 por rodada
+// (efeito aniversário: ~1 colisão em ~20 execuções).
+const REDE = `10.${(Math.floor(RODADA / 256) % 200) + 10}.${(RODADA % 200) + 10}`; // 10.10.10..209.10..209
 const API = { "x-api-key": API_KEY, "content-type": "application/json" };
 
 async function entrar(page: Page, usuario = "admin"): Promise<void> {
@@ -78,7 +82,8 @@ test("fluxo de mudança: criar, solicitar, aprovar e executar", async ({ page })
 
   // 2. Sessão BGP via API — é ela que dá origem aos steps do plano
   //    (plan_provision itera as sessões do circuito, T3:903). Endereços
-  //    únicos por execução (evita _colidente_par entre rodadas).
+  //    únicos por execução (dois octetos derivados de RODADA — evita
+  //    _colidente_par entre rodadas).
   const respSess = await page.request.post("/api/v1/bgp-sessions", {
     headers: API,
     data: {

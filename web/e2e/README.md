@@ -18,11 +18,24 @@ cd web
 #   Google Chrome do sistema e rode os fumos com GERENET_E2E_CHANNEL=chrome
 #   (o config usa o canal "chrome" apenas com essa env)
 
-# 3. Rodar os fumos (build da SPA + uvicorn + seed automático + specs)
+# 3. (obrigatório, antes de cada execução) parar a API e o worker do compose —
+#    são os nomes de SERVIÇO (`api`/`worker`; `gerenet-api`/`gerenet-worker`
+#    são apenas os nomes dos containers). Motivos: a API ocupa a porta 8000
+#    (com `reuseExistingServer: false`, qualquer processo nela é **falha dura**
+#    no boot do webServer) e o worker, se ativo, consumiria o job da fila
+#    `gerenet-change` no meio do fumo e derrubaria o assert final
+#    `executando` do change.spec.ts — a CR só permanece `executando` com o
+#    worker parado ("jobs fake" do spec §10).
+docker compose stop api worker
+
+# 4. Rodar os fumos (build da SPA + uvicorn + seed automático + specs)
 # (máquina fresca: primeiro crie/migre o banco dedicado — ver a seção
 #  "Banco dedicado `gerenet_e2e`" abaixo, passos 1-2)
 GERENET_DATABASE_URL="postgresql+psycopg://gerenet:gerenet@localhost:5432/gerenet_e2e" \
 E2E_PASSWORD="e2e-super-8" npm run test:e2e
+
+# 5. (obrigatório, depois dos fumos) restaurar a stack
+docker compose start api worker
 ```
 
 ## O que o comando faz
@@ -69,6 +82,13 @@ desenvolvimento.
 Fluxo padrão do dev sem e2e: `uv run alembic upgrade head` contra o banco
 default (`postgresql+psycopg://gerenet:gerenet@localhost:5432/gerenet`).
 
+Os fumos acumulam objetos entre execuções no banco dedicado (device/circuito/
+sessão e CR por rodada, CRs deixadas em `executando`, jobs órfãos na fila RQ
+`gerenet-change` e a CR/circuito/sessão da rodada que falhou): inofensivo por
+design — o banco é dedicado, o seed e o fumo são rerun-safe (nada deles
+reutiliza esses objetos) e um job órfão consumido depois pelo worker é no-op
+(aponta para uma CR que só existe no `gerenet_e2e`).
+
 ## Erros comuns
 
 | Sintoma | Causa provável / solução |
@@ -76,7 +96,7 @@ default (`postgresql+psycopg://gerenet:gerenet@localhost:5432/gerenet`).
 | `Executable doesn't exist at ...` | rodar o passo 2 (`playwright install chromium`); se o download falhar (`Download failure, code=1`), o CDN do Playwright está inacessível na rede — instalar o Google Chrome do sistema e rodar com `GERENET_E2E_CHANNEL=chrome` (o config só usa o canal "chrome" com essa env) |
 | `Error: reuseExistingServer` / port 8000 ocupada | outro processo já escuta na 8000 (uvicorn de dev, IDE…) — **pare-o** e rode de novo; o webServer agora falha duro, sem reutilizar |
 | `Timed out waiting 60000ms from config.webServer` | subiu com o banco fora do ar — verificar `docker compose ps` (porta 8000 ocupada hoje é falha dura no boot: ver `Error: reuseExistingServer` acima) |
-| login falha com "Usuário ou senha inválidos" | o `admin`/`e2e-aprovador` do banco `gerenet_e2e` tem senha de outra execução — resetar com `GERENET_DATABASE_URL="postgresql+psycopg://gerenet:gerenet@localhost:5432/gerenet_e2e" uv run gerenet users set-password admin` (com a env! sem ela o reset cai no banco de dev) e usar o mesmo valor de `E2E_PASSWORD` |
+| login falha com "Usuário ou senha inválidos" | o `admin` **ou** o `e2e-aprovador` do banco `gerenet_e2e` tem senha de outra execução — resetar o usuário com `GERENET_DATABASE_URL="postgresql+psycopg://gerenet:gerenet@localhost:5432/gerenet_e2e" uv run gerenet users set-password <usuário>` (substitua por `admin` ou `e2e-aprovador`; sempre com a env! sem ela o reset cai no banco de dev) e usar o mesmo valor de `E2E_PASSWORD` |
 | testes passam mas o seed parece vazio | conferir `GERENET_DATABASE_URL` apontando para `gerenet_e2e` no mesmo comando |
 
 ## Specs

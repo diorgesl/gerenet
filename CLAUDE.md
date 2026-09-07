@@ -144,8 +144,9 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   sidebar + aviso na página); **tooltips de campo** — prop `help` no `FormField`
   (`.field-help` + `.field-help-dica` no hover/foco), textos centralizados em
   `web/src/help.ts` (o `npm run build` valida as chaves).
-- Ciclo D (fluxo de mudança controlada): mudanças sem alteração de **back-end**
-  exigem fluxo de change requests — máquina de estados (rascunho →
+- Ciclo D (fluxo de mudança controlada): mudanças em **equipamento** (a SoT
+  permanece a intenção — é a configuração real que muda) passam pelo fluxo de
+  change requests — máquina de estados (rascunho →
   aguardando_aprovacao → aprovado → executando → aplicado/com_divergencia/parcial/
   erro; rejeitado/cancelado), planos de provision/remoção gerados da SoT × última
   coleta já na criação (diff por bloco, `automation/changes.py`), aprovação
