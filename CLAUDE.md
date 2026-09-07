@@ -164,5 +164,34 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   "mudanças aguardando aprovação" no dashboard; e2e `web/e2e/change.spec.ts`
   (fumo solicitando como `admin` e aprovando como o `e2e-aprovador` — papel
   `aprovador` — seedado no globalSetup, único usuário novo do seed).
+- Fase 4 (MPLS em switches): domínios MPLS/LDP + L2VC ponto a ponto com
+  provisionamento/remoção via fluxo de CR; VSI é só cadastro e consulta
+  (provisionamento multiponto em fase posterior). Modelos novos:
+  `mpls_domains` + `mpls_domain_members` (membro = PE com `loopback_address`, o
+  remote do VC), `l2vc_services` + `service_endpoints` (pontas com interface e
+  VLAN de AC reservada por device — `vlans.kind='mpls_ac'`, escopo por device:
+  mesmo VID é legítimo em switches diferentes do mesmo POP) e `vsi_services`;
+  IDAM simples (UNIQUE + helpers `proximo_vc_id`/`proximo_vsi_id`/
+  `reservar_vlan_ac`, sem tabela `allocations`). `devices.capabilities` (JSON,
+  ex.: `"mpls_flow_label"`) gateia o flow-label do template. CR generalizada:
+  `circuit_id` nullable + `escopo` (`circuito`|`l2vc`|`vsi`) + `l2vc_id`,
+  máquina de estados intacta; render/plano/pré-pós-check em `automation/l2vc.py`
+  — template `l2vc_ac.j2` com **AC untag na interface principal** (`undo
+  portswitch` + `mtu` quando definido + `mpls l2vc <peer-loopback> <vc-id>[
+  control-word]` + `mpls l2vpn flow-label both` em linha separada; remoção =
+  `undo mpls l2vc ...` no contexto da interface, nunca `undo interface`/`undo
+  portswitch`/`undo mpls l2vpn flow-label`) e runner escopo-aware (gate de
+  re-diff, setup e pré-check LDP por `escopo`). Coletores/parsers
+  TextFSM de `display mpls ldp peer`/`display l2vc`/`display vsi` + sincronização
+  na SoT pós-coleta (`sincronizar_mpls`); web `/mpls/domains`,
+  `/mpls/l2vc`, `/mpls/vsi` (lista/detalhe com "Solicitar mudança") e fumo
+  `web/e2e/mpls.spec.ts`. Comandos de teste: `uv run pytest -q`,
+  `uv run ruff check src tests`, `cd web && npm run build && npm run test`
+  (e2e idem ciclo D, banco `gerenet_e2e`). A validação em equipamento real segue
+  `docs/runbook-validacao-switch-mpls.md` (somente leitura → geração sem
+  execução → teste em switch não crítico; **sem lab** — decisão do usuário
+  2026-09-07); atenção: rollback de CR de escopo `l2vc` ainda não é automatizado
+  (`gerar_rollback` é circuitocêntrico) — reversão via CR de remoção aprovada ou
+  manual documentado, conforme o runbook.
 - Convenções previstas no `.gitignore`: Python com venv e pytest (`.venv/`, `.pytest_cache/`), deploy via Docker Compose (`compose.yaml` na raiz) com `.env` ignorado (o `.gitignore` ainda prevê `deploy/docker/.env`), `config.yaml` local com segredos **fora do repositório**, logs em `logs/` ignorados.
 - `.claude/settings.local.json` contém token e aponta o harness para uma API externa: é arquivo local — não versionar nem alterar.

@@ -33,4 +33,5 @@ coletado dos roteadores e switches.
 | Cadastrar circuito e reservar VLAN/endereços p2p | [Circuitos, VLANs e IPAM](/wiki/circuitos) |
 | Cadastrar sessão BGP, autorizações, perfis e communities | [Sessões BGP, autorizações, perfis e communities](/wiki/roteamento) |
 | Ver desejado × encontrado, jobs e auditoria | [Reconciliação, config desejada, jobs e auditoria](/wiki/operacao) |
-| Entender o que ainda não é executado | [Mudanças controladas](/wiki/mudancas-controladas), [Serviços MPLS](/wiki/mpls), [Upstreams](/wiki/upstreams) |
+| Gerenciar serviços MPLS em switches (domínio, L2VC, VSI) | [Serviços MPLS (L2VC e VSI)](/wiki/mpls) |
+| Entender o que ainda não é executado | [Mudanças controladas](/wiki/mudancas-controladas), [Upstreams](/wiki/upstreams) |
