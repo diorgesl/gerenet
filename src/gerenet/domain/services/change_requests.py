@@ -61,6 +61,13 @@ def _cria_steps(session: Session, cr: models.ChangeRequest, plano: list[changes.
 def create_change_request(
     session: Session, data: schemas.ChangeRequestCreate, *, ator_id: int | None = None, actor: str = "cli",
 ) -> models.ChangeRequest:
+    """Cria a CR já planejada (rascunho com steps), por escopo (§5 fase 4).
+
+    O schema validou a coerência do escopo (circuit_id/l2vc_id conforme o caso);
+    o fluxo de circuito do ciclo D permanece intacto abaixo.
+    """
+    if data.escopo == "l2vc":
+        return _create_l2vc(session, data, ator_id=ator_id, actor=actor)
     circ = get_circuit(session, data.circuit_id)
     if circ.admin_status is False:
         raise ConflictError(f"Circuito {circ.code} desativado não recebe mudanças.")
@@ -84,6 +91,46 @@ def create_change_request(
         session, tipo="change.created", ator=actor, objeto="change_request",
         objeto_id=cr.id, antes=None,
         depois={"circuit_id": circ.id, "acao": cr.acao, "criticidade": cr.criticidade,
+                "steps": len(cr.steps), "blocos": sum(len(s.plano_json) for s in cr.steps)},
+    )
+    session.commit()
+    session.refresh(cr)
+    return cr
+
+
+def _create_l2vc(
+    session: Session, data: schemas.ChangeRequestCreate, *, ator_id: int | None = None, actor: str = "cli",
+) -> models.ChangeRequest:
+    """CR de serviço L2VC — mesmo ciclo do circuito (§5 fase 4): plano na
+    criação, validações de estado do serviço, PlanoVazio sem pontas."""
+    from gerenet.automation import l2vc as l2vc_auto
+    from gerenet.domain.services.mpls import get_l2vc
+
+    servico = get_l2vc(session, data.l2vc_id)  # NotFoundError propaga (404)
+    if not servico.admin_status:
+        raise ConflictError("Serviço L2VC desativado não recebe mudanças.")
+    dom = servico.domain
+    if not dom.admin_status:
+        raise ConflictError(f"Domínio MPLS {dom.name} desativado não recebe mudanças.")
+    plano = (
+        l2vc_auto.plan_provision_l2vc(session, servico)
+        if data.acao == "provision"
+        else l2vc_auto.plan_remocao_l2vc(session, servico)
+    )
+    cr = models.ChangeRequest(
+        circuit_id=None, l2vc_id=servico.id, acao=data.acao, criticidade=data.criticidade,
+        motivo=data.motivo, ticket=data.ticket, solicitante_id=ator_id, status="rascunho",
+        escopo="l2vc",
+    )
+    session.add(cr)
+    session.flush()
+    _cria_steps(session, cr, plano)
+    if not cr.steps:
+        raise PlanoVazio("Serviço L2VC sem pontas ativas — revalide antes de planejar.")
+    registrar(
+        session, tipo="change.created", ator=actor, objeto="change_request",
+        objeto_id=cr.id, antes=None,
+        depois={"l2vc_id": servico.id, "acao": cr.acao, "criticidade": cr.criticidade,
                 "steps": len(cr.steps), "blocos": sum(len(s.plano_json) for s in cr.steps)},
     )
     session.commit()

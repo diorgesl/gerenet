@@ -35,6 +35,8 @@ AUTH_ORIGIN = ("manual",)
 USER_ROLES = ("visualizador", "operador", "aprovador", "executor", "administrador")
 CHANGE_ACTION = ("provision", "remove")
 CHANGE_CRITICALITY = ("baixa", "media", "alta")
+# Escopo da mudança (spec §4/§9): circuito (ciclo D), l2vc/vsi (MPLS, fase 4).
+CHANGE_ESCOPO = ("circuito", "l2vc", "vsi")
 # Terminais: aplicado, com_divergencia, rejeitado, cancelado (spec §4.1).
 CHANGE_STATUS = ("rascunho", "aguardando_aprovacao", "aprovado", "executando",
                  "aplicado", "com_divergencia", "parcial", "erro", "rejeitado", "cancelado")
@@ -484,12 +486,20 @@ class UserSession(Base):
 
 
 class ChangeRequest(Base):
-    """Mudança controlada sobre um circuito (§12) — aprovação e execução registradas."""
+    """Mudança controlada sobre um serviço de rede (§12) — aprovação e execução registradas.
+
+    Escopo generalizado (fase 4, §5): `circuito` (ciclo D) ou `l2vc`/`vsi` (MPLS);
+    o id correspondente ao escopo é o que carrega a FK (circuit_id | l2vc_id).
+    """
 
     __tablename__ = "change_requests"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    circuit_id: Mapped[int] = mapped_column(ForeignKey("circuits.id"), nullable=False)
+    circuit_id: Mapped[int | None] = mapped_column(ForeignKey("circuits.id"))
+    escopo: Mapped[str] = mapped_column(
+        Enum(*CHANGE_ESCOPO, name="change_escopo"), default="circuito", nullable=False
+    )
+    l2vc_id: Mapped[int | None] = mapped_column(ForeignKey("l2vc_services.id"))
     acao: Mapped[str] = mapped_column(Enum(*CHANGE_ACTION, name="change_action"), nullable=False)
     criticidade: Mapped[str] = mapped_column(
         Enum(*CHANGE_CRITICALITY, name="change_criticality"), default="media", nullable=False

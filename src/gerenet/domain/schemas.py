@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class DeviceCreate(BaseModel):
@@ -536,11 +536,23 @@ class JobRunOut(BaseModel):
 
 
 class ChangeRequestCreate(BaseModel):
-    circuit_id: int
+    escopo: Literal["circuito", "l2vc", "vsi"] = "circuito"
+    circuit_id: int | None = None
+    l2vc_id: int | None = None
     acao: Literal["provision", "remove"] = "provision"
     criticidade: Literal["baixa", "media", "alta"] = "media"
     motivo: str = Field(min_length=1, max_length=2000)
     ticket: str | None = Field(default=None, max_length=64)
+
+    @model_validator(mode="after")
+    def _valida_escopo(self) -> "ChangeRequestCreate":
+        if self.escopo == "circuito" and self.circuit_id is None:
+            raise ValueError("circuit_id é obrigatório para escopo 'circuito'.")
+        if self.escopo == "l2vc" and self.l2vc_id is None:
+            raise ValueError("l2vc_id é obrigatório para escopo 'l2vc'.")
+        if self.escopo == "vsi":
+            raise ValueError("Escopo 'vsi' não está disponível neste ciclo.")
+        return self
 
 
 class ApprovalIn(BaseModel):
@@ -577,7 +589,9 @@ class ChangeRequestOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    circuit_id: int
+    circuit_id: int | None
+    escopo: str
+    l2vc_id: int | None = None
     acao: str
     criticidade: str
     motivo: str
