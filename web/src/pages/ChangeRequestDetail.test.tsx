@@ -112,4 +112,21 @@ describe("ChangeRequestDetail", () => {
     expect(await screen.findByText("L2VC-0001")).toBeInTheDocument();
     expect(screen.queryByText("#null")).toBeNull();
   });
+
+  it("não mostra rollback/reconciliar para CR de escopo l2vc (circuito mantém)", async () => {
+    // parcial é o modo de falha desenhado do L2VC: onde o operador acharia o
+    // beco sem saída — os botões são truncados para o escopo l2vc (risco S2-1).
+    crAtual = { ...crDe(2, "parcial"), circuit_id: null, escopo: "l2vc", l2vc_id: 1, l2vc_name: "L2VC-0001" };
+    const { unmount } = renderDetail();
+    expect(await screen.findByText("Change request #1")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Gerar rollback" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reconciliar" })).toBeNull();
+    unmount();
+    // regressão: CR de escopo circuito no mesmo estado continua com os botões
+    crAtual = crDe(2, "parcial");
+    renderDetail();
+    expect(await screen.findByText("Change request #1")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Gerar rollback" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reconciliar" })).toBeInTheDocument();
+  });
 });

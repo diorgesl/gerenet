@@ -256,6 +256,12 @@ def _replaneja(session: Session, cr: models.ChangeRequest, device_id: int) -> ch
 
 def reconciliar(session: Session, cr_id: int, *, actor: str = "cli") -> models.ChangeRequest:
     cr = get_change_request(session, cr_id)
+    if cr.escopo != "circuito":
+        raise ValidationError(
+            "Reconciliação automática indisponível para CR de escopo l2vc. "
+            "Crie uma CR de remoção (--acao remove) ou uma CR de provision nova (o re-diff "
+            "aplica só a ponta ausente) — runbook §3.3."
+        )
     if cr.status not in ("erro", "parcial"):
         raise ValidationError(f"Reconciliar só de erro|parcial (atual: {cr.status}).")
     pendentes = [s for s in cr.steps if s.status in ("pendente", "falhou")]
@@ -284,6 +290,11 @@ def gerar_rollback(
     remove → provision re-renderizado do desejado (SoT atual).
     """
     cr = get_change_request(session, cr_id)
+    if cr.escopo != "circuito":
+        raise ValidationError(
+            "Rollback automático indisponível para CR de escopo l2vc. "
+            "Crie uma CR de remoção (--acao remove) ou reverta manualmente — runbook §3.3."
+        )
     if cr.status not in ("aplicado", "com_divergencia", "parcial") or not any(
         s.status == "aplicado" for s in cr.steps
     ):

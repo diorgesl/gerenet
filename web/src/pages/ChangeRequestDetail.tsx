@@ -131,10 +131,10 @@ export default function ChangeRequestDetail() {
             {status === "aprovado" && ehExecutor && (
               <button className="primary" type="button" onClick={() => setDialogo("executar")}>Executar</button>
             )}
-            {(status === "erro" || status === "parcial") && podeEscrever && (
+            {(status === "erro" || status === "parcial") && podeEscrever && cr.escopo === "circuito" && (
               <button type="button" onClick={() => setDialogo("reconciliar")}>Reconciliar</button>
             )}
-            {(status === "aplicado" || status === "com_divergencia" || status === "parcial") && podeEscrever && (
+            {(status === "aplicado" || status === "com_divergencia" || status === "parcial") && podeEscrever && cr.escopo === "circuito" && (
               <button type="button" onClick={() => setDialogo("rollback")}>Gerar rollback</button>
             )}
           </>

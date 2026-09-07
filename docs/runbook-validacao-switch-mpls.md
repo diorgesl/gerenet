@@ -205,7 +205,10 @@ funcional do serviço).
 **O rollback automatizado de CR de escopo `l2vc` não está implementado**: `gerar_rollback`
 (o comando `gerenet change-requests rollback`) é circuitocêntrico — gera a CR inversa a partir
 do `circuit_id` e a CR filha nasce sem escopo `l2vc`; numa CR aplicada de L2VC ele não funciona
-(estender ao escopo `l2vc` é trabalho futuro). **Nesta fase a reversão em produção é feita por
+(estender ao escopo `l2vc` é trabalho futuro). A reconciliação automática
+(`gerenet change-requests reconcile`) tem o mesmo limite: indisponível para escopo `l2vc` —
+após um `parcial`, os caminhos são CR de remoção (`--acao remove`) ou CR de provision nova
+(seu re-diff aplica só a ponta ausente). **Nesta fase a reversão em produção é feita por
 um destes caminhos, validado com a equipe** (§12.4 permite estratégia documentada por tipo —
 rollback manual documentado é aceitável neste ciclo):
 

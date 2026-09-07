@@ -342,3 +342,60 @@ def test_cr_escopo_l2vc_popula_l2vc_name(
     detalhe = client.get(f"/api/v1/change-requests/{resp.json()['id']}", headers=_auth())
     assert detalhe.status_code == 200
     assert detalhe.json()["l2vc_name"] == "l2vc-cr-api"
+
+
+def test_rollback_cr_escopo_l2vc_truncado_400(
+    client: TestClient, db_session: Session
+) -> None:
+    """Fix R2 (revisão final S2-1): `gerar_rollback` é circuitocêntrico — CR
+    de escopo l2vc recebe 400 claro (antes: 404 "Circuito None"), sem CR filha
+    e com status inalterado: a guarda dispara antes de qualquer side effect."""
+    l2vc_id = _l2vc_api(db_session)
+    criada = client.post(
+        "/api/v1/change-requests",
+        json={"escopo": "l2vc", "l2vc_id": l2vc_id, "acao": "provision",
+              "motivo": "Ativar L2VC.", "criticidade": "baixa"},
+        headers=_auth(),
+    )
+    assert criada.status_code == 201, criada.text
+    cr_id = criada.json()["id"]
+    modelo = db_session.get(models.ChangeRequest, cr_id)
+    modelo.status = "aplicado"
+    modelo.steps[0].status = "aplicado"  # estado coerente; a guarda é anterior
+    db_session.commit()
+    antes = len(db_session.scalars(select(models.ChangeRequest)).all())
+    resp = client.post(f"/api/v1/change-requests/{cr_id}/rollback", headers=_auth())
+    assert resp.status_code == 400, resp.text
+    assert "l2vc" in resp.json()["detail"].lower()
+    filhos = db_session.scalars(
+        select(models.ChangeRequest).where(models.ChangeRequest.rollback_de == cr_id)
+    ).all()
+    assert filhos == []
+    assert len(db_session.scalars(select(models.ChangeRequest)).all()) == antes
+    assert db_session.get(models.ChangeRequest, cr_id).status == "aplicado"
+
+
+def test_reconciliar_cr_escopo_l2vc_truncado_400(
+    client: TestClient, db_session: Session
+) -> None:
+    """Fix R2 (revisão final S2-1): `reconciliar` é circuitocêntrico — CR de
+    escopo l2vc recebe 400 claro, sem CR nova e sem transição de status
+    (parcial é o modo de falha desenhado do L2VC)."""
+    l2vc_id = _l2vc_api(db_session)
+    criada = client.post(
+        "/api/v1/change-requests",
+        json={"escopo": "l2vc", "l2vc_id": l2vc_id, "acao": "provision",
+              "motivo": "Ativar L2VC.", "criticidade": "baixa"},
+        headers=_auth(),
+    )
+    assert criada.status_code == 201, criada.text
+    cr_id = criada.json()["id"]
+    modelo = db_session.get(models.ChangeRequest, cr_id)
+    modelo.status = "parcial"
+    db_session.commit()
+    antes = len(db_session.scalars(select(models.ChangeRequest)).all())
+    resp = client.post(f"/api/v1/change-requests/{cr_id}/reconciliar", headers=_auth())
+    assert resp.status_code == 400, resp.text
+    assert "l2vc" in resp.json()["detail"].lower()
+    assert len(db_session.scalars(select(models.ChangeRequest)).all()) == antes
+    assert db_session.get(models.ChangeRequest, cr_id).status == "parcial"

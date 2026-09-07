@@ -190,8 +190,10 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   (e2e idem ciclo D, banco `gerenet_e2e`). A validação em equipamento real segue
   `docs/runbook-validacao-switch-mpls.md` (somente leitura → geração sem
   execução → teste em switch não crítico; **sem lab** — decisão do usuário
-  2026-09-07); atenção: rollback de CR de escopo `l2vc` ainda não é automatizado
-  (`gerar_rollback` é circuitocêntrico) — reversão via CR de remoção aprovada ou
-  manual documentado, conforme o runbook.
+  2026-09-07); atenção: rollback e reconciliação de CR de escopo `l2vc` ainda
+  não são automatizados (`gerar_rollback`/`reconciliar` são circuitocêntricos
+  — 400 guardado na API) — reversão/recomposição via CR de remoção aprovada
+  (`--acao remove`) ou CR de provision nova (o re-diff aplica só a ponta
+  ausente), conforme o runbook.
 - Convenções previstas no `.gitignore`: Python com venv e pytest (`.venv/`, `.pytest_cache/`), deploy via Docker Compose (`compose.yaml` na raiz) com `.env` ignorado (o `.gitignore` ainda prevê `deploy/docker/.env`), `config.yaml` local com segredos **fora do repositório**, logs em `logs/` ignorados.
 - `.claude/settings.local.json` contém token e aponta o harness para uma API externa: é arquivo local — não versionar nem alterar.
