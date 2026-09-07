@@ -11,6 +11,10 @@ from gerenet.domain.schemas import (
     BgpSessionCreate,
     CircuitCreate,
     DeviceCreate,
+    L2vcCreate,
+    L2vcEndpointIn,
+    MplsDomainCreate,
+    MplsMemberIn,
     OrganizationCreate,
     SiteCreate,
 )
@@ -19,6 +23,7 @@ from gerenet.domain.services.bgp_sessions import create_session
 from gerenet.domain.services.circuits import create_circuit
 from gerenet.domain.services.devices import create_device
 from gerenet.domain.services.ipam import reservar_circuito
+from gerenet.domain.services.mpls import add_domain_member, create_domain, create_l2vc
 from gerenet.domain.services.organizations import create_organization
 from gerenet.domain.services.sites import create_site, link_device
 
@@ -221,3 +226,43 @@ def test_add_sem_sessoes_ativas_nao_cria_cr(db_session: Session) -> None:
         )
         is None
     )
+
+
+def _l2vc_cli(db_session: Session) -> int:
+    """L2VC com site + 2 switches (site_id em ambos — regra T3 da reserva de VLAN de AC)."""
+    site = create_site(db_session, SiteCreate(name="pop-cr-cli-l2vc"), actor="cli")
+    d1 = create_device(db_session, DeviceCreate(
+        name="sw-cr-cli-a", management_address="10.0.0.71", site_id=site.id), actor="cli")
+    d2 = create_device(db_session, DeviceCreate(
+        name="sw-cr-cli-b", management_address="10.0.0.72", site_id=site.id), actor="cli")
+    dom = create_domain(db_session, MplsDomainCreate(name="dom-cr-cli"), actor="cli")
+    add_domain_member(db_session, dom.id,
+                      MplsMemberIn(device_id=d1.id, loopback_address="10.255.9.1"), actor="cli")
+    add_domain_member(db_session, dom.id,
+                      MplsMemberIn(device_id=d2.id, loopback_address="10.255.9.2"), actor="cli")
+    svc = create_l2vc(db_session, L2vcCreate(
+        domain_id=dom.id, name="l2vc-cr-cli", vc_id=901,
+        endpoints=[
+            L2vcEndpointIn(device_id=d1.id, interface="10GE0/0/1", encapsulation="dot1q", vid=431),
+            L2vcEndpointIn(device_id=d2.id, interface="10GE0/0/2", encapsulation="dot1q", vid=432),
+        ],
+    ), actor="cli")
+    db_session.commit()
+    return svc.id
+
+
+def test_cli_add_escopo_l2vc(db_session: Session) -> None:
+    """Fumo (T8, Step 4): change-requests add --escopo l2vc --l2vc-id N nasce rascunho
+    com 2 steps (uma por ponta), como a CR de circuito."""
+    l2vc_id = _l2vc_cli(db_session)
+    add = runner.invoke(app, [
+        "change-requests", "add", "--escopo", "l2vc", "--l2vc-id", str(l2vc_id),
+        "--motivo", "Ativar L2VC do cliente.",
+    ])
+    assert add.exit_code == 0, add.output
+    assert "rascunho" in add.output
+    cr_id = _cr_id(add.output)
+    cr = db_session.get(models.ChangeRequest, cr_id)
+    assert cr is not None and cr.escopo == "l2vc"
+    assert len(cr.steps) == 2
+    assert cr.circuit_id is None and cr.l2vc_id == l2vc_id

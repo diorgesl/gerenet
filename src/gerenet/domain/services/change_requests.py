@@ -149,6 +149,7 @@ def get_change_request(session: Session, cr_id: int) -> models.ChangeRequest:
 def list_change_requests(
     session: Session, *, status: str | None = None,
     solicitante_id: int | None = None, circuit_id: int | None = None,
+    escopo: str | None = None,
 ) -> list[models.ChangeRequest]:
     stmt = select(models.ChangeRequest).order_by(models.ChangeRequest.id.desc())
     if status is not None:
@@ -157,6 +158,8 @@ def list_change_requests(
         stmt = stmt.where(models.ChangeRequest.solicitante_id == solicitante_id)
     if circuit_id is not None:
         stmt = stmt.where(models.ChangeRequest.circuit_id == circuit_id)
+    if escopo is not None:
+        stmt = stmt.where(models.ChangeRequest.escopo == escopo)
     return list(session.scalars(stmt))
 
 

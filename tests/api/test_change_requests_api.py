@@ -13,6 +13,10 @@ from gerenet.domain.schemas import (
     BgpSessionCreate,
     CircuitCreate,
     DeviceCreate,
+    L2vcCreate,
+    L2vcEndpointIn,
+    MplsDomainCreate,
+    MplsMemberIn,
     OrganizationCreate,
     SiteCreate,
 )
@@ -21,6 +25,7 @@ from gerenet.domain.services.bgp_sessions import create_session
 from gerenet.domain.services.circuits import create_circuit
 from gerenet.domain.services.devices import create_device
 from gerenet.domain.services.ipam import reservar_circuito
+from gerenet.domain.services.mpls import add_domain_member, create_domain, create_l2vc
 from gerenet.domain.services.organizations import create_organization
 from gerenet.domain.services.sites import create_site, link_device
 
@@ -269,3 +274,48 @@ def test_rollback_sem_baseline_rejeita_422(client: TestClient, db_session: Sessi
     filhos = db_session.scalars(select(models.ChangeRequest).where(models.ChangeRequest.rollback_de == cr["id"])).all()
     assert filhos == []
     assert len(db_session.scalars(select(models.ChangeRequest)).all()) == antes
+
+
+def _l2vc_api(db_session: Session) -> int:
+    """L2VC com site + 2 switches (site_id em ambos — regra T3 da reserva de VLAN de AC)."""
+    site = create_site(db_session, SiteCreate(name="pop-cr-api-l2vc"), actor="cli")
+    d1 = create_device(db_session, DeviceCreate(
+        name="sw-cr-api-a", management_address="10.0.0.91", site_id=site.id), actor="cli")
+    d2 = create_device(db_session, DeviceCreate(
+        name="sw-cr-api-b", management_address="10.0.0.92", site_id=site.id), actor="cli")
+    dom = create_domain(db_session, MplsDomainCreate(name="dom-cr-api"), actor="cli")
+    add_domain_member(db_session, dom.id,
+                      MplsMemberIn(device_id=d1.id, loopback_address="10.255.9.1"), actor="cli")
+    add_domain_member(db_session, dom.id,
+                      MplsMemberIn(device_id=d2.id, loopback_address="10.255.9.2"), actor="cli")
+    svc = create_l2vc(db_session, L2vcCreate(
+        domain_id=dom.id, name="l2vc-cr-api", vc_id=900,
+        endpoints=[
+            L2vcEndpointIn(device_id=d1.id, interface="10GE0/0/1", encapsulation="dot1q", vid=421),
+            L2vcEndpointIn(device_id=d2.id, interface="10GE0/0/2", encapsulation="dot1q", vid=422),
+        ],
+    ), actor="cli")
+    db_session.commit()
+    return svc.id
+
+
+def test_criar_cr_escopo_l2vc(client: TestClient, db_session: Session) -> None:
+    l2vc_id = _l2vc_api(db_session)
+    resp = client.post(
+        "/api/v1/change-requests",
+        json={"escopo": "l2vc", "l2vc_id": l2vc_id, "acao": "provision",
+              "motivo": "Ativar L2VC.", "criticidade": "baixa"},
+        headers=_auth(),
+    )
+    assert resp.status_code == 201, resp.text
+    cr = resp.json()
+    assert cr["escopo"] == "l2vc"
+    assert cr["l2vc_id"] == l2vc_id
+    assert len(cr["steps"]) == 2
+    # escopo l2vc sem l2vc_id → erro de validação do schema (422)
+    sem_id = client.post(
+        "/api/v1/change-requests",
+        json={"escopo": "l2vc", "acao": "provision", "motivo": "sem id"},
+        headers=_auth(),
+    )
+    assert sem_id.status_code == 422
