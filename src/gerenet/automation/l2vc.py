@@ -48,8 +48,10 @@ def render_l2vc(session: Session, service: models.L2vcService) -> dict[int, list
             )
         dev = devices[ep.device_id]
         support_fc = "mpls_flow_label" in (dev.capabilities or [])
+        interface = subinterface(ep.interface, vlan.vid)
         comandos = _render_template("l2vc_ac", {
-            "interface": subinterface(ep.interface, vlan.vid),
+            "interface": interface,
+            "vlanif": interface.upper().startswith("VLANIF"),
             "vid": vlan.vid,
             "inner_vlan": ep.inner_vlan,
             "encapsulation": ep.encapsulation,
@@ -79,9 +81,9 @@ def estado_bloco_l2vc(bloco: dict, recursos: dict) -> str:
     encontradas = [i for i in recursos.get("interfaces", []) if i.get("nome") == nome]
     vc_id = None
     for cmd in comandos:
-        m = re.search(r"mpls l2vc (\d+)", cmd)
+        m = re.search(r"mpls l2vc (\S+) (\d+)", cmd)
         if m:
-            vc_id = int(m.group(1))
+            vc_id = int(m.group(2))
             break
     if bloco.get("acao", "create") == "delete":
         return "consta" if encontradas else "ausente"

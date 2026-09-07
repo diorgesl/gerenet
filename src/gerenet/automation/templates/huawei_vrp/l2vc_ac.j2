@@ -1,7 +1,11 @@
 interface {{ interface }}
+{% if not vlanif %}
 {% if encapsulation == "qinq" %}
-encapsulation qinq vid {{ vid }} inner-vid {{ inner_vlan }}
+encapsulation qinq vid {{ vid }} inner-vlan {{ inner_vlan }}
 {% else %}
 encapsulation dot1q vid {{ vid }}
 {% endif %}
-mpls l2vc {{ vc_id }} encapsulation {{ "vlan-vpls" if encapsulation == "qinq" else "vlan" }} remote {{ remote_loopback }}{% if control_word %} control-word{% endif %}{% if flow_label %} flow-label{% endif %} mtu {{ mtu }}
+{% endif %}
+mpls l2vc {{ remote_loopback }} {{ vc_id }}{% if encapsulation == "qinq" %} encapsulation vlan-vpls{% endif %}{% if mtu %} mtu {{ mtu }}{% endif %}{% if control_word %} control-word{% endif %}
+
+{% if flow_label %}mpls l2vpn flow-label both{% endif %}

@@ -65,7 +65,9 @@ def test_l2vc_criar_com_409_e_plano(client):
     assert dupe.status_code == 409
     plano = client.get(f"/api/v1/mpls/l2vc/{svc['id']}/plano", headers=headers)
     assert plano.status_code == 200
-    assert len(plano.json()) == 2  # um por ponta (blocos com aviso sem coleta)
+    plano_data = plano.json()
+    assert len(plano_data) == 2  # um por ponta (blocos com aviso sem coleta)
+    assert all(set(item) == {"device_id", "blocos", "aviso", "baseline_snapshot_id"} for item in plano_data)
     descon = client.patch(f"/api/v1/mpls/l2vc/{svc['id']}/status", headers=headers, json={"admin_status": False})
     assert descon.json()["admin_status"] is False
     assert client.get("/api/v1/mpls/l2vc", headers=headers).json() == []

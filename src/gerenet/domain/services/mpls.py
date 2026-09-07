@@ -322,6 +322,17 @@ def create_l2vc(session: Session, data: L2vcCreate, *, actor: str = "cli") -> mo
     for ep in (a, b):
         if not ep.interface.strip():
             raise ValidationError(f"Ponta {ep.device_id}: interface é obrigatória.")
+        if ep.interface.upper().startswith("VLANIF"):
+            numero = ep.interface[6:].strip()
+            if not numero.isdigit() or int(numero) != ep.vid:
+                raise ValidationError(
+                    f"Ponta {ep.interface}: AC em Vlanif precisa terminar o vid reservado "
+                    f"(Vlanif{ep.vid})."
+                )
+            if ep.encapsulation == "qinq":
+                raise ValidationError(
+                    f"Ponta {ep.interface}: Vlanif não suporta QinQ — use subinterface."
+                )
         if ep.encapsulation == "qinq" and ep.inner_vlan is None:
             raise ValidationError(f"Ponta {ep.interface}: encapsulamento qinq exige inner-vlan.")
         if _membro_loopback(session, dom.id, ep.device_id) is None:

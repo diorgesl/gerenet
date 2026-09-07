@@ -67,11 +67,11 @@ def test_render_l2vc_dot1q(servico, db_session):
     assert bloco.objeto == "l2vc" and bloco.objeto_id == svc.id
     comandos = bloco.comandos
     assert comandos[0] == "interface 10GE0/0/1.101"
-    assert any(c.startswith("mpls l2vc 1000 encapsulation vlan remote 10.255.9.2") for c in comandos)
+    assert any(c == "mpls l2vc 10.255.9.2 1000 mtu 1500" for c in comandos)
     assert any("control-word" in c for c in comandos) is False
     # ponta B aponta para o loopback da ponta A
     comandos_b = por_device[d2.id][0].comandos
-    assert any("remote 10.255.9.1" in c for c in comandos_b)
+    assert any("mpls l2vc 10.255.9.1 1000" in c for c in comandos_b)
 
 
 def test_render_qinq_control_word_e_mtu(servico, db_session):
@@ -85,7 +85,7 @@ def test_render_qinq_control_word_e_mtu(servico, db_session):
     db_session.commit()
     por_device = l2vc.render_l2vc(db_session, svc)
     comandos = por_device[d1.id][0].comandos
-    linha = next(c for c in comandos if c.startswith("mpls l2vc 1000"))
+    linha = next(c for c in comandos if c.startswith("mpls l2vc "))
     assert "encapsulation vlan-vpls" in linha
     assert "control-word" in linha
     assert "mtu 1600" in linha
@@ -108,7 +108,7 @@ def test_estado_bloco_l2vc(servico):
     _d1, _d2, svc = servico
     bloco = {
         "tipo": "l2vc_ac", "objeto": "l2vc", "objeto_id": svc.id, "acao": "create",
-        "comandos": ["interface 10GE0/0/1.101", "mpls l2vc 1000 encapsulation vlan remote 10.255.9.2"],
+        "comandos": ["interface 10GE0/0/1.101", "mpls l2vc 10.255.9.2 1000 mtu 1500"],
     }
     ausente = l2vc.estado_bloco_l2vc(bloco, _recursos_vazios("10GE0/0/9.999"))
     assert ausente == "ausente"
@@ -196,3 +196,70 @@ def test_pos_check_up_e_down(servico, db_session):
     })
     items = l2vc.valida_pos_l2vc(db_session, svc, snap_down)
     assert any(i["tipo"] == "l2vc.estado" and i["severidade"] == "critica" for i in items)
+
+
+@pytest.fixture()
+def servico_vlanif(db_session):
+    site = create_site(db_session, SiteCreate(name="pop-aut-vl"), actor="cli")
+    d1 = create_device(
+        db_session, DeviceCreate(name="sw-a", management_address="10.0.0.73", site_id=site.id), actor="cli"
+    )
+    d2 = create_device(
+        db_session, DeviceCreate(name="sw-b", management_address="10.0.0.74", site_id=site.id), actor="cli"
+    )
+    dom = create_domain(db_session, MplsDomainCreate(name="dom-aut-vl"), actor="cli")
+    add_domain_member(db_session, dom.id, MplsMemberIn(device_id=d1.id, loopback_address="10.255.9.1"), actor="cli")
+    add_domain_member(db_session, dom.id, MplsMemberIn(device_id=d2.id, loopback_address="10.255.9.2"), actor="cli")
+    svc = create_l2vc(db_session, L2vcCreate(
+        domain_id=dom.id, name="cliente-vlanif", vc_id=1000,
+        endpoints=[
+            L2vcEndpointIn(device_id=d1.id, interface="Vlanif101", encapsulation="dot1q", vid=101, mtu=1500),
+            L2vcEndpointIn(device_id=d2.id, interface="Vlanif202", encapsulation="dot1q", vid=202, mtu=1500),
+        ],
+    ), actor="cli")
+    return d1, d2, svc
+
+
+def test_render_l2vc_vlanif_sem_encapsulation(servico_vlanif, db_session):
+    d1, _d2, svc = servico_vlanif
+    comandos = l2vc.render_l2vc(db_session, svc)[d1.id][0].comandos
+    assert comandos[0] == "interface Vlanif101"
+    assert not any(c.startswith("encapsulation") for c in comandos)
+    assert "mpls l2vc 10.255.9.2 1000 mtu 1500" in comandos
+
+
+def test_criar_vlanif_vid_incompativel(servico, db_session):
+    d1, d2, svc = servico
+    with pytest.raises(ValidationError, match="Vlanif"):
+        create_l2vc(db_session, L2vcCreate(
+            domain_id=svc.domain_id, name="cliente-vlanif-erro", vc_id=2000,
+            endpoints=[
+                L2vcEndpointIn(device_id=d1.id, interface="Vlanif101", encapsulation="dot1q", vid=202, mtu=1500),
+                L2vcEndpointIn(device_id=d2.id, interface="Vlanif202", encapsulation="dot1q", vid=202, mtu=1500),
+            ],
+        ), actor="cli")
+
+
+def test_criar_vlanif_qinq_rejeitado(servico, db_session):
+    d1, d2, svc = servico
+    with pytest.raises(ValidationError, match="QinQ"):
+        create_l2vc(db_session, L2vcCreate(
+            domain_id=svc.domain_id, name="cliente-vlanif-qinq", vc_id=2001,
+            endpoints=[
+                L2vcEndpointIn(device_id=d1.id, interface="Vlanif101", encapsulation="qinq", vid=101, inner_vlan=31, mtu=1500),
+                L2vcEndpointIn(device_id=d2.id, interface="Vlanif202", encapsulation="qinq", vid=202, inner_vlan=32, mtu=1500),
+            ],
+        ), actor="cli")
+
+
+def test_estado_bloco_l2vc_vlanif(servico_vlanif):
+    _d1, _d2, svc = servico_vlanif
+    bloco = {
+        "tipo": "l2vc_ac", "objeto": "l2vc", "objeto_id": svc.id, "acao": "create",
+        "comandos": ["interface Vlanif101", "mpls l2vc 10.255.9.2 1000 mtu 1500"],
+    }
+    presente = l2vc.estado_bloco_l2vc(bloco, {
+        "interfaces": [{"nome": "Vlanif101"}],
+        "l2vc": [{"vc_id": 1000, "interface": "Vlanif101", "estado": "up"}],
+    })
+    assert presente == "consta"

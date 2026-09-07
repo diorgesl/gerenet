@@ -64,5 +64,7 @@ def vsi_nome(name_logico: str, vsi_id: int) -> str:
 
 
 def subinterface(trunk: str, vid: int) -> str:
-    """Nome de subinterface dot1q: <trunk>.<vid>."""
+    """Nome final do AC: Vlanif<N> passa direto (sem sufixo); o resto vira `<trunk>.<vid>`."""
+    if trunk.upper().startswith("VLANIF"):
+        return trunk
     return f"{trunk}.{vid}"
