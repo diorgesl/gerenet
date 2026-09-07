@@ -588,3 +588,39 @@ class ChangeRequestOut(BaseModel):
     created_at: datetime
     steps: list[ChangeStepOut] = []
     approvals: list[ApprovalOut] = []
+
+
+class MplsMemberOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    device_id: int
+    device_name: str | None = None
+    loopback_address: str
+    role: str
+
+
+class MplsDomainCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    description: str | None = Field(default=None, max_length=255)
+
+
+class MplsDomainUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+    description: str | None = Field(default=None, max_length=255)
+    admin_status: bool | None = None
+
+
+class MplsMemberIn(BaseModel):
+    device_id: int
+    loopback_address: str = Field(max_length=64)  # conteúdo validado no serviço (vazio → ValidationError)
+    role: Literal["pe", "core"] = "pe"
+
+
+class MplsDomainOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    name: str
+    description: str | None
+    admin_status: bool
+    created_at: datetime
+    updated_at: datetime
+    members: list[MplsMemberOut] = Field(default_factory=list)
