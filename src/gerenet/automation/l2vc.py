@@ -8,7 +8,6 @@ import re
 from sqlalchemy.orm import Session
 
 from gerenet.automation import changes
-from gerenet.automation.naming import subinterface
 from gerenet.automation.render import BlocoRender, _render_template
 from gerenet.domain import models
 from gerenet.domain.services.errors import ValidationError
@@ -48,13 +47,9 @@ def render_l2vc(session: Session, service: models.L2vcService) -> dict[int, list
             )
         dev = devices[ep.device_id]
         support_fc = "mpls_flow_label" in (dev.capabilities or [])
-        interface = subinterface(ep.interface, vlan.vid)
+        interface = ep.interface  # AC untag: interface principal (porta/Eth-Trunk L3)
         comandos = _render_template("l2vc_ac", {
             "interface": interface,
-            "vlanif": interface.upper().startswith("VLANIF"),
-            "vid": vlan.vid,
-            "inner_vlan": ep.inner_vlan,
-            "encapsulation": ep.encapsulation,
             "vc_id": service.vc_id,
             "remote_loopback": loopbacks[ep.device_id],
             "control_word": service.control_word,
@@ -68,7 +63,7 @@ def render_l2vc(session: Session, service: models.L2vcService) -> dict[int, list
 
 
 def estado_bloco_l2vc(bloco: dict, recursos: dict) -> str:
-    """Presença do AC no encontrado, por identidade (vc-id + subinterface)."""
+    """Presença do AC no encontrado, por identidade (vc-id na interface do AC)."""
     comandos = bloco.get("comandos") or []
     if not comandos:
         return "ausente"
@@ -78,28 +73,23 @@ def estado_bloco_l2vc(bloco: dict, recursos: dict) -> str:
     nome = partes[1]
     if partes[0] == "undo":
         nome = nome.split(" ", 1)[1] if " " in nome else nome
-    encontradas = [i for i in recursos.get("interfaces", []) if i.get("nome") == nome]
     vc_id = None
     for cmd in comandos:
         m = re.search(r"mpls l2vc (\S+) (\d+)", cmd)
         if m:
             vc_id = int(m.group(2))
             break
-    if bloco.get("acao", "create") == "delete":
-        return "consta" if encontradas else "ausente"
-    if not encontradas:
-        return "ausente"
     if vc_id is None:
-        return "conflito"
+        return "ausente"
     linhas = [l for l in recursos.get("l2vc", []) if l.get("vc_id") == vc_id]
     if not linhas:
-        return "conflito"  # subinterface presente sem o VC: parcial/mudada desde o plano
+        return "ausente"  # create: nada a pular; delete: nada a remover
     if linhas[0].get("interface") not in (None, nome):
-        return "conflito"
+        return "conflito"  # VC em outra interface: mudado desde o plano
     return "consta"
 
 
-_RECURSOS_L2VC = ("interfaces", "l2vc")
+_RECURSOS_L2VC = ("l2vc",)
 """Recursos mínimos para diff confiável de um AC (espelho de `_RECURSOS_MINIMOS`)."""
 
 
@@ -136,8 +126,8 @@ def plan_provision_l2vc(session: Session, service: models.L2vcService) -> list[c
 def plan_remocao_l2vc(session: Session, service: models.L2vcService) -> list[changes.PlanoDevice]:
     """Blocos delete por ponta; snapshot fresco obrigatório (padrão plan_remocao, §5.2).
 
-    A identidade da remoção é a subinterface no recurso `interfaces` (o AC inteiro
-    cai com `undo interface <sub>`), sem precisar do texto do backup.
+    A identidade da remoção é o VC referenciado no snapshot — `undo mpls l2vc
+    <peer> <vc>` dentro da interface, sem derrubar a interface.
     """
     plano: list[changes.PlanoDevice] = []
     for device_id, blocos in render_l2vc(session, service).items():
@@ -150,8 +140,12 @@ def plan_remocao_l2vc(session: Session, service: models.L2vcService) -> list[cha
         a_remover: list[dict] = []
         for bloco in blocos:
             item = changes._bloco_para_plano(bloco, "delete")
-            if bloco.comandos:
-                item["comandos"] = [f"undo {bloco.comandos[0]}"]  # "interface X" -> "undo interface X"
+            m = re.search(r"mpls l2vc (\S+) (\d+)", bloco.texto) if bloco.comandos else None
+            if m:
+                item["comandos"] = [
+                    bloco.comandos[0],
+                    f"undo mpls l2vc {m.group(1)} {m.group(2)}",
+                ]
             if estado_bloco_l2vc(item, recursos) == "consta":
                 a_remover.append(item)
         plano.append(changes.PlanoDevice(
@@ -173,8 +167,7 @@ def valida_pre_checks_l2vc(session: Session, service: models.L2vcService, device
     ep = next((e for e in service.endpoints if e.device_id == device.id), None)
     if ep is None:
         return "Serviço L2VC sem ponta neste equipamento — revalide o serviço."
-    vlan = session.get(models.Vlan, ep.vlan_id) if ep.vlan_id is not None else None
-    esperado = subinterface(ep.interface, vlan.vid) if vlan is not None else ep.interface
+    esperado = ep.interface  # AC untag: nome da interface é o nome final
     vc_linhas = [l for l in recursos.get("l2vc", []) if l.get("vc_id") == service.vc_id]
     if vc_linhas and vc_linhas[0].get("interface") not in (None, esperado):
         return (f"Binding conflitante: VC {service.vc_id} já está na interface "

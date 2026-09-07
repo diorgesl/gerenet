@@ -104,32 +104,22 @@ def test_bgp_peer_v6_minimo_com_shutdown() -> None:
     ) == "bgp 61785\npeer 2804:194C:1000::1100:73:2 as-number 270620\npeer 2804:194C:1000::1100:73:2 shutdown\nipv6-family unicast\n  peer 2804:194C:1000::1100:73:2 enable"
 
 
-def test_l2vc_ac_vlanif_sem_encapsulation() -> None:
+def test_l2vc_ac_porta_fisica_untag() -> None:
     assert _render(
         "l2vc_ac",
-        interface="Vlanif101", vid=101, inner_vlan=None, encapsulation="dot1q",
-        vc_id=1000, remote_loopback="10.255.9.2", control_word=False,
-        flow_label=False, mtu=1500, vlanif=True,
-    ) == "interface Vlanif101\nmpls l2vc 10.255.9.2 1000 mtu 1500"
-
-
-def test_l2vc_ac_subinterface_dot1q() -> None:
-    assert _render(
-        "l2vc_ac",
-        interface="10GE0/0/1.101", vid=101, inner_vlan=None, encapsulation="dot1q",
+        interface="10GE0/0/1", vid=101, inner_vlan=None, encapsulation="dot1q",
         vc_id=1000, remote_loopback="10.255.9.2", control_word=False,
         flow_label=False, mtu=1500, vlanif=False,
-    ) == "interface 10GE0/0/1.101\nencapsulation dot1q vid 101\nmpls l2vc 10.255.9.2 1000 mtu 1500"
+    ) == "interface 10GE0/0/1\nundo portswitch\nmtu 1500\nmpls l2vc 10.255.9.2 1000"
 
 
-def test_l2vc_ac_qinq_control_word_flow_label() -> None:
+def test_l2vc_ac_trunk_flow_label_control_word() -> None:
     assert _render(
         "l2vc_ac",
-        interface="Eth-Trunk127.4024", vid=4024, inner_vlan=31, encapsulation="qinq",
+        interface="Eth-Trunk43", vid=500, inner_vlan=None, encapsulation="dot1q",
         vc_id=1000, remote_loopback="10.255.9.2", control_word=True,
         flow_label=True, mtu=1600, vlanif=False,
     ) == (
-        "interface Eth-Trunk127.4024\nencapsulation qinq vid 4024 inner-vlan 31\n"
-        "mpls l2vc 10.255.9.2 1000 encapsulation vlan-vpls mtu 1600 control-word\n"
-        "mpls l2vpn flow-label both"
+        "interface Eth-Trunk43\nundo portswitch\nmtu 1600\n"
+        "mpls l2vc 10.255.9.2 1000 control-word\nmpls l2vpn flow-label both"
     )

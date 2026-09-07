@@ -5,7 +5,6 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from gerenet.automation import l2vc as l2vc_auto
-from gerenet.automation.naming import subinterface
 from gerenet.automation.runner import _chaves_incompletas, run_change
 from gerenet.config import Settings
 from gerenet.domain import models
@@ -73,14 +72,9 @@ def _recursos_l2vc_vazios(db_session, dev, svc, *, peer_up: bool = True) -> dict
     }
 
 
-def _subs_do_render(db_session, dev, svc) -> list[str]:
-    nomes = []
-    for ep in svc.endpoints:
-        if ep.device_id != dev.id:
-            continue
-        vlan = db_session.get(models.Vlan, ep.vlan_id)
-        nomes.append(subinterface(ep.interface, vlan.vid))
-    return nomes
+def _subs_do_render(_db_session, dev, svc) -> list[str]:
+    """Nomes dos ACs no encontrado — AC untag: a própria interface (porta/Eth-Trunk L3)."""
+    return [ep.interface for ep in svc.endpoints if ep.device_id == dev.id]
 
 
 def _recursos_l2vc_aplicados(db_session, dev, svc, *, estado: str = "up") -> dict:
