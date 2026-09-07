@@ -592,6 +592,7 @@ class ChangeRequestOut(BaseModel):
     circuit_id: int | None
     escopo: str
     l2vc_id: int | None = None
+    l2vc_name: str | None = None
     acao: str
     criticidade: str
     motivo: str

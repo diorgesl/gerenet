@@ -1,4 +1,5 @@
 """Runner escopo-aware — CR de L2VC (§5/§7 spec): gate, pré-check e pós-check."""
+from collections.abc import Callable
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -113,7 +114,14 @@ def _cr_l2vc_aprovada(db_session, d1, d2, svc) -> models.ChangeRequest:
     return cr
 
 
-def _fakes_de_mudanca(monkeypatch, db_session, dev, colas: list[dict]):
+def _fakes_de_mudanca(
+    monkeypatch, db_session, dev, colas: list[dict], aplica: Callable | None = None,
+):
+    """Orquestra as fakes: cola retorna uma coleção por chamada (pré → pós).
+
+    `aplica` (opcional) substitui o echo padrão da aplicação — espelho do
+    `aplicacoes` do ciclo D (test_runner_change.py), aqui um callable.
+    """
     monkeypatch.setattr("gerenet.automation.runner.VaultSecretStore", VaultFake)
     ultimo: list[dict | None] = [None]
 
@@ -122,11 +130,11 @@ def _fakes_de_mudanca(monkeypatch, db_session, dev, colas: list[dict]):
         ultimo[0] = recursos
         return dict(recursos), {}, {}
 
+    def _aplica_padrao(device, username, password, commands, settings):
+        return {"config": ("\n".join(commands) + "\n")}
+
     monkeypatch.setattr("gerenet.automation.runner._coleta_recursos", _coleta)
-    monkeypatch.setattr(
-        "gerenet.automation.runner._conectar_e_aplicar",
-        lambda device, username, password, commands, settings: {"config": ("\n".join(commands) + "\n")},
-    )
+    monkeypatch.setattr("gerenet.automation.runner._conectar_e_aplicar", aplica or _aplica_padrao)
 
 
 def test_run_change_l2vc_fluxo_ok(db_session: Session, tmp_path: Path, monkeypatch) -> None:
@@ -208,21 +216,12 @@ def test_run_change_l2vc_falha_so_no_device_b_vira_parcial(
         _recursos_l2vc_vazios(db_session, d1, svc), _recursos_l2vc_aplicados(db_session, d1, svc),
         _recursos_l2vc_vazios(db_session, d2, svc),
     ]
-    monkeypatch.setattr("gerenet.automation.runner.VaultSecretStore", VaultFake)
-    ultimo: list[dict | None] = [None]
-
-    def _coleta(session, device, cred, settings, base):
-        recursos = colas.pop(0) if colas else ultimo[0]
-        ultimo[0] = recursos
-        return dict(recursos), {}, {}
-
     def _aplica(device, username, password, commands, settings):
         if device.name == d2.name:
             raise ValueError("falha crítica do VRP no device B")
         return {"config": ("\n".join(commands) + "\n")}
 
-    monkeypatch.setattr("gerenet.automation.runner._coleta_recursos", _coleta)
-    monkeypatch.setattr("gerenet.automation.runner._conectar_e_aplicar", _aplica)
+    _fakes_de_mudanca(monkeypatch, db_session, d1, colas, aplica=_aplica)
 
     resultado = run_change(cr.id, settings=Settings(_env_file=None, backups_dir=tmp_path),
                            session_override=db_session)
