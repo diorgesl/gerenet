@@ -138,7 +138,7 @@ def test_plan_provision_idempotente(servico, db_session):
     assert len(plano) == 2
     assert all(isinstance(p, PlanoDevice) for p in plano)
     assert all(len(p.blocos) == 1 for p in plano)
-    # segunda chamada: ainda cenário "ausente" — diffs estáveis (nenhum write)
+    # segunda chamada: ainda cenário divergente ('conflito') — diffs estáveis (nenhum write)
     plano2 = l2vc.plan_provision_l2vc(db_session, svc)
     assert [len(p.blocos) for p in plano2] == [1, 1]
     # aplicado na coleta ⇒ plano vazio (skip de tudo)

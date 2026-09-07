@@ -195,7 +195,7 @@ def valida_pos_l2vc(session: Session, service: models.L2vcService, snapshot: mod
     if achada is None:
         items.append({
             "tipo": "l2vc.ausente", "severidade": "critica",
-            "esperado": f"{service.name} (vc {service.vc_id})", "encontrado": "nao listado",
+            "esperado": f"{service.name} (vc {service.vc_id})", "encontrado": "não listado",
             "acao": "Verificar config do AC e revalidar (display l2vc).",
         })
     elif str(achada.get("estado", "")).lower() != "up":
