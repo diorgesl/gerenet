@@ -38,6 +38,12 @@ const ACAO_LABELS: Record<ChangeRequestOut["acao"], string> = {
   remove: "Remover configuração",
 };
 
+// Rótulo do objeto da CR quando o catálogo não tem o id: circuitos usam #N;
+// CRs de escopo l2vc não têm circuito e exibem o nome do serviço (ou "—").
+function rotuloObjeto(cr: ChangeRequestOut): string {
+  return cr.circuit_id !== null ? `#${cr.circuit_id}` : (cr.l2vc_name ?? "—");
+}
+
 export default function ChangeRequests() {
   const { podeEscrever } = useAuth();
   const [status, setStatus] = useState("");
@@ -95,7 +101,7 @@ export default function ChangeRequests() {
       <DataTable<ChangeRequestOut>
         colunas={[
           { key: "id", title: "ID", render: (cr) => <Link to={`/change-requests/${cr.id}`}>#{cr.id}</Link> },
-          { key: "circuit", title: "Circuito", render: (cr) => circuits?.find((c) => c.id === cr.circuit_id)?.code ?? `#${cr.circuit_id}` },
+          { key: "circuit", title: "Circuito", render: (cr) => circuits?.find((c) => c.id === cr.circuit_id)?.code ?? rotuloObjeto(cr) },
           { key: "acao", title: "Ação", render: (cr) => ACAO_LABELS[cr.acao] },
           { key: "criticidade", title: "Criticidade", render: (cr) => cr.criticidade },
           { key: "status", title: "Status", render: (cr) => <StatusBadge estado={cr.status} /> },
