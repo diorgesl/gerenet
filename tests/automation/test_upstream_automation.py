@@ -6,6 +6,7 @@ from sqlalchemy import select
 from gerenet.automation.upstream import (
     plan_provision_upstream,
     plan_remocao_upstream,
+    prefixos_recebidos,
     valida_pos_upstream,
     valida_pre_upstream,
 )
@@ -277,3 +278,21 @@ def test_valida_pos_upstream_pref_rcv_malformada_sem_typeerror(
     peers = _peers_up(pref_rcv="?") + _peers_up(peer="100.64.10.6", pref_rcv="?")
     snap = _snapshot_up(session, edge_device, peers)
     assert valida_pos_upstream(session, up_com_2_circuitos, snap) == []
+
+
+def test_prefixos_recebidos_contam_sessoes_desativadas_na_remocao(
+    session, up_com_2_circuitos
+):
+    """C1 (revisão fina): a remoção soma `pref_rcv` também das sessões
+    DESATIVADAS (o plano de delete as inclui; list_sessions default filtra)."""
+    for vin in up_com_2_circuitos.circuitos:
+        for s in session.scalars(select(models.BgpSession).where(
+                models.BgpSession.circuit_id == vin.circuit_id)):
+            s.admin_status = False
+    session.commit()
+
+    recursos = {"bgp_peers": _peers_up(pref_rcv=900)}
+    assert prefixos_recebidos(session, up_com_2_circuitos, recursos) == {}
+    assert prefixos_recebidos(
+        session, up_com_2_circuitos, recursos, include_disabled=True,
+    ) == {"ipv4": 900}

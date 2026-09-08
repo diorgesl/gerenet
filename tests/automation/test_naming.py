@@ -1,7 +1,14 @@
 """Golden do derivador de nomes §25.4/§8 — nomes ≤ 63 chars, maiúsculas, base = ASN do par."""
 import pytest
 
-from gerenet.automation.naming import as_path_own, pfx_in, pfx_produto, rp_export, rp_import, subinterface
+from gerenet.automation.naming import (
+    as_path_own,
+    pfx_in,
+    pfx_produto,
+    rp_export,
+    rp_import,
+    subinterface,
+)
 from gerenet.domain.services.errors import ValidationError
 
 

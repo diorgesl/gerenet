@@ -683,10 +683,12 @@ def _executa_step(
                 step.post_check_json = {
                     **step.post_check_json,
                     "prefixos_antes": up_auto.prefixos_recebidos(
-                        session, up, recursos_pre
+                        session, up, recursos_pre,
+                        include_disabled=(cr.acao == "remove"),
                     ),
                     "prefixos_depois": up_auto.prefixos_recebidos(
-                        session, up, recursos_pos
+                        session, up, recursos_pos,
+                        include_disabled=(cr.acao == "remove"),
                     ),
                 }
         else:
@@ -717,10 +719,12 @@ def _executa_step(
                 step.post_check_json = {
                     **step.post_check_json,
                     "prefixos_antes": up_auto.prefixos_recebidos(
-                        session, up, recursos_pre
+                        session, up, recursos_pre,
+                        include_disabled=(cr.acao == "remove"),
                     ),
                     "prefixos_depois": up_auto.prefixos_recebidos(
-                        session, up, recursos_pos
+                        session, up, recursos_pos,
+                        include_disabled=(cr.acao == "remove"),
                     ),
                 }
 
@@ -914,6 +918,13 @@ def run_change(
                 if status_cr is None:
                     return {"status": "erro", "error": "Change request sem steps pendentes."}
             cr.status = status_cr
+            if cr.escopo == "upstream" and cr.acao == "remove" and status_cr == "aplicado":
+                # C1 (revisão fina): remoção APLICADA desativa o upstream no
+                # SoT (§14.1 — objeto em uso é desativado, nunca excluído;
+                # circuitos e sessões permanecem), com o audit do serviço.
+                # com_divergencia/parcial/erro mantêm o upstream ativo.
+                from gerenet.domain.services.upstreams import disable_upstream
+                disable_upstream(session, cr.upstream_id, actor=actor)
             session.add(
                 AuditEvent(type=_TIPO_AUDIT[status_cr], actor=actor, details={"change_request_id": cr.id})
             )
