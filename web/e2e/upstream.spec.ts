@@ -21,7 +21,10 @@ const NOME_ORG = `e2e-operadora-${RODADA}`;
 const NOME_UPSTREAM = `e2e-upstream-${RODADA}`;
 const NOME_DEVICE = `e2e-ne-upstream-${RODADA}`;
 const CODIGO_CIRC = `e2e-upstr-circ-${RODADA}`;
-const VALOR_COMM = `65530:${20000 + (RODADA % 65500)}`;
+// m-1 (revisão T20): metades de community clássica são 16-bit (teto 65535) —
+// o resto anterior chegava a 85499; o backend não valida faixa hoje, mas uma
+// validação 32-bit futura não pode quebrar o fumo.
+const VALOR_COMM = `65530:${20000 + (RODADA % 45536)}`; // 20000..65535
 const API = { "x-api-key": API_KEY, "content-type": "application/json" };
 
 async function entrar(page: Page, usuario = "admin"): Promise<void> {
