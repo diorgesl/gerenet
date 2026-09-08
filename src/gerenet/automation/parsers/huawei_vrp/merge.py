@@ -60,8 +60,8 @@ def merge_bgp_peers(por_comando: dict[str, list[dict]]) -> list[dict]:
     """Combine the v4 and v6 peer tables into one list with afi and typed values.
 
     Order: commands in dict order (v4 before v6 in the collector), rows in table
-    order. Keys: {afi, peer, asn, estado, pref_rcv, up_down} with asn/pref_rcv
-    cast to int.
+    order. Keys: {afi, peer, asn, estado, pref_rcv, up_down} with asn cast to
+    int and pref_rcv to int when numeric ("-" do VRP vira None).
     """
     return [
         {
@@ -69,7 +69,7 @@ def merge_bgp_peers(por_comando: dict[str, list[dict]]) -> list[dict]:
             "peer": linha["peer"],
             "asn": int(linha["asn"]),
             "estado": linha["estado"],
-            "pref_rcv": int(linha["pref_rcv"]),
+            "pref_rcv": None if linha["pref_rcv"] == "-" else int(linha["pref_rcv"]),
             "up_down": linha["up_down"],
         }
         for comando, linhas in por_comando.items()

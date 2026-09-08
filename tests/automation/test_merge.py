@@ -120,6 +120,25 @@ def test_bgp_peers_combina_familias_com_afi_e_tipos() -> None:
     ]
 
 
+def test_bgp_peers_prefrcv_ausente_vira_none() -> None:
+    # PrefRcv "-" (peer sem rotas recebidas, exibido assim pelo VRP) não pode
+    # virar número: chega como None e a soma do runner/reconcile descarta.
+    por_comando = {
+        "display bgp peer": [
+            {"peer": "10.30.70.2", "asn": "64527", "estado": "Active",
+             "pref_rcv": "-", "up_down": "0456h07m"},
+            {"peer": "10.30.70.3", "asn": "64528", "estado": "Established",
+             "pref_rcv": "42", "up_down": "0456h06m"},
+        ],
+    }
+    assert merge_bgp_peers(por_comando) == [
+        {"afi": "ipv4", "peer": "10.30.70.2", "asn": 64527, "estado": "Active",
+         "pref_rcv": None, "up_down": "0456h07m"},
+        {"afi": "ipv4", "peer": "10.30.70.3", "asn": 64528, "estado": "Established",
+         "pref_rcv": 42, "up_down": "0456h06m"},
+    ]
+
+
 def test_bgp_peers_vazio_devolve_lista_vazia() -> None:
     assert merge_bgp_peers({}) == []
     assert merge_bgp_peers({"display bgp peer": []}) == []
