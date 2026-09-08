@@ -67,6 +67,104 @@ def test_route_policy_import_v4_com_lp_e_v6_sem_lp() -> None:
     ) == "route-policy RP-64500-IMPORT-V6 permit node 10\nif-match ipv6 address prefix-list IP-PFX-64500-IN-V6"
 
 
+def test_community_filter() -> None:
+    assert _render(
+        "community_filter", nome="CF-64512-BLK-1", valor="65530:666:0",
+    ) == "ip community-filter CF-64512-BLK-1 permit 65530:666:0"
+
+
+def test_route_policy_import_up_full() -> None:
+    assert _render(
+        "route_policy_import", nome="RP-64512-IMPORT-V4", afi="ipv4",
+        lista="IP-PFX-64512-IN-V4", local_preference=120, produto="up-full",
+        deny_communities=["CF-64512-BLK-1"], fail_safe=False,
+    ) == (
+        "# up-full: accept-all do provedor, exceto as proteções — deny em nós separados (if-match no mesmo nó é E, não OU)\n"
+        "route-policy RP-64512-IMPORT-V4 deny node 10\n"
+        "if-match ip-prefix IP-PFX-64512-IN-V4\n"
+        "route-policy RP-64512-IMPORT-V4 deny node 20\n"
+        "if-match community-filter CF-64512-BLK-1\n"
+        "route-policy RP-64512-IMPORT-V4 permit node 100\n"
+        "apply local-preference 120"
+    )
+
+
+def test_route_policy_import_up_full_v6_sem_lp() -> None:
+    assert _render(
+        "route_policy_import", nome="RP-64512-IMPORT-V6", afi="ipv6",
+        lista="IP-PFX-64512-IN-V6", local_preference=None, produto="up-full",
+        deny_communities=["CF-64512-BLK-1"], fail_safe=False,
+    ) == (
+        "# up-full: accept-all do provedor, exceto as proteções — deny em nós separados (if-match no mesmo nó é E, não OU)\n"
+        "route-policy RP-64512-IMPORT-V6 deny node 10\n"
+        "if-match ipv6 address prefix-list IP-PFX-64512-IN-V6\n"
+        "route-policy RP-64512-IMPORT-V6 deny node 20\n"
+        "if-match community-filter CF-64512-BLK-1\n"
+        "route-policy RP-64512-IMPORT-V6 permit node 100"
+    )
+
+
+def test_route_policy_import_sem_perfil_fail_safe() -> None:
+    texto = _render(
+        "route_policy_import", nome="RP-64512-IMPORT-V4", afi="ipv4", lista=None,
+        local_preference=None, produto=None, deny_communities=[], fail_safe=True,
+    )
+    assert texto == (
+        "# fail-safe: sessão de upstream sem perfil de import — deny-all (nunca accept-all)\n"
+        "route-policy RP-64512-IMPORT-V4 deny node 10"
+    )
+    assert "permit" not in texto
+
+
+def test_route_policy_import_up_parcial() -> None:
+    assert _render(
+        "route_policy_import", nome="RP-64512-IMPORT-V4", afi="ipv4",
+        lista="IP-PFX-DEFAULT-V4", local_preference=200, produto="up-parcial",
+        deny_communities=["CF-64512-PART-1"], fail_safe=False,
+    ) == (
+        '# up-parcial: somente rota default + rotas com a community de "parcial" '
+        '(lista chega em deny_communities — aqui são nós de aceite)\n'
+        "route-policy RP-64512-IMPORT-V4 permit node 10\n"
+        "if-match ip-prefix IP-PFX-DEFAULT-V4\n"
+        "apply local-preference 200\n"
+        "route-policy RP-64512-IMPORT-V4 permit node 20\n"
+        "if-match community-filter CF-64512-PART-1\n"
+        "apply local-preference 200"
+    )
+
+
+def test_route_policy_import_up_default() -> None:
+    assert _render(
+        "route_policy_import", nome="RP-64512-IMPORT-V4", afi="ipv4",
+        lista="IP-PFX-DEFAULT-V4", local_preference=150, produto="up-default",
+        deny_communities=[], fail_safe=False,
+    ) == (
+        "# up-default: somente a rota default do provedor\n"
+        "route-policy RP-64512-IMPORT-V4 permit node 10\n"
+        "if-match ip-prefix IP-PFX-DEFAULT-V4\n"
+        "apply local-preference 150"
+    )
+
+
+def test_route_policy_export_upstream_aplicacoes() -> None:
+    assert _render(
+        "route_policy_export", nome="RP-64512-EXPORT-V4", afi="ipv4",
+        lista="IP-PFX-INTERNAS-V4", med=None, prepend=0, asn_local=61785,
+        aplicacoes=[
+            {"tipo": "prepend", "valor": "65530:20:2", "regiao": "SP"},
+            {"tipo": "blackhole", "valor": "65530:666:0", "regiao": None},
+            {"tipo": "lp", "valor": "65530:70:150", "regiao": None},
+        ],
+    ) == (
+        "route-policy RP-64512-EXPORT-V4 permit node 10\n"
+        "if-match ip-prefix IP-PFX-INTERNAS-V4\n"
+        "# aplicação prepend por região (SP): if-match regional fica na camada de render (fase 5)\n"
+        "apply community 65530:20:2\n"
+        "apply community 65530:666:0\n"
+        "apply community 65530:70:150"
+    )
+
+
 def test_route_policy_export_full_sem_condicoes() -> None:
     assert _render(
         "route_policy_export", nome="RP-64500-EXPORT-V4", afi="ipv4", lista=None,

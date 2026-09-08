@@ -12,3 +12,9 @@ apply med {{ med }}
 {% if prepend %}
 apply as-path{% for _ in range(prepend) %} {{ asn_local }}{% endfor %} additive
 {% endif %}
+{% for a in aplicacoes|default([]) %}
+{% if a.regiao %}
+# aplicação {{ a.tipo }} por região ({{ a.regiao }}): if-match regional fica na camada de render (fase 5)
+{% endif %}
+apply community {{ a.valor }}
+{% endfor %}
