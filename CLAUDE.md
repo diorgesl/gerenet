@@ -195,5 +195,40 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   — 400 guardado na API) — reversão/recomposição via CR de remoção aprovada
   (`--acao remove`) ou CR de provision nova (o re-diff aplica só a ponta
   ausente), conforme o runbook.
+- Fase 5 (upstreams): organizações com `kind='operadora'` (ASN + IRR AS-SET)
+  e upstreams com tipo (`transito`/`ix`/`pni`/`contingencia`), capacidade,
+  prioridade/custo, prefixos esperados v4/v6 e margem do maximum-prefix;
+  modelos `upstreams` + `upstream_circuits` (vínculo com papel
+  `principal`/`contingencia` + `ordem`; um circuito pertence a no máximo um
+  upstream — UNIQUE em `circuit_id`, BR-1 §7), `upstream_communities`
+  (valor concreto, `purpose` blackhole/prepend/lp/info, `direcao`, `regiao`,
+  `bloquear`: info+bloquear = deny no import via community-filter; info sem
+  bloquear = community de "parcial" do `up-parcial`; prepend/lp/blackhole =
+  aplicações no export via `apply community`), `roas` (lote do rpki-client)
+  e `irr_cache` (consultas IRR com TTL) — migração única
+  `alembic/versions/767551f719ba_upstreams_f5.py`. Produtos de import por
+  tipo (transito/ix → `up-full`, pni → `up-parcial`, contingencia →
+  `up-default`; sessão sem perfil ⇒ deny-all fail-safe) e export agregado
+  `IP-PFX-INTERNAS-<AFI>` + communities de ação; `maximum_prefix` das sessões
+  é repropagado = esperado × (1 + margem), limiar padrão 80 %.
+  Autorizações de prefixo: `origin` (`manual`|`irr`|`rpki`) + `validacao`
+  (`ok`|`diverge`|`desconhecida`|`nao_verificada`) — **consultiva §10.4,
+  nunca bloqueia** (a aprovação continua humana). CLI: `gerenet irr query
+  <asn|as-set> [--source radb|altdb|lacnic] [--ttl-horas 24]` (cache
+  `irr_cache`) e `gerenet rpki sync [--file <caminho>]` (default
+  `GERENET_RPKI_ROAS_FILE`; ao final revalida as autorizações irr/rpki).
+  CR de escopo `upstream` no fluxo do ciclo D: plano agregado por device em
+  `automation/upstream.py` (sessões + circuitos vinculados; diff por bloco já
+  na criação), pré-check (`bgp_peers`, ASN conflitante, sessão no device) e
+  pós-check (peer + Established + contagem dentro de esperado × (1 ± margem))
+  — rollback (`gerenet change-requests rollback`) e reconciliar
+  **disponíveis** para upstream (ao contrário do l2vc/vsi). Web: `/upstreams`
+  + `/upstreams/:id` (detalhe com a matriz principal × contingência e
+  "Solicitar mudança") e fumo `web/e2e/upstream.spec.ts` (org operadora pela
+  UI, upstream, community, vínculo e CR aprovada pelo `e2e-aprovador`;
+  rerun-safe por `Date.now()`). Validação em equipamento real segue
+  `docs/runbook-validacao-upstream.md` (somente leitura → geração sem
+  execução → teste em circuito/edge não crítico → IRR/RPKI consultivo →
+  rollback aprovado antes; **sem lab** — decisão registrada).
 - Convenções previstas no `.gitignore`: Python com venv e pytest (`.venv/`, `.pytest_cache/`), deploy via Docker Compose (`compose.yaml` na raiz) com `.env` ignorado (o `.gitignore` ainda prevê `deploy/docker/.env`), `config.yaml` local com segredos **fora do repositório**, logs em `logs/` ignorados.
 - `.claude/settings.local.json` contém token e aponta o harness para uma API externa: é arquivo local — não versionar nem alterar.

@@ -177,10 +177,12 @@ upstream (org do circuito é `operadora`):
   `allow_default_route=false` na sessão, max-prefix-limiar da sessão.
 - `up-parcial`: **default + rotas portadoras da community de "parcial" do
   provedor** — definição determinística e parametrizável: a community é
-  cadastrada em `upstream_communities` (`purpose=info`, `direcao=import`,
-  nota "parcial"); o render gera `if-match community-filter <value>` +
-  permit (e default). Sem essa community cadastrada para o upstream ⇒
-  **comentário-dívida** (padrão da casa, como hoje em `default_internas`).
+  cadastrada em `upstream_communities` com `purpose=info` (direção
+  `import`/`ambos`) e `bloquear=False` — é por purpose+bloquear que o render
+  identifica (a nota "parcial" é opcional, para leitura humana); o render
+  gera `if-match community-filter <value>` + permit (e default). Sem essa
+  community cadastrada para o upstream ⇒ **comentário-dívida** (padrão da
+  casa, como hoje em `default_internas`).
 - `up-default`: somente `0.0.0.0/0`/`::/0` permitidos (prefix-list de
   default; como já existe para export `default`).
 - **Fail-safe**: sessão de upstream sem `import_profile_id` ⇒ render

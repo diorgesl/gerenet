@@ -34,4 +34,5 @@ coletado dos roteadores e switches.
 | Cadastrar sessão BGP, autorizações, perfis e communities | [Sessões BGP, autorizações, perfis e communities](/wiki/roteamento) |
 | Ver desejado × encontrado, jobs e auditoria | [Reconciliação, config desejada, jobs e auditoria](/wiki/operacao) |
 | Gerenciar serviços MPLS em switches (domínio, L2VC, VSI) | [Serviços MPLS (L2VC e VSI)](/wiki/mpls) |
-| Entender o que ainda não é executado | [Mudanças controladas](/wiki/mudancas-controladas), [Upstreams](/wiki/upstreams) |
+| Gerenciar upstreams de trânsito/IX (operadora, communities, IRR/RPKI) | [Upstreams e políticas avançadas](/wiki/upstreams) |
+| Entender o que ainda não é executado | [Mudanças controladas](/wiki/mudancas-controladas) |
