@@ -69,6 +69,43 @@ def test_create_cr_upstream_desativado_conflita(db_session, up_com_2_circuitos):
         _cr_upstream(db_session, up)
 
 
+def test_create_cr_upstream_remove_com_sessoes_desativadas_planeja(
+    db_session, up_com_2_circuitos, edge_device
+):
+    """Fix I-1: CR de remoção aceita upstream com 100% das sessões desativadas.
+
+    O pré-cheque da criação é POR AÇÃO (como `plan_remocao` do circuito, que
+    usa `include_disabled=True`): para `remove`, sessões desativadas contam —
+    o plano sai do ENCONTRADO (snapshot), nunca do que está ativo na SoT.
+    """
+    up = up_com_2_circuitos
+    vin_ids = [vin.circuit_id for vin in up.circuitos]
+    for sessao in db_session.scalars(
+        select(models.BgpSession).where(models.BgpSession.circuit_id.in_(vin_ids))
+    ):
+        sessao.admin_status = False
+    db_session.commit()
+    peers = [
+        {"afi": "ipv4", "peer": "100.64.10.2", "asn": 64501},
+        {"afi": "ipv4", "peer": "100.64.10.6", "asn": 64501},
+    ]
+    _snapshot_peers_up(db_session, edge_device, peers)
+    cr = create_change_request(
+        db_session,
+        ChangeRequestCreate(
+            escopo="upstream", upstream_id=up.id, acao="remove",
+            motivo="desligar trânsito", criticidade="alta",
+        ),
+        ator_id=None,
+    )
+    assert cr.escopo == "upstream"
+    assert cr.acao == "remove"
+    assert cr.steps and all(s.plano_json for s in cr.steps)
+    assert all(
+        any(b["acao"] == "delete" for b in s.plano_json) for s in cr.steps
+    )
+
+
 def test_reconciliar_cr_upstream_de_parcial_recomputa_steps(
     db_session, up_com_2_circuitos, edge_device
 ):

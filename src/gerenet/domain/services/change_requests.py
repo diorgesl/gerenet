@@ -182,7 +182,11 @@ def _create_upstream(
     # ValidationError — o PlanoVazio (422, sem CR órfã) sai ANTES do planner;
     # as ValidationError informativas dele (ex.: sem snapshot na remoção §5.2)
     # continuam propagando.
-    if not any(list_sessions(session, circuit_id=vin.circuit_id) for vin in up.circuitos):
+    if not any(
+        list_sessions(session, circuit_id=vin.circuit_id,
+                      include_disabled=(data.acao == "remove"))
+        for vin in up.circuitos
+    ):
         raise PlanoVazio(
             f"Upstream {up.name} sem circuitos/sessões ativas — cadastre antes de planejar."
         )
