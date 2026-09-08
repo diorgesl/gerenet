@@ -89,7 +89,7 @@ describe("Communities", () => {
     renderCommunities();
     await screen.findByText("CUSTOMER1");
     expect(screen.getByRole("columnheader", { name: "Tipo" })).toBeInTheDocument();
-    expect(screen.getByText("padrao")).toBeInTheDocument();
+    expect(screen.getByText("Padrão")).toBeInTheDocument(); // m1: rótulo PT-BR em vez do código raw
   });
 
   it("cria nova community pelo dialog com name, tipo e notes", async () => {

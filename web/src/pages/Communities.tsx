@@ -14,6 +14,14 @@ import type { FormEvent } from "react";
 
 // Espelha models.COMMUNITY_TIPO (models.py:53) — os 6 valores efetivos do VRP/back-end.
 const COMMUNITY_TIPO = ["padrao", "acao_blackhole", "acao_prepend", "acao_lp", "informacao", "tag_produto"] as const;
+const COMMUNITY_TIPO_LABEL: Record<(typeof COMMUNITY_TIPO)[number], string> = {
+  padrao: "Padrão",
+  acao_blackhole: "Blackhole",
+  acao_prepend: "Prepend",
+  acao_lp: "Local-pref",
+  informacao: "Informação",
+  tag_produto: "Tag de produto",
+};
 
 export default function Communities() {
   const { podeEscrever } = useAuth();
@@ -87,7 +95,7 @@ export default function Communities() {
       <DataTable<CommunityOut>
         colunas={[
           { key: "name", title: "Nome" },
-          { key: "tipo", title: "Tipo" },
+          { key: "tipo", title: "Tipo", render: (c) => COMMUNITY_TIPO_LABEL[c.tipo as (typeof COMMUNITY_TIPO)[number]] ?? c.tipo },
           { key: "notes", title: "Observações", render: (c) => c.notes ?? "—" },
           { key: "admin_status", title: "Situação", render: (c) => <StatusBadge estado={c.admin_status ? "ativo" : "inativo"} /> },
         ]}
