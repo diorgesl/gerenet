@@ -37,7 +37,7 @@ export interface OrganizationOut {
   id: number;
   name: string;
   legal_name: string | null;
-  kind: "downstream" | "parceiro";
+  kind: "downstream" | "parceiro" | "operadora";
   asn: number | null;
   irr_as_set: string | null;
   notes: string | null;

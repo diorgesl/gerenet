@@ -98,6 +98,22 @@ export const HELP = {
   "prefix.prefix": "Prefixo autorizado em CIDR (ex.: 10.0.0.0/24; 2001:db8::/48) — só autorizações ativas viram IP-PFX-<ASN>-IN-<AFI>.",
   "prefix.notes": "Observações livres.",
 
+  // Upstreams
+  "upstream.name": "Nome único do upstream (2–128 caracteres; ex.: transito-telco-01).",
+  "upstream.tipo": "trânsito, IX, PNI ou contingência.",
+  "upstream.organization_id": "Organização dona da conectividade — somente organizações do tipo operadora.",
+  "upstream.capacity": "Capacidade contratada (ex.: 10 Gbps).",
+  "upstream.priority": "Prioridade da conectividade (1 = maior), para seleção de rota preferida.",
+  "upstream.cost": "Custo da conectividade (ex.: R$/Mbps) — informativo no MVP.",
+  "upstream.expected_prefixes_v4": "Total de prefixos IPv4 esperados do upstream — base da faixa de normalidade.",
+  "upstream.expected_prefixes_v6": "Total de prefixos IPv6 esperados do upstream — base da faixa de normalidade.",
+  "upstream.max_prefix_margin_pct": "Margem percentual sobre o esperado de prefixos (0-100) — faixa de normalidade = esperado ± margem. O maximum-prefix do VRP é limiar de proteção separado; NÃO usar a semântica \"esperado × (1+margem)\" — ela descreve o limiar de proteção, não a validação.",
+  "upstream.rpki_enabled": "Validação RPKI: rotas com ROA divergente são rejeitadas e as sem ROA tratadas conforme a política do upstream.",
+  "upstream.entrada_local_preference": "Local-preference aplicado na importação das rotas deste upstream (maior = preferida).",
+  "upstream.contingencia_local_preference": "Local-preference aplicado quando o upstream é contingência (tipicamente menor que a da conectividade principal).",
+  "upstream.contingencia_prepend": "Prepend no AS-PATH quando o upstream é contingência (0–10) — desvaloriza os anúncios.",
+  "upstream.contingencia_notes": "Observações livres sobre o contexto de contingência.",
+
   // Users
   "user.username": "Nome de login (1–64), único.",
   "user.password": "Senha com mínimo de 8 caracteres — jamais registrada em log ou auditoria.",
