@@ -412,3 +412,42 @@ def test_consultar_returncode_nao_zero_e_falha_rede(session, monkeypatch):
 
     with pytest.raises(IrrError, match="returncode 4"):
         consultar("radb", "64512")
+
+
+def test_consultar_membro_qualificado_vira_asn_do_ultimo_componente(session, monkeypatch):
+    """m-1 (re-revisão T21): membro `AS13335:AS132892` (referência qualificada)
+    é ASN do último componente ⇒ `-i origin as132892`, sem consultar o nome
+    composto como conjunto."""
+    chamadas: list[list[str]] = []
+    monkeypatch.setattr("gerenet.automation.irr.subprocess.run",
+        _mapa_whois(chamadas, {
+        _cmd("AS-CUSTOMERS"): "as-set: AS-CUSTOMERS\nmembers: AS13335:AS132892\nsource: RADB\n",
+        _cmd("-i", "origin", "as132892"):
+            "route: 185.10.0.0/16\norigin: AS132892\nsource: RADB\n",
+    }))
+
+    payload = consultar("radb", "AS-CUSTOMERS")
+
+    assert payload["asns"] == [132892]
+    assert payload["prefixos"] == ["185.10.0.0/16"]
+    assert [c[-1] for c in chamadas] == ["AS-CUSTOMERS", "as132892"]
+
+
+def test_consultar_membro_prefixo_de_route_set_e_ignorado(session, monkeypatch):
+    """m-2 (re-revisão T21): membro com `/` (route-set) é ignorado — nenhuma
+    consulta para o prefixo, sem exceção, payload segue dos ASNs membros."""
+    chamadas: list[list[str]] = []
+    monkeypatch.setattr("gerenet.automation.irr.subprocess.run",
+        _mapa_whois(chamadas, {
+        _cmd("AS-CUSTOMERS"):
+            "as-set: AS-CUSTOMERS\nmembers: AS64512,203.0.113.0/24\nsource: RADB\n",
+        _cmd("-i", "origin", "as64512"): RESPOSTA_ROTAS_64512,
+    }))
+
+    payload = consultar("radb", "AS-CUSTOMERS")
+
+    assert payload == {
+        "asns": [64512],
+        "prefixos": ["180.10.0.0/16", "2001:db8:1::/48"],
+    }
+    assert [c[-1] for c in chamadas] == ["AS-CUSTOMERS", "as64512"]
