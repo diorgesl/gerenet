@@ -210,9 +210,21 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   `alembic/versions/7dd3d6db4796_upstream_circuits_circuito_unico.py`
   (fix R-07: UNIQUE em `circuit_id`). Produtos de import por
   tipo (transito/ix → `up-full`, pni → `up-parcial`, contingencia →
-  `up-default`; sessão sem perfil ⇒ deny-all fail-safe) e export agregado
-  `IP-PFX-INTERNAS-<AFI>` + communities de ação; `maximum_prefix` das sessões
-  é repropagado = esperado × (1 + margem), limiar padrão 80 %.
+  `up-default`; sessão sem perfil ⇒ deny-all fail-safe) e export
+  `IP-PFX-<ASN>-EXPORT-<AFI>` (`naming.pfx_export` — deriva do ASN do par,
+  §25.4, nunca global) + communities de ação; `maximum_prefix` das sessões
+  é repropagado = esperado × (1 + margem), limiar padrão 80 %. Revisão fina
+  2026-09-08 (notas em `docs/superpowers/specs/
+  2026-09-08-gerenet-fase5-upstreams-revisao-notas.md`): rotas próprias
+  rejeitadas no import do up-full via as-path-filter `AS-PATH-<ASN>-OWN`
+  (nó deny; depende de `devices.asn`); B5 calculado no COLETOR
+  (`bgp_anomalia_janela`/`bgp_anomalia_pct` em `config.py`; gravado em
+  `snapshots.resources["anomalias_prefixos"]` — a reconciliação só exibe);
+  `PreRcv` `-` (peer sem rotas) vira `None` no merge do parser; CR de
+  upstream `remove` terminada `aplicado` desativa o upstream via
+  `disable_upstream` (audit `upstream.disable`; circuitos/sessões
+  permanecem) e `prefixos_antes`/`prefixos_depois` contam sessões
+  desativadas (`include_disabled`, só na remoção).
   Autorizações de prefixo: `origin` (`manual`|`irr`|`rpki`) + `validacao`
   (`ok`|`diverge`|`desconhecida`|`nao_verificada`) — **consultiva §10.4,
   nunca bloqueia** (a aprovação continua humana). CLI: `gerenet irr query

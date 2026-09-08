@@ -10,6 +10,7 @@ desativadas não pode abortar).
 from collections.abc import Callable
 from pathlib import Path
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from gerenet.automation import upstream as up_auto
@@ -205,6 +206,76 @@ def test_run_change_upstream_pre_check_erro_aborta(
     assert cr.status == "erro"
     assert cr.steps[0].status == "falhou"
     assert "ASN 64599" in (cr.steps[0].erro or "")
+
+
+def test_run_change_upstream_remove_desativa_upstream(
+    db_session: Session, tmp_path: Path, monkeypatch, edge_device, up_com_2_circuitos,
+) -> None:
+    """C1 (revisão fina): remoção APLICADA seta upstream.admin_status=false
+    (§14.1: objetos em uso são desativados, nunca excluídos — circuitos e
+    sessões permanecem) com evento de auditoria do serviço. Outros status
+    (com_divergencia) mantêm o upstream ativo."""
+    _grupo_credential(db_session, edge_device)
+    _snapshot_com_peers(db_session, edge_device,
+                        _peers_aplicados(db_session, up_com_2_circuitos))
+    cr = _cr_up_aprovada(db_session, up_com_2_circuitos, acao="remove")
+    colas = [
+        _recursos_up_vazios(peers=_peers_aplicados(db_session, up_com_2_circuitos)),
+        _recursos_up_vazios(peers=[]),
+    ]
+    _fakes_de_mudanca(monkeypatch, db_session, edge_device, colas)
+
+    resultado = run_change(cr.id, settings=Settings(_env_file=None, backups_dir=tmp_path),
+                           session_override=db_session)
+    assert resultado["status"] == "aplicado"
+    db_session.refresh(up_com_2_circuitos)
+    assert up_com_2_circuitos.admin_status is False
+    evento = db_session.scalar(
+        select(models.AuditEvent).where(models.AuditEvent.type == "upstream.disable"))
+    assert evento is not None
+    assert evento.details["objeto_id"] == up_com_2_circuitos.id
+    assert evento.details["depois"] == {"admin_status": False}
+
+
+def test_run_change_upstream_remove_conta_sessoes_desativadas(
+    db_session: Session, tmp_path: Path, monkeypatch, edge_device, up_com_2_circuitos,
+) -> None:
+    """M-b: na REMOÇÃO o registro antes/depois soma `pref_rcv` das sessões
+    desativadas (include_disabled=True — só a remoção; provision não)."""
+    _grupo_credential(db_session, edge_device)
+    for vin in up_com_2_circuitos.circuitos:
+        for s in db_session.scalars(select(models.BgpSession).where(
+                models.BgpSession.circuit_id == vin.circuit_id)):
+            s.admin_status = False
+    db_session.commit()
+
+    def _linhas(pref_rcv: int) -> list[dict]:
+        return [
+            {"afi": "ipv4", "peer": "100.64.10.2", "asn": 64501, "estado": "Established",
+             "pref_rcv": pref_rcv, "up_down": "1d02h"},
+            {"afi": "ipv4", "peer": "100.64.10.6", "asn": 64501, "estado": "Established",
+             "pref_rcv": pref_rcv, "up_down": "1d02h"},
+        ]
+
+    # baseline com as linhas À MÃO: _peers_aplicados usa list_sessions (padrão)
+    # e filtra as desativadas — o plano delete exige o peer no snapshot
+    # (_tem_peer, §5.2) mesmo quando a sessão está desativada.
+    _snapshot_com_peers(db_session, edge_device, _linhas(1350))
+    cr = _cr_up_aprovada(db_session, up_com_2_circuitos, acao="remove")
+    colas = [
+        _recursos_up_vazios(peers=_linhas(1350)),  # pré: sessões ainda no ar
+        _recursos_up_vazios(peers=[]),              # pós: removidas
+    ]
+    _fakes_de_mudanca(monkeypatch, db_session, edge_device, colas)
+
+    resultado = run_change(cr.id, settings=Settings(_env_file=None, backups_dir=tmp_path),
+                           session_override=db_session)
+    assert resultado["status"] == "aplicado"
+    db_session.refresh(cr)
+    step = next(s for s in cr.steps if s.device_id == edge_device.id)
+    assert step.status == "aplicado"
+    assert step.post_check_json["prefixos_antes"] == {"ipv4": 2700}
+    assert step.post_check_json["prefixos_depois"] == {}
 
 
 def test_run_change_upstream_remove_include_disabled_chega(

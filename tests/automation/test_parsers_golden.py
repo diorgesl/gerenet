@@ -163,6 +163,22 @@ def test_parse_bgp_peer_estado_transitorio_openconfirm_derivado() -> None:
     ]
 
 
+def test_parse_bgp_peer_prefrcv_ausente_derivado() -> None:
+    # Derivado (sintético, spec §10): PrefRcv "-" (peer ativo sem rotas recebidas)
+    # não aparece na captura real — todos os peers lá têm contagem numérica.
+    saida = (
+        " BGP local router ID : 203.0.113.1\n"
+        " Local AS number : 64512\n"
+        "\n"
+        "  Peer                             V          AS  MsgRcvd  MsgSent  OutQ  Up/Down       State  PrefRcv\n"
+        "  10.99.0.2                       4      64530      101      102     0 0655h07m       Active         -\n"
+    )
+    assert parse_template("bgp_peer", saida) == [
+        {"peer": "10.99.0.2", "asn": "64530", "estado": "Active",
+         "pref_rcv": "-", "up_down": "0655h07m"},
+    ]
+
+
 def test_parse_bgp_peer_verbose_v4_contra_captura_real() -> None:
     saida = (FIXTURES / "ne8000_display_bgp_peer_verbose.txt").read_text(encoding="utf-8")
     linhas = parse_template("bgp_peer_verbose", saida)

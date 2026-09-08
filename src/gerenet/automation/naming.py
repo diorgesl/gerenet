@@ -50,9 +50,22 @@ def pfx_produto(produto: str, afi: str) -> str:
     return f"IP-PFX-{base}-{_afi_valida(afi)}"
 
 
-def pfx_internas(afi: str) -> str:
-    """Prefix-list de rotas internas (loopbacks + p2p): IP-PFX-INTERNAS-<AFI>."""
-    return f"IP-PFX-INTERNAS-{_afi_valida(afi)}"
+def as_path_own(asn: int) -> str:
+    """As-path-filter de rotas próprias (import up-full): AS-PATH-<ASN>-OWN.
+
+    O nome deriva do ASN local do DEVICE (não do par); a regex do filtro é
+    _<ASN>_ — ASN próprio em qualquer posição do AS-PATH (design §4.1).
+    """
+    return f"AS-PATH-{_asn_valido(asn)}-OWN"
+
+
+def pfx_export(asn: int, afi: str) -> str:
+    """Prefix-list de exportação de upstream: IP-PFX-<ASN>-EXPORT-<AFI>.
+
+    O nome deriva do ASN do par (§25.4) — nunca global: a lista de anúncio
+    (rotas internas + autorizadas) é própria de cada upstream (design §4.2).
+    """
+    return f"IP-PFX-{_asn_valido(asn)}-EXPORT-{_afi_valida(afi)}"
 
 
 def vsi_nome(name_logico: str, vsi_id: int) -> str:

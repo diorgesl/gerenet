@@ -49,10 +49,11 @@ maximum-prefix. O `tipo` escolhe o produto de importação por padrão:
   não entra. `up-parcial` aceita a default e as rotas portadoras da community
   de "parcial". `up-default` é só a default. Sessão sem perfil de importação
   renderiza deny-all (fail-safe, nunca accept-all).
-- **Exportação**: o anúncio não é produto. Sai `IP-PFX-INTERNAS-<AFI>` (rotas
-  internas + autorizações ativas de clientes, mesmo nome para todos os
-  upstreams) e a route-policy de export com as communities de ação da
-  operadora (`prepend`, `lp`, `blackhole`) no `apply community`.
+- **Exportação**: o anúncio não é produto. Sai `IP-PFX-<ASN>-EXPORT-<AFI>`
+  (rotas internas + autorizações ativas de clientes; nome derivado do ASN do
+  par — lista própria de cada upstream) e a route-policy de export com as
+  communities de ação da operadora (`prepend`, `lp`, `blackhole`) no
+  `apply community`.
 
 ## Communities de operadora
 

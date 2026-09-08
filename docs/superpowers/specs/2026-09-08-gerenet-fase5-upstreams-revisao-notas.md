@@ -47,10 +47,15 @@ Estes pontos estavam descritos errado no plano, mas a implementação fez igual 
    peer ausente/alta nos testes de parser existentes. Nenhuma task do plano tem.
 5. **documentação (design §12):** adaptar `web/e2e/README.md` se necessário
    (estágio E, junto do runbook `docs/runbook-validacao-upstream.md`).
-6. **Nomenclatura `IP-PFX-INTERNAS-<AFI>`:** o plano usa nome global sem ASN,
+6. **Nomenclatura `IP-PFX-INTERNAS-<AFI>`:** o plano usava nome global sem ASN,
    diferente do design §4.2 (`IP-PFX-<ASN>-EXPORT-<AFI>`) e do padrão §25.4
-   (deriva do ASN do par). Se mantido, registrar como decisão (padrão §25.x) em
-   vez de desvio silencioso.
+   (deriva do ASN do par). **DECISÃO (2026-09-08):** adotado o padrão do design
+   — `naming.pfx_export(asn, afi)` → `IP-PFX-<ASN>-EXPORT-<AFI>`, com o nome
+   derivado do ASN do par (a lista de anúncio é própria de cada upstream);
+   `pfx_internas` removido (usos: só o caminho do export + testes). Racional:
+   §25.4 — nomes derivam do ASN do par, nunca globais por conteúdo; um objeto
+   global compartilhado entre upstreams não é identificável no equipamento by
+   peer e dificulta auditoria/rollback por sessão.
 
 ## Roadmap: itens com menção mas sem dono (assistente e VSI)
 

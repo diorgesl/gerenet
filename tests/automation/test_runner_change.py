@@ -463,6 +463,18 @@ def test_estado_peer_maximum_prefix_conferido_no_backup() -> None:
     assert _estado_do_bloco(bloco, recursos, "") == "conflito"
 
 
+def test_estado_as_path_filter_consta_por_conteudo() -> None:
+    """Item 1 — bloco de as-path-filter: consta só quando o texto tem a linha."""
+    bloco = {
+        "tipo": "as_path_filter", "objeto": "session", "objeto_id": 1,
+        "acao": "create", "comandos": ["ip as-path-filter AS-PATH-65001-OWN permit _65001_"],
+    }
+    assert _estado_do_bloco(bloco, {}, "") == "ausente"
+    assert _estado_do_bloco(
+        bloco, {}, "ip as-path-filter AS-PATH-65001-OWN permit _65001_"
+    ) == "consta"
+
+
 def test_run_change_create_misto_consta_ausente_aborta(db_session: Session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """F1 — subinterface consta (com endereço certo), peer ausente: só parte do
     plano existe ⇒ aborta (§12.2) sem aplicar (regra do create misto)."""

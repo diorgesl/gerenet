@@ -119,6 +119,19 @@ def test_plan_provision_gera_blocos_create_na_ordem_do_render(db_session):
     assert plano[0].aviso is not None  # sem snapshot: skip vazio, aviso §5.1
 
 
+def test_ja_existe_as_path_filter_pelo_encontrado() -> None:
+    """Item 1 — o bloco de as-path-filter já presente no backup é pulado no plano
+    (idempotência: reexecutar a CR não re-aplica a mesma definição)."""
+    bloco = render.BlocoRender(
+        "as_path_filter", "session", 1,
+        ["ip as-path-filter AS-PATH-65001-OWN permit _65001_"],
+    )
+    assert changes._ja_existe(
+        bloco, {}, "ip as-path-filter AS-PATH-65001-OWN permit _65001_"
+    )
+    assert not changes._ja_existe(bloco, {}, "")
+
+
 def test_plan_provision_pula_blocos_ja_presentes(db_session, tmp_path):
     amb = _ambiente(db_session)
     circ = _circuito(db_session, amb)

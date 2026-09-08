@@ -59,11 +59,12 @@ def _var_anormal(contagem: int, base: int, pct: int) -> bool:
 
 def _contagens_anteriores(
     session: Session, *, device_id: int, snapshot_id: int, afi: str, peer: str,
+    janela: int = 2,
 ) -> list[int]:
-    """Pref_rcv nas coletas anteriores do mesmo peer (§7) — até 2 válidas (K=2).
+    """Pref_rcv nas coletas anteriores do mesmo peer (§7) — até `janela` válidas.
 
-    Varre as 3 coletas anteriores (id desc): coleções sem o recurso `bgp_peers`
-    ou sem o peer com `pref_rcv` não contam como âncora.
+    Varre janela+1 coletas anteriores (id desc): coleções sem o recurso
+    `bgp_peers` ou sem o peer com `pref_rcv` não contam como âncora.
     """
     snaps = session.scalars(
         select(models.DeviceSnapshot)
@@ -72,7 +73,7 @@ def _contagens_anteriores(
             models.DeviceSnapshot.id < snapshot_id,
         )
         .order_by(models.DeviceSnapshot.id.desc())
-        .limit(3)
+        .limit(janela + 1)
     ).all()
     contagens: list[int] = []
     for s in snaps:
@@ -82,9 +83,62 @@ def _contagens_anteriores(
             if linha.get("pref_rcv") is not None:
                 contagens.append(int(linha["pref_rcv"]))
             break  # peer presente ou não, esta coleta não dá outra âncora
-        if len(contagens) == 2:
+        if len(contagens) == janela:
             break
     return contagens
+
+
+def anomalias_prefixos(
+    session: Session, snapshot: models.DeviceSnapshot, *, janela: int = 2,
+    pct: int = VAR_ANORMAL_PCT,
+) -> list[dict]:
+    """Variação anormal de prefixos por peer (§7) — calculada na COLETA.
+
+    Por sessão de upstream do device (peer Established com `pref_rcv` coletado):
+    compara a contagem com esperado×margem do upstream e, sem esperado
+    cadastrado, com o histórico das últimas `janela` coletas válidas do mesmo
+    peer; variação acima de `pct` % vira item. O resultado é gravado no
+    snapshot (resources["anomalias_prefixos"]); a divergência só exibe.
+    """
+    recursos = snapshot.resources or {}
+    por_peer = {}
+    for linha in recursos.get("bgp_peers", []):
+        por_peer.setdefault((linha.get("afi"), linha.get("peer")), linha)
+    itens: list[dict] = []
+    for sessao in list_sessions(session, device_id=snapshot.device_id):
+        esperado = por_peer.get((sessao.afi, sessao.remote_address))
+        if esperado is None or esperado.get("estado") != ESTABLISHED:
+            continue
+        if esperado.get("pref_rcv") is None:
+            continue
+        up = upstream_do_circuito(session, sessao.circuit_id)
+        if up is None:
+            continue
+        contagem = int(esperado["pref_rcv"])
+        esperado_pref = (
+            up.expected_prefixes_v4 if sessao.afi == "ipv4" else up.expected_prefixes_v6
+        )
+        if esperado_pref is not None:
+            bases = [(esperado_pref, up.max_prefix_margin_pct, "esperado")]
+        else:
+            bases = [
+                (base, pct, "historico")
+                for base in _contagens_anteriores(
+                    session, device_id=snapshot.device_id, snapshot_id=snapshot.id,
+                    afi=sessao.afi, peer=sessao.remote_address, janela=janela,
+                )
+            ]
+        for base, limite, base_tipo in bases:
+            if _var_anormal(contagem, base, limite):
+                itens.append({
+                    "afi": sessao.afi, "peer": sessao.remote_address,
+                    "contagem": contagem, "base": base,
+                    "variacao_pct": 100.0 if base == 0 else round(
+                        abs(contagem - base) * 100 / base, 1),
+                    "base_tipo": base_tipo, "upstream": up.name,
+                })
+                break
+    return itens
 
 
 def _esperado_subinterfaces(blocos: list[BlocoRender]) -> dict[str, dict[str, list[str]]]:
@@ -230,31 +284,6 @@ def reconciliar_device(
                     "peer.estado", "atencao", ESTABLISHED, estado,
                     "Peer fora de Established — conferir se é transitório.",
                 ))
-            # B5 (§7): variação anormal de prefixos em sessões de upstream.
-            # Só com o peer Established (ausente/down já acusados acima) e com
-            # pref_rcv coletado. Com esperado cadastrado usa esperado×margem;
-            # sem esperado, compara com as 2 coletas anteriores (VAR_ANORMAL_PCT).
-            up = upstream_do_circuito(session, sessao.circuit_id)
-            if up is not None and estado == ESTABLISHED and esperado.get("pref_rcv") is not None:
-                contagem = int(esperado["pref_rcv"])
-                esperado_pref = (
-                    up.expected_prefixes_v4 if sessao.afi == "ipv4" else up.expected_prefixes_v6
-                )
-                if esperado_pref is not None:
-                    bases, pct = [esperado_pref], up.max_prefix_margin_pct
-                else:
-                    bases, pct = _contagens_anteriores(
-                        session, device_id=device_id, snapshot_id=snap.id,
-                        afi=sessao.afi, peer=sessao.remote_address,
-                    ), VAR_ANORMAL_PCT
-                for base in bases:
-                    if _var_anormal(contagem, base, pct):
-                        items.append(_item(
-                            "bgp.anomalia_prefixos", "alerta", str(base), str(contagem),
-                            f"Verificar o upstream {up.name} — variação de prefixos "
-                            "acima da margem.",
-                        ))
-                        break
             verbose = por_peer_verbose.get((sessao.afi, sessao.remote_address))
             rps = rp_por_sessao.get(sessao.id, {})
             if verbose is not None:
@@ -281,6 +310,17 @@ def reconciliar_device(
                         "não cadastrado",
                         "Cadastrar circuits.edge_trunk para comparar a subinterface.",
                     ))
+
+        # B5 (§7): variação anormal de prefixos é conta do COLETOR — o histórico
+        # das coletas só existe no job; aqui é só a superfície de exibição
+        # (snapshot sem a chave, antigo/pós-change, não tem item).
+        for anom in recursos.get("anomalias_prefixos", []):
+            items.append(_item(
+                "bgp.anomalia_prefixos", "alerta", str(anom["base"]),
+                str(anom["contagem"]),
+                f"Verificar o upstream {anom['upstream']} — variação de prefixos "
+                "acima da margem.",
+            ))
 
         # órfãos: peer no snapshot sem sessão ativa (afi, remote)
         ativos = {(s.afi, s.remote_address) for s in list_sessions(session, device_id=device_id)}

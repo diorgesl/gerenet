@@ -87,6 +87,11 @@ def _ja_existe(bloco: render.BlocoRender, recursos: dict, texto: str) -> bool:
         if len(partes) >= 3 and partes[0] == "ip" and partes[1].endswith("-prefix"):
             return f"{partes[0]} {partes[1]} {partes[2]} index" in texto
         return False
+    if bloco.tipo == "as_path_filter":
+        partes = bloco.comandos[0].split() if bloco.comandos else []
+        if len(partes) >= 4 and partes[0] == "ip" and partes[1] == "as-path-filter":
+            return f"ip as-path-filter {partes[2]} permit" in texto
+        return False
     if bloco.tipo in ("route_policy_import", "route_policy_export"):
         partes = bloco.comandos[0].split() if bloco.comandos else []
         if len(partes) >= 2:

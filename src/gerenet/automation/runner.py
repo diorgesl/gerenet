@@ -24,7 +24,7 @@ from gerenet.automation.collectors import COLLECTORS, comandos_verbose
 from gerenet.automation.netmiko_conn import connect_and_apply, connect_and_run
 from gerenet.automation.parsers.huawei_vrp.merge import merge_parsed
 from gerenet.automation.parsers.huawei_vrp.registry import parse_template
-from gerenet.automation.reconcile import reconciliar_device
+from gerenet.automation.reconcile import anomalias_prefixos, reconciliar_device
 from gerenet.config import Settings, get_settings
 from gerenet.db import SessionLocal
 from gerenet.domain.models import AuditEvent, ChangeRequest, ChangeStep, DeviceSnapshot, JobRun
@@ -180,6 +180,18 @@ def run_collection(
             job.finished_at = snapshot.finished_at
             job.duration_ms = snapshot.duration_ms
             job.snapshot_id = snapshot.id
+            session.commit()
+
+            # B5 (§7): a variação anormal de prefixos é conta do COLETOR — o
+            # histórico das coletas só existe aqui. Gravada no próprio snapshot
+            # (resources["anomalias_prefixos"]); a divergência só exibe.
+            snapshot.resources = {
+                **(snapshot.resources or {}),
+                "anomalias_prefixos": anomalias_prefixos(
+                    session, snapshot,
+                    janela=settings.bgp_anomalia_janela, pct=settings.bgp_anomalia_pct,
+                ),
+            }
             session.commit()
 
             if erros:
@@ -448,6 +460,12 @@ def _estado_do_bloco(bloco: dict, recursos: dict, texto: str) -> str:
                 return "consta"
             return "ausente"
         return "ausente"
+    if tipo == "as_path_filter":
+        partes = comandos[0].split()
+        if len(partes) >= 4 and partes[0] == "ip" and partes[1] == "as-path-filter":
+            nome = partes[2]
+            return "consta" if f"ip as-path-filter {nome} permit" in texto else "ausente"
+        return "ausente"
     if tipo in ("route_policy_import", "route_policy_export"):
         partes = comandos[0].split()
         if len(partes) >= 2 and partes[0] == "route-policy":
@@ -665,10 +683,12 @@ def _executa_step(
                 step.post_check_json = {
                     **step.post_check_json,
                     "prefixos_antes": up_auto.prefixos_recebidos(
-                        session, up, recursos_pre
+                        session, up, recursos_pre,
+                        include_disabled=(cr.acao == "remove"),
                     ),
                     "prefixos_depois": up_auto.prefixos_recebidos(
-                        session, up, recursos_pos
+                        session, up, recursos_pos,
+                        include_disabled=(cr.acao == "remove"),
                     ),
                 }
         else:
@@ -699,10 +719,12 @@ def _executa_step(
                 step.post_check_json = {
                     **step.post_check_json,
                     "prefixos_antes": up_auto.prefixos_recebidos(
-                        session, up, recursos_pre
+                        session, up, recursos_pre,
+                        include_disabled=(cr.acao == "remove"),
                     ),
                     "prefixos_depois": up_auto.prefixos_recebidos(
-                        session, up, recursos_pos
+                        session, up, recursos_pos,
+                        include_disabled=(cr.acao == "remove"),
                     ),
                 }
 
@@ -896,6 +918,13 @@ def run_change(
                 if status_cr is None:
                     return {"status": "erro", "error": "Change request sem steps pendentes."}
             cr.status = status_cr
+            if cr.escopo == "upstream" and cr.acao == "remove" and status_cr == "aplicado":
+                # C1 (revisão fina): remoção APLICADA desativa o upstream no
+                # SoT (§14.1 — objeto em uso é desativado, nunca excluído;
+                # circuitos e sessões permanecem), com o audit do serviço.
+                # com_divergencia/parcial/erro mantêm o upstream ativo.
+                from gerenet.domain.services.upstreams import disable_upstream
+                disable_upstream(session, cr.upstream_id, actor=actor)
             session.add(
                 AuditEvent(type=_TIPO_AUDIT[status_cr], actor=actor, details={"change_request_id": cr.id})
             )

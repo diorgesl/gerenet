@@ -504,13 +504,74 @@ def _peers_up(afi: str = "ipv4", peer: str = "100.64.10.2", asn: int = 64501,
              "pref_rcv": pref_rcv, "up_down": "1d02h"}]
 
 
-def test_reconcile_acusa_variacao_anormal_acima_da_margem(
-    session: Session, up_com_sessao_upfull, edge_device
-) -> None:
-    """B5 (§7): pref_rcv acima de esperado×margem do upstream vira item alerta."""
+def test_anomalias_prefixos_acima_do_esperado(
+        session: Session, up_com_sessao_upfull, edge_device) -> None:
+    """B5 no coletor (§5): pref_rcv acima de esperado×margem do upstream."""
+    from gerenet.automation.reconcile import anomalias_prefixos
+
+    snap_id = _snapshot_up(session, edge_device, _peers_up(pref_rcv=1200))
+    snap = session.get(models.DeviceSnapshot, snap_id)
+    assert anomalias_prefixos(session, snap) == [{
+        "afi": "ipv4", "peer": "100.64.10.2", "contagem": 1200, "base": 1000,
+        "variacao_pct": 20.0, "base_tipo": "esperado", "upstream": "transito-f5",
+    }]
+
+
+def test_anomalias_prefixos_dentro_da_margem(
+        session: Session, up_com_sessao_upfull, edge_device) -> None:
+    """pref_rcv dentro de esperado×margem (10% de 1000): nenhuma anomalia."""
+    from gerenet.automation.reconcile import anomalias_prefixos
+
+    snap_id = _snapshot_up(session, edge_device, _peers_up(pref_rcv=1050))
+    snap = session.get(models.DeviceSnapshot, snap_id)
+    assert anomalias_prefixos(session, snap) == []
+
+
+def test_anomalias_prefixos_fallback_historico(
+        session: Session, up_com_sessao_upfull, edge_device) -> None:
+    """Sem expected_prefixes: contagem atual vs as últimas K coletas (janela=2)
+    — variação > pct (50%) ⇒ anomalia com a baseline mais recente."""
+    from gerenet.automation.reconcile import anomalias_prefixos
+
+    up_com_sessao_upfull.expected_prefixes_v4 = None
+    session.commit()
+    _snapshot_up(session, edge_device, _peers_up(pref_rcv=100))   # antigo
+    _snapshot_up(session, edge_device, _peers_up(pref_rcv=120))   # penúltimo
+    snap_id = _snapshot_up(session, edge_device, _peers_up(pref_rcv=1000))
+    snap = session.get(models.DeviceSnapshot, snap_id)
+    itens = anomalias_prefixos(session, snap)
+    assert len(itens) == 1
+    assert itens[0]["base"] == 120      # baseline mais recente que disparou
+    assert itens[0]["contagem"] == 1000
+    assert itens[0]["base_tipo"] == "historico"
+    assert itens[0]["upstream"] == "transito-f5"
+    assert itens[0]["variacao_pct"] == 733.3
+
+
+def test_anomalias_prefixos_sem_historico_nao_alerta(
+        session: Session, up_com_sessao_upfull, edge_device) -> None:
+    """Sem expected_prefixes e sem histórico (1 único snapshot): ignora."""
+    from gerenet.automation.reconcile import anomalias_prefixos
+
+    up_com_sessao_upfull.expected_prefixes_v4 = None
+    session.commit()
+    snap_id = _snapshot_up(session, edge_device, _peers_up(pref_rcv=1000))
+    snap = session.get(models.DeviceSnapshot, snap_id)
+    assert anomalias_prefixos(session, snap) == []
+
+
+def test_reconcile_exibe_anomalias_gravadas_no_snapshot(
+        session: Session, up_com_sessao_upfull, edge_device) -> None:
+    """A divergência só EXIBE o que o coletor gravou (resources do snapshot)."""
     from gerenet.automation.reconcile import reconciliar_device
 
     snap_id = _snapshot_up(session, edge_device, _peers_up(pref_rcv=1200))
+    snap = session.get(models.DeviceSnapshot, snap_id)
+    snap.resources = {**(snap.resources or {}), "anomalias_prefixos": [{
+        "afi": "ipv4", "peer": "100.64.10.2", "contagem": 1200, "base": 1000,
+        "variacao_pct": 20.0, "base_tipo": "esperado", "upstream": "transito-f5",
+    }]}
+    session.commit()
     itens = reconciliar_device(session, edge_device.id, snapshot_id=snap_id).items
     assert [i.tipo for i in itens] == ["bgp.anomalia_prefixos"]
     assert itens[0].severidade == "alerta"
@@ -519,44 +580,11 @@ def test_reconcile_acusa_variacao_anormal_acima_da_margem(
     assert "transito-f5" in itens[0].acao
 
 
-def test_reconcile_sem_anomalia_dentro_da_margem(
-    session: Session, up_com_sessao_upfull, edge_device
-) -> None:
-    """pref_rcv dentro de esperado×margem (10% de 1000): nenhum item."""
+def test_reconcile_sem_chave_gravada_nao_alerta(
+        session: Session, up_com_sessao_upfull, edge_device) -> None:
+    """Snapshot sem a chave (antigo/pós-change): sem item — a conta é do coletor."""
     from gerenet.automation.reconcile import reconciliar_device
 
-    snap_id = _snapshot_up(session, edge_device, _peers_up(pref_rcv=1050))
-    itens = reconciliar_device(session, edge_device.id, snapshot_id=snap_id).items
-    assert itens == []
-
-
-def test_reconcile_anomalia_fallback_historico(
-    session: Session, up_com_sessao_upfull, edge_device
-) -> None:
-    """Sem expected_prefixes: contagem atual vs as 2 coletas anteriores
-    (K=2) — variação > 50% (VAR_ANORMAL_PCT) ⇒ alerta."""
-    from gerenet.automation.reconcile import reconciliar_device
-
-    up_com_sessao_upfull.expected_prefixes_v4 = None
-    session.commit()
-    _snapshot_up(session, edge_device, _peers_up(pref_rcv=100))   # antigo
-    _snapshot_up(session, edge_device, _peers_up(pref_rcv=120))   # penúltimo
-    atual = _snapshot_up(session, edge_device, _peers_up(pref_rcv=1000))
-    itens = reconciliar_device(session, edge_device.id, snapshot_id=atual).items
-    assert [i.tipo for i in itens] == ["bgp.anomalia_prefixos"]
-    assert itens[0].severidade == "alerta"
-    assert itens[0].esperado == "120"  # baseline mais recente que disparou
-    assert itens[0].encontrado == "1000"
-
-
-def test_reconcile_sem_historico_nao_alerta(
-    session: Session, up_com_sessao_upfull, edge_device
-) -> None:
-    """Sem expected_prefixes e sem histórico (1 único snapshot): ignora."""
-    from gerenet.automation.reconcile import reconciliar_device
-
-    up_com_sessao_upfull.expected_prefixes_v4 = None
-    session.commit()
-    snap_id = _snapshot_up(session, edge_device, _peers_up(pref_rcv=1000))
+    snap_id = _snapshot_up(session, edge_device, _peers_up(pref_rcv=1200))
     itens = reconciliar_device(session, edge_device.id, snapshot_id=snap_id).items
     assert itens == []

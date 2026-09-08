@@ -63,8 +63,10 @@ def test_render_upstream_full_import_com_protecoes(session, up_com_sessao_upfull
     resultado = render_desejado(session, edge_device.id)
     texto = resultado.texto
     # community-filter de bloqueio + prefix-list de proteção (default negado +
-    # internas + autorizados de clientes, na mesma AFI)
+    # internas + autorizados de clientes, na mesma AFI) + as-path-filter de
+    # rotas próprias (ASN do DEVICE, 65001 — item 1 da revisão)
     assert "ip community-filter CF-64501-BLK-1 permit 65530:20:0" in texto
+    assert "ip as-path-filter AS-PATH-65001-OWN permit _65001_" in texto
     assert "ip ip-prefix IP-PFX-64501-IN-V4 index 5 permit 0.0.0.0/0" in texto
     assert "ip ip-prefix IP-PFX-64501-IN-V4 index 10 permit 192.0.2.0/24" in texto
     rp = next(b.texto for b in resultado.blocos
@@ -72,10 +74,31 @@ def test_render_upstream_full_import_com_protecoes(session, up_com_sessao_upfull
     assert "route-policy RP-64501-IMPORT-V4 deny node 10" in rp
     assert "if-match ip-prefix IP-PFX-64501-IN-V4" in rp
     assert "route-policy RP-64501-IMPORT-V4 deny node 20" in rp
+    assert "if-match as-path-filter AS-PATH-65001-OWN" in rp
+    assert "route-policy RP-64501-IMPORT-V4 deny node 30" in rp
     assert "if-match community-filter CF-64501-BLK-1" in rp
     assert "route-policy RP-64501-IMPORT-V4 permit node 100" in rp
     # o peer referencia a RP de import definida para a sessão de upstream
     assert texto.count("import route-policy RP-64501-IMPORT-V4") == 1
+
+
+def test_render_upstream_full_sem_asn_local_nao_gera_aspath(
+        session, up_com_sessao_upfull, edge_device):
+    # device sem ASN local ⇒ sem as-path-filter de rotas próprias (a proteção
+    # seria derivada de um ASN inexistente); numeração das proteções volta a
+    # ser prefix 10 / communities 20+ / permit 100
+    edge_device.asn = None
+    session.commit()
+
+    resultado = render_desejado(session, edge_device.id)
+    texto = resultado.texto
+    assert "as-path-filter" not in texto
+    rp = next(b.texto for b in resultado.blocos
+              if b.tipo == "route_policy_import" and "RP-64501-IMPORT-V4" in b.texto)
+    assert "deny node 20" not in rp
+    assert "route-policy RP-64501-IMPORT-V4 deny node 10" in rp
+    assert "if-match ip-prefix IP-PFX-64501-IN-V4" in rp
+    assert "route-policy RP-64501-IMPORT-V4 permit node 100" in rp
 
 
 def test_render_upstream_full_sem_protecoes_nao_referencia_lista_vazia(
@@ -91,6 +114,10 @@ def test_render_upstream_full_sem_protecoes_nao_referencia_lista_vazia(
     rp = next(b.texto for b in resultado.blocos
               if b.tipo == "route_policy_import" and "RP-64501-IMPORT-V4" in b.texto)
     assert "if-match ip-prefix" not in rp
+    # mesmo sem prefix-list: rotas próprias seguem negadas via AS-PATH
+    assert "route-policy RP-64501-IMPORT-V4 deny node 20" in rp
+    assert "if-match as-path-filter AS-PATH-65001-OWN" in rp
+    assert "ip as-path-filter AS-PATH-65001-OWN permit _65001_" in resultado.texto
     assert "route-policy RP-64501-IMPORT-V4 permit node 100" in rp
     # R5: o peer continua referenciando a RP (a definição existe)
     assert resultado.texto.count("import route-policy RP-64501-IMPORT-V4") == 1
@@ -118,10 +145,11 @@ def test_render_upstream_export_anuncia_internas(session, up_com_sessao_upfull,
                                                  edge_device, circuito_com_p2p):
     resultado = render_desejado(session, edge_device.id)
     texto = resultado.texto
-    # anúncio = rotas internas (p2p alocado do circuito_com_p2p) + autorizadas
-    assert "ip ip-prefix IP-PFX-INTERNAS-V4 index 10 permit 100.64.10.0/31" in texto
+    # anúncio = rotas internas (p2p alocado do circuito_com_p2p) + autorizadas;
+    # o nome da lista deriva do ASN do par (§25.4), não é global
+    assert "ip ip-prefix IP-PFX-64501-EXPORT-V4 index 10 permit 100.64.10.0/31" in texto
     assert "route-policy RP-64501-EXPORT-V4 permit node 10" in texto
-    assert "if-match ip-prefix IP-PFX-INTERNAS-V4" in texto
+    assert "if-match ip-prefix IP-PFX-64501-EXPORT-V4" in texto
     assert texto.count("export route-policy RP-64501-EXPORT-V4") == 1
 
 
@@ -231,8 +259,10 @@ def test_render_upstream_dedup_definicoes_entre_sessoes_mesmo_asn(
     resultado = render_desejado(session, edge_device.id)
     tipos = [b.tipo for b in resultado.blocos]
     # duas sessões com o MESMO ASN+AFI ⇒ cada definição (por nome) sai 1×
+    # (o as-path-filter deriva do ASN do DEVICE — 1 bloco para as 2 sessões)
     assert tipos.count("prefix_list") == 2          # proteção (IN) + internas
     assert tipos.count("community_filter") == 0
+    assert tipos.count("as_path_filter") == 1
     assert tipos.count("route_policy_import") == 1
     assert tipos.count("route_policy_export") == 1
     assert tipos.count("bgp_peer") == 2
