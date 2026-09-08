@@ -106,6 +106,7 @@ export interface BgpSessionOut {
   allow_default_route: boolean;
   has_password: boolean;
   admin_status: boolean;
+  organization_kind: string | null; // kind da organização do circuito — preenchido no router (fase 5)
 }
 export interface PrefixAuthorizationOut {
   id: number;
@@ -425,3 +426,81 @@ export interface VsiCreateIn {
   mac_limit?: number | null;
   members: number[];
 }
+
+// Ciclo F5 — Upstreams (spec §7): conectividade própria — trânsito/IX/PNI.
+export type UpstreamTipo = "transito" | "ix" | "pni" | "contingencia";
+export interface UpstreamOut {
+  id: number;
+  name: string;
+  tipo: UpstreamTipo;
+  capacity: string | null;
+  priority: number | null;
+  cost: string | null;
+  organization_id: number;
+  expected_prefixes_v4: number | null;
+  expected_prefixes_v6: number | null;
+  max_prefix_margin_pct: number;
+  rpki_enabled: boolean;
+  entrada_local_preference: number | null;
+  contingencia_local_preference: number | null;
+  contingencia_prepend: number | null;
+  contingencia_notes: string | null;
+  admin_status: boolean;
+  organization_kind: string | null; // kind da organização (operadora) — preenchido no router
+  organization_name: string | null; // nome da organização — preenchido no router
+  created_at: string;
+  updated_at: string;
+}
+export interface UpstreamCircuitOut {
+  id: number;
+  upstream_id: number;
+  circuit_id: number;
+  papel: "principal" | "contingencia";
+  ordem: number;
+}
+export interface UpstreamCommunityOut {
+  id: number;
+  upstream_id: number;
+  purpose: "blackhole" | "prepend" | "lp" | "info";
+  value: string;
+  direcao: "import" | "export" | "ambos";
+  regiao: string | null;
+  bloquear: boolean;
+  notes: string | null;
+  admin_status: boolean;
+}
+export interface UpstreamDetailOut extends UpstreamOut {
+  circuitos: UpstreamCircuitOut[];
+  sessoes: BgpSessionOut[];
+  comunidades: UpstreamCommunityOut[];
+}
+export type UpstreamCreateIn = {
+  name: string;
+  tipo: UpstreamTipo;
+  capacity?: string | null;
+  priority?: number | null;
+  cost?: string | null;
+  organization_id: number;
+  expected_prefixes_v4?: number | null;
+  expected_prefixes_v6?: number | null;
+  max_prefix_margin_pct?: number;
+  rpki_enabled?: boolean;
+  entrada_local_preference?: number | null;
+  contingencia_local_preference?: number | null;
+  contingencia_prepend?: number | null;
+  contingencia_notes?: string | null;
+};
+export type UpstreamUpdateIn = Partial<UpstreamCreateIn> & { admin_status?: boolean };
+export type UpstreamCircuitIn = {
+  circuit_id: number;
+  papel?: UpstreamCircuitOut["papel"];
+  ordem?: number;
+};
+export type UpstreamCommunityCreateIn = {
+  purpose: UpstreamCommunityOut["purpose"];
+  value: string;
+  direcao?: UpstreamCommunityOut["direcao"];
+  regiao?: string | null;
+  bloquear?: boolean;
+  notes?: string | null;
+};
