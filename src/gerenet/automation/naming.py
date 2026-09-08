@@ -39,11 +39,20 @@ def pfx_in(asn: int, afi: str) -> str:
 
 
 def pfx_produto(produto: str, afi: str) -> str:
-    """Prefix-list de produto de exportação: IP-PFX-<PRODUTO>-<AFI>."""
-    base = produto.upper().replace(" ", "-")
+    """Prefix-list de produto de exportação: IP-PFX-<PRODUTO>-<AFI>.
+
+    Espaços e underscores do nome lógico viram '-' (separador normalizado §8;
+    ex.: pfx_produto("default_internas", "ipv4") -> "IP-PFX-DEFAULT-INTERNAS-V4").
+    """
+    base = produto.upper().replace(" ", "-").replace("_", "-")
     if len(base) > 20:  # folga para o nome completo ficar ≤ 63
         raise ValidationError(f"Produto longo demais para nome VRP: {produto}.")
     return f"IP-PFX-{base}-{_afi_valida(afi)}"
+
+
+def pfx_internas(afi: str) -> str:
+    """Prefix-list de rotas internas (loopbacks + p2p): IP-PFX-INTERNAS-<AFI>."""
+    return f"IP-PFX-INTERNAS-{_afi_valida(afi)}"
 
 
 def vsi_nome(name_logico: str, vsi_id: int) -> str:

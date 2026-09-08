@@ -30,6 +30,8 @@ import MplsL2vc from "@/pages/MplsL2vc";
 import MplsL2vcDetail from "@/pages/MplsL2vcDetail";
 import MplsVsi from "@/pages/MplsVsi";
 import MplsVsiDetail from "@/pages/MplsVsiDetail";
+import Upstreams from "@/pages/Upstreams";
+import UpstreamDetail from "@/pages/UpstreamDetail";
 
 export default function App() {
   return (
@@ -60,6 +62,8 @@ export default function App() {
         <Route path="/mpls/l2vc/:id" element={<MplsL2vcDetail />} />
         <Route path="/mpls/vsi" element={<MplsVsi />} />
         <Route path="/mpls/vsi/:id" element={<MplsVsiDetail />} />
+        <Route path="/upstreams" element={<Upstreams />} />
+        <Route path="/upstreams/:id" element={<UpstreamDetail />} />
         <Route path="/policy-profiles" element={<PolicyProfiles />} />
         <Route path="/communities" element={<Communities />} />
         <Route path="/prefix-authorizations" element={<PrefixAuthorizations />} />

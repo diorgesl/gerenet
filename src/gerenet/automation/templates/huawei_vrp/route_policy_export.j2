@@ -12,3 +12,13 @@ apply med {{ med }}
 {% if prepend %}
 apply as-path{% for _ in range(prepend) %} {{ asn_local }}{% endfor %} additive
 {% endif %}
+{% for a in aplicacoes|default([]) %}
+{% if a.regiao %}
+# TE: {{ a.tipo }} ({{ a.regiao }} - if-match na camada de render)
+{% else %}
+# TE: {{ a.tipo }}
+{% endif %}
+{% endfor %}
+{% if aplicacoes %}
+apply community {{ aplicacoes|map(attribute='valor')|join(' ') }}
+{% endif %}

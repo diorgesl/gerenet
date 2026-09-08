@@ -12,7 +12,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Modal } from "@/components/Modal";
 import type { OrganizationOut } from "@/api/types";
 
-const FORM_VAZIO = { name: "", legal_name: "", kind: "downstream" as "downstream" | "parceiro", asn: "", irr_as_set: "", notes: "" };
+const FORM_VAZIO = { name: "", legal_name: "", kind: "downstream" as "downstream" | "parceiro" | "operadora", asn: "", irr_as_set: "", notes: "" };
 
 export default function Organizations() {
   const { podeEscrever } = useAuth();
@@ -32,7 +32,7 @@ export default function Organizations() {
     setFormEdit({
       name: o.name,
       legal_name: o.legal_name ?? "",
-      kind: o.kind as "downstream" | "parceiro",
+      kind: o.kind as "downstream" | "parceiro" | "operadora",
       asn: o.asn === null ? "" : String(o.asn),
       irr_as_set: o.irr_as_set ?? "",
       notes: o.notes ?? "",
@@ -101,10 +101,11 @@ export default function Organizations() {
           <FormField label="Tipo" help={help("organization.kind")}>
             <select
               value={form.kind}
-              onChange={(e) => setForm({ ...form, kind: e.target.value as "downstream" | "parceiro" })}
+              onChange={(e) => setForm({ ...form, kind: e.target.value as "downstream" | "parceiro" | "operadora" })}
             >
               <option value="downstream">downstream</option>
               <option value="parceiro">parceiro</option>
+              <option value="operadora">operadora</option>
             </select>
           </FormField>
           <FormField label="ASN" help={help("organization.asn")}>
@@ -194,10 +195,11 @@ export default function Organizations() {
             <FormField label="Tipo" help={help("organization.kind")}>
               <select
                 value={formEdit.kind}
-                onChange={(e) => setFormEdit({ ...formEdit, kind: e.target.value as "downstream" | "parceiro" })}
+                onChange={(e) => setFormEdit({ ...formEdit, kind: e.target.value as "downstream" | "parceiro" | "operadora" })}
               >
                 <option value="downstream">downstream</option>
                 <option value="parceiro">parceiro</option>
+                <option value="operadora">operadora</option>
               </select>
             </FormField>
             <FormField label="ASN" help={help("organization.asn")}>

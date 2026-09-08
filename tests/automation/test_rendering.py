@@ -80,6 +80,16 @@ def _sessao(db_session: Session, env: dict, circ_id: int, *, afi: str, **extra) 
     ).id
 
 
+def test_tipo_ordem_contem_community_filter() -> None:
+    from gerenet.automation.render import TIPO_ORDEM
+
+    # B3 define os community-filters antes das RPs de import/export no mesmo render
+    nomes = [t for t, _ in sorted(TIPO_ORDEM.items(), key=lambda item: item[1])]
+    assert "community_filter" in nomes
+    assert nomes.index("community_filter") < nomes.index("route_policy_import")
+    assert nomes.index("community_filter") < nomes.index("route_policy_export")
+
+
 def test_render_dual_completo_ordenado(db_session: Session) -> None:
     from gerenet.automation.render import render_desejado
 
@@ -179,7 +189,106 @@ def test_render_export_default_med_prepend_e_dividas(db_session: Session) -> Non
     circ_d = _circuito_reservado(db_session, env, code="CIRC-R-5", stack="ipv4", vrf="vpn-render")
     _sessao(db_session, env, circ_d, afi="ipv4", export_profile_id=perfis["default_internas"])
     texto2 = render_desejado(db_session, env["ne_id"]).texto
-    assert "# produto 'default_internas'" in texto2  # dívida documentada (ruling 13)
+    # default_internas renderiza (dívida paga): prefix-list de default+internas.
+    # A RP tem o mesmo nome da parte 1 (RP-64512-EXPORT-V4 — §25.4: estável
+    # para ASN+AFI), mas os corpos diferem no if-match ⇒ os 2 blocos CONVIVEM
+    # (dívida de colisão de nomes §25.4/§25.5, pré-existente — não deduplicar)
+    assert "# produto 'default_internas'" not in texto2
+    assert "ip ip-prefix IP-PFX-DEFAULT-INTERNAS-V4 index 10 permit 0.0.0.0/0" in texto2
+    assert "if-match ip-prefix IP-PFX-DEFAULT-INTERNAS-V4" in texto2
+    assert texto2.count("route-policy RP-64512-EXPORT-V4 permit node 10") == 2
+
+
+def test_render_export_default_internas_com_internas_e_autorizadas(db_session: Session) -> None:
+    from gerenet.automation.render import render_desejado
+
+    env = _ambiente(db_session)
+    # loopback do edge ⇒ rota interna (B1); o p2p /31 reservado do circuito
+    # entra junto (rede da alocação, kind p2p status reservada)
+    ne = db_session.get(models.Device, env["ne_id"])
+    ne.loopback = "10.99.0.253"
+    db_session.commit()
+    perfis = {p.name: p.id for p in list_policy_profiles(db_session, direction="export")}
+    circ_id = _circuito_reservado(db_session, env, code="CIRC-R-15", stack="ipv4")
+    create_authorization(
+        db_session, PrefixAuthorizationCreate(
+            organization_id=env["org_id"], family="ipv4", prefix="192.0.2.0/24",
+        ), actor="cli",
+    )
+    _sessao(db_session, env, circ_id, afi="ipv4", export_profile_id=perfis["default_internas"])
+
+    texto = render_desejado(db_session, env["ne_id"]).texto
+    # default no index 10; internas (loopback antes do p2p — ordenadas) e
+    # autorizada da org em seguida, um índice por prefixo (sem duplicar)
+    assert "ip ip-prefix IP-PFX-DEFAULT-INTERNAS-V4 index 10 permit 0.0.0.0/0" in texto
+    assert "ip ip-prefix IP-PFX-DEFAULT-INTERNAS-V4 index 20 permit 10.99.0.253/32" in texto
+    assert "ip ip-prefix IP-PFX-DEFAULT-INTERNAS-V4 index 30 permit 100.64.0.0/31" in texto
+    assert "ip ip-prefix IP-PFX-DEFAULT-INTERNAS-V4 index 40 permit 192.0.2.0/24" in texto
+    assert "if-match ip-prefix IP-PFX-DEFAULT-INTERNAS-V4" in texto
+    assert "route-policy RP-64512-EXPORT-V4 permit node 10" in texto
+    # R5: a definição existe ⇒ o peer referencia a RP de export
+    assert "export route-policy RP-64512-EXPORT-V4" in texto
+    assert "# produto 'default_internas'" not in texto
+
+
+def test_render_export_parcial_com_internas_sem_default(db_session: Session) -> None:
+    from gerenet.automation.render import render_desejado
+
+    env = _ambiente(db_session)
+    ne = db_session.get(models.Device, env["ne_id"])
+    ne.loopback = "10.99.0.253"
+    db_session.commit()
+    perfis = {p.name: p.id for p in list_policy_profiles(db_session, direction="export")}
+    circ_id = _circuito_reservado(db_session, env, code="CIRC-R-16", stack="ipv4")
+    create_authorization(
+        db_session, PrefixAuthorizationCreate(
+            organization_id=env["org_id"], family="ipv4", prefix="192.0.2.0/24",
+        ), actor="cli",
+    )
+    _sessao(db_session, env, circ_id, afi="ipv4", export_profile_id=perfis["parcial"])
+
+    texto = render_desejado(db_session, env["ne_id"]).texto
+    # produto "parcial" = internas + autorizadas, SEM default
+    assert "ip ip-prefix IP-PFX-PARCIAL-V4 index 10 permit 10.99.0.253/32" in texto
+    assert "ip ip-prefix IP-PFX-PARCIAL-V4 index 20 permit 100.64.0.0/31" in texto
+    assert "ip ip-prefix IP-PFX-PARCIAL-V4 index 30 permit 192.0.2.0/24" in texto
+    assert "if-match ip-prefix IP-PFX-PARCIAL-V4" in texto
+    assert "0.0.0.0/0" not in texto
+
+
+def test_render_export_parcial_sem_conteudo_vai_divida(db_session: Session) -> None:
+    from gerenet.automation.render import render_desejado
+
+    env = _ambiente(db_session)
+    perfis = {p.name: p.id for p in list_policy_profiles(db_session, direction="export")}
+    # circuito SEM reserva IPAM (sem p2p alocado ⇒ internas vazia) e sem
+    # autorizações da org ⇒ lista de anúncio do "parcial" fica vazia
+    circ_id = create_circuit(
+        db_session,
+        CircuitCreate(
+            code="CIRC-R-17", organization_id=env["org_id"], site_id=env["site_id"],
+            access_device_id=env["sw_id"], access_port="GE0/0/1",
+            edge_device_id=env["ne_id"], edge_trunk="Eth-Trunk127",
+        ),
+        actor="cli",
+    ).id
+    sessoes_svc.create_session(
+        db_session,
+        BgpSessionCreate(
+            circuit_id=circ_id, device_id=env["ne_id"], afi="ipv4",
+            local_address="192.0.2.1", remote_address="192.0.2.2",
+            export_profile_id=perfis["parcial"],
+        ),
+        actor="cli",
+    )
+
+    texto = render_desejado(db_session, env["ne_id"]).texto
+    # sem lista para montar ⇒ comentário-dívida; sem definição ⇒ o peer NÃO
+    # referencia RP de export (R5)
+    assert ("# produto 'parcial': sem rotas internas nem autorizações "
+            "para montar a lista de anúncio.") in texto
+    assert "IP-PFX-PARCIAL-V4" not in texto
+    assert "export route-policy" not in texto
 
 
 def test_render_import_com_default_autorizada(db_session: Session) -> None:

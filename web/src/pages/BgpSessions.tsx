@@ -335,7 +335,16 @@ export default function BgpSessions() {
       {erro && <p role="alert">{erro}</p>}
       <DataTable<BgpSessionOut>
         colunas={[
-          { key: "circuit", title: "Circuito", render: (s) => circuits?.find((c) => c.id === s.circuit_id)?.code ?? "—" },
+          {
+            key: "circuit",
+            title: "Circuito",
+            render: (s) => (
+              <>
+                {circuits?.find((c) => c.id === s.circuit_id)?.code ?? "—"}
+                {s.organization_kind === "operadora" && <span className="badge-upstream">upstream</span>}
+              </>
+            ),
+          },
           { key: "device", title: "Equipamento", render: (s) => devices?.find((d) => d.id === s.device_id)?.name ?? "—" },
           { key: "afi", title: "Família", render: (s) => <StatusBadge estado={s.afi} /> },
           { key: "addresses", title: "Endereços", render: (s) => `${s.local_address} ↔ ${s.remote_address}` },

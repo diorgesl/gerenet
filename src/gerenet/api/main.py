@@ -17,6 +17,7 @@ from gerenet.api.routers import (
     prefix_authorizations,
     reconciliation,
     sites,
+    upstreams,
 )
 from gerenet.api.static_spa import montar_spa
 from gerenet.config import get_settings
@@ -50,6 +51,7 @@ def create_app() -> FastAPI:
     app.include_router(reconciliation.config_router)
     app.include_router(policy_profiles.router)
     app.include_router(prefix_authorizations.router)
+    app.include_router(upstreams.router)
     app.include_router(audit_events.router)
     app.include_router(auth.router)
     app.include_router(users.router)

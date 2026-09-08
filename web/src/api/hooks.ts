@@ -8,6 +8,7 @@ import type {
   CircuitDetailOut,
   CircuitOut,
   CollectResposta,
+  CommunityCreateIn,
   CommunityOut,
   CommunityUpdateIn,
   ContactOut,
@@ -30,6 +31,13 @@ import type {
   ReconcileOut,
   SiteOut,
   SnapshotOut,
+  UpstreamCircuitIn,
+  UpstreamCommunityCreateIn,
+  UpstreamCommunityOut,
+  UpstreamCreateIn,
+  UpstreamDetailOut,
+  UpstreamOut,
+  UpstreamUpdateIn,
   UserOut,
   VsiCreateIn,
   VsiOut,
@@ -174,7 +182,7 @@ export const useSiteAtualizar = () => useAtualizar<Partial<SiteCreateIn> & { adm
 export type OrganizationCreateIn = {
   name: string;
   legal_name?: string | null;
-  kind: "downstream" | "parceiro";
+  kind: "downstream" | "parceiro" | "operadora";
   asn?: number | null;
   irr_as_set?: string | null;
   notes?: string | null;
@@ -460,6 +468,69 @@ export const useVsiCriar = () => useCriar<VsiCreateIn, VsiOut>("mpls-vsi", "/api
 export const useVsiDetalhe = (id: number) =>
   useQuery({ queryKey: ["mpls-vsi", id], queryFn: () => apiFetch<VsiOut>(`/api/v1/mpls/vsi/${id}`), enabled: id > 0 });
 
+// ---- Upstreams (spec §7; rotas da fase 5) ---------------------------------
+// O detail traz circuitos, sessões e communities DENTRO do UpstreamDetailOut —
+// nada de listas separadas, para não duplicar fetch (R-23).
+export function useUpstreams(opts: { organizationId?: number; includeDisabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: ["upstreams", opts.organizationId ?? null, opts.includeDisabled ?? false],
+    queryFn: () => {
+      const qs = new URLSearchParams();
+      if (opts.organizationId) qs.set("organization_id", String(opts.organizationId));
+      if (opts.includeDisabled) qs.set("include_disabled", "true");
+      const suf = qs.size > 0 ? `?${qs.toString()}` : "";
+      return apiFetch<UpstreamOut[]>(`/api/v1/upstreams${suf}`);
+    },
+  });
+}
+export const useUpstreamDetail = (id: number) =>
+  useQuery({
+    queryKey: ["upstream", id],
+    queryFn: () => apiFetch<UpstreamDetailOut>(`/api/v1/upstreams/${id}`),
+    enabled: id > 0,
+  });
+// Wrapper fino do detail (comunidades vêm dentro do UpstreamDetailOut) — não
+// efetua fetch próprio: reaproveita o cache de ["upstream", id].
+export function useUpstreamCommunities(id: number) {
+  const detalhe = useUpstreamDetail(id);
+  return { ...detalhe, data: detalhe.data?.comunidades };
+}
+export const useUpstreamCriar = () => useCriar<UpstreamCreateIn, UpstreamOut>("upstreams", "/api/v1/upstreams");
+export const useUpstreamAtualizar = () =>
+  useAtualizar<UpstreamUpdateIn, UpstreamOut>("upstreams", "/api/v1/upstreams");
+export function useVincularCircuito() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ upstreamId, ...body }: { upstreamId: number } & UpstreamCircuitIn) =>
+      apiFetch<UpstreamDetailOut>(`/api/v1/upstreams/${upstreamId}/circuits`, { method: "POST", body }),
+    onSuccess: (_d, v) => void qc.invalidateQueries({ queryKey: ["upstream", v.upstreamId] }),
+  });
+}
+export function useDesvincularCircuito() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ upstreamId, circuitId }: { upstreamId: number; circuitId: number }) =>
+      apiFetch<void>(`/api/v1/upstreams/${upstreamId}/circuits/${circuitId}`, { method: "DELETE" }),
+    onSuccess: (_d, v) => void qc.invalidateQueries({ queryKey: ["upstream", v.upstreamId] }),
+  });
+}
+export function useAddUpstreamCommunity() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ upstreamId, ...body }: { upstreamId: number } & UpstreamCommunityCreateIn) =>
+      apiFetch<UpstreamCommunityOut>(`/api/v1/upstreams/${upstreamId}/communities`, { method: "POST", body }),
+    onSuccess: (_d, v) => void qc.invalidateQueries({ queryKey: ["upstream", v.upstreamId] }),
+  });
+}
+export function useRemoveUpstreamCommunity() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ upstreamId, communityId }: { upstreamId: number; communityId: number }) =>
+      apiFetch<void>(`/api/v1/upstreams/${upstreamId}/communities/${communityId}`, { method: "DELETE" }),
+    onSuccess: (_d, v) => void qc.invalidateQueries({ queryKey: ["upstream", v.upstreamId] }),
+  });
+}
+
 export const usePolicyProfiles = (filtros?: { direction?: string; include_disabled?: boolean }) =>
   useQuery({
     queryKey: ["policy-profiles", filtros],
@@ -472,12 +543,16 @@ export const usePolicyProfiles = (filtros?: { direction?: string; include_disabl
     },
   });
 export const useCommunities = (opts?: { includeDisabled?: boolean }) => useLista<CommunityOut>("communities", "/api/v1/communities", opts);
+export const useCommunityCriar = () => useCriar<CommunityCreateIn, CommunityOut>("communities", "/api/v1/communities");
 export const useCommunityAtualizar = () =>
   useAtualizar<CommunityUpdateIn, CommunityOut>("communities", "/api/v1/communities");
 export const usePolicyProfileAtualizar = () =>
   useAtualizar<PolicyProfileUpdateIn, PolicyProfileOut>("policy-profiles", "/api/v1/policy-profiles");
 
-export const usePrefixAuthorizations = (filtros?: { organization_id?: number; family?: string; include_disabled?: boolean }) =>
+export const usePrefixAuthorizations = (
+  filtros?: { organization_id?: number; family?: string; include_disabled?: boolean },
+  enabled = true,
+) =>
   useQuery({
     queryKey: ["prefix-authorizations", filtros],
     queryFn: () => {
@@ -488,6 +563,7 @@ export const usePrefixAuthorizations = (filtros?: { organization_id?: number; fa
       const suf = qs.size > 0 ? `?${qs.toString()}` : "";
       return apiFetch<PrefixAuthorizationOut[]>(`/api/v1/prefix-authorizations${suf}`);
     },
+    enabled,
   });
 export type PrefixAuthorizationCreateIn = {
   organization_id: number;

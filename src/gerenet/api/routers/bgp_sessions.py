@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from gerenet.api.deps import Actor, require_actor
 from gerenet.config import get_settings
 from gerenet.db import get_db
+from gerenet.domain import models
 from gerenet.domain.schemas import (
     BgpSessionCommunityIn,
     BgpSessionCreate,
@@ -23,6 +24,14 @@ router = APIRouter(prefix="/api/v1/bgp-sessions", tags=["bgp-sessions"], depende
 SessionDep = Annotated[Session, Depends(get_db)]
 
 
+def _com_kind(session: Session, sessao: models.BgpSession) -> dict[str, str | None]:
+    """kind da organização do circuito da sessão (fase 5; via session.get — o
+    modelo de sessão não tem relação direta com circuito)."""
+    circ = session.get(models.Circuit, sessao.circuit_id)
+    org = circ.organization if circ else None
+    return {"organization_kind": org.kind if org else None}
+
+
 @router.get("", response_model=list[BgpSessionOut])
 def listar(
     session: SessionDep,
@@ -30,12 +39,15 @@ def listar(
     device_id: int | None = None,
     include_disabled: bool = False,
 ) -> list:
-    return svc.list_sessions(
-        session,
-        circuit_id=circuit_id,
-        device_id=device_id,
-        include_disabled=include_disabled,
-    )
+    return [
+        BgpSessionOut.model_validate(s).model_copy(update=_com_kind(session, s))
+        for s in svc.list_sessions(
+            session,
+            circuit_id=circuit_id,
+            device_id=device_id,
+            include_disabled=include_disabled,
+        )
+    ]
 
 
 @router.post("", response_model=BgpSessionOut, status_code=201)
@@ -45,21 +57,23 @@ def criar(
     actor: Annotated[Actor, Depends(require_actor)],
 ) -> object:
     try:
-        return svc.create_session(session, data, actor=actor.nome)
+        sessao = svc.create_session(session, data, actor=actor.nome)
     except ConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return BgpSessionOut.model_validate(sessao).model_copy(update=_com_kind(session, sessao))
 
 
 @router.get("/{session_id}", response_model=BgpSessionOut)
 def detalhar(session_id: int, session: SessionDep) -> object:
     try:
-        return svc.get_session(session, session_id)
+        sessao = svc.get_session(session, session_id)
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return BgpSessionOut.model_validate(sessao).model_copy(update=_com_kind(session, sessao))
 
 
 @router.patch("/{session_id}", response_model=BgpSessionOut)
@@ -74,14 +88,16 @@ def atualizar(
         raise HTTPException(status_code=400, detail="admin_status não aceita null.")
     try:
         if mudancas == {"admin_status": False}:
-            return svc.disable_session(session, session_id, actor=actor.nome)
-        return svc.update_session(session, session_id, data, actor=actor.nome)
+            sessao = svc.disable_session(session, session_id, actor=actor.nome)
+        else:
+            sessao = svc.update_session(session, session_id, data, actor=actor.nome)
     except ConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return BgpSessionOut.model_validate(sessao).model_copy(update=_com_kind(session, sessao))
 
 
 @router.post("/{session_id}/password", response_model=BgpSessionOut)
@@ -103,7 +119,8 @@ def definir_senha(
         store.set_secret(caminho, {"password": data.password})
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=f"Vault indisponível: {exc}.") from exc
-    return svc.set_password(session, sessao.id, actor=actor.nome, path=caminho)
+    sessao = svc.set_password(session, sessao.id, actor=actor.nome, path=caminho)
+    return BgpSessionOut.model_validate(sessao).model_copy(update=_com_kind(session, sessao))
 
 
 @router.get("/{session_id}/communities", response_model=list[CommunityOut])

@@ -6,7 +6,7 @@ from gerenet.domain.schemas import PrefixAuthorizationCreate
 from gerenet.domain.services import prefix_authorizations as svc
 from gerenet.domain.services.errors import GerenetError
 
-app = typer.Typer(help="Prefixos autorizados por organização (origem manual).")
+app = typer.Typer(help="Prefixos autorizados por organização (origem manual, IRR ou RPKI).")
 
 
 @app.command("add")
@@ -14,15 +14,26 @@ def add(
     organization_id: int = typer.Option(..., "--organization-id", help="ID da organização."),
     family: str = typer.Option(..., help="ipv4 ou ipv6."),
     prefix: str = typer.Option(..., help="CIDR alinhado (ex.: 203.0.113.0/24)."),
+    origin: str = typer.Option(
+        "manual", "--origin", help="Origem da autorização: manual, irr ou rpki."
+    ),
     notes: str | None = typer.Option(None, help="Observações."),
 ) -> None:
-    """Autoriza um prefixo para um downstream."""
+    """Autoriza um prefixo para um downstream.
+
+    Origem irr/rpki: a validação nasce `nao_verificada` e é recalculada pelo
+    sync de ROAs (revalidação consultiva §10.4).
+    """
     with get_session() as session:
         try:
             auth = svc.create_authorization(
                 session,
                 PrefixAuthorizationCreate(
-                    organization_id=organization_id, family=family, prefix=prefix, notes=notes
+                    organization_id=organization_id,
+                    family=family,
+                    prefix=prefix,
+                    origin=origin,
+                    notes=notes,
                 ),
                 actor="cli",
             )
@@ -51,7 +62,11 @@ def listar(
             typer.echo(f"Erro: {exc}", err=True)
             raise typer.Exit(1) from exc
         for auth in autorizacoes:
-            typer.echo(f"{auth.id:>4}  {auth.family:<4} {auth.prefix:<20} org {auth.organization_id}")
+            typer.echo(
+                f"{auth.id:>4}  {auth.family:<4} {auth.prefix:<20} "
+                f"{auth.origin:<6} {auth.validacao or '-'!s:<16} "
+                f"org {auth.organization_id}"
+            )
 
 
 @app.command("disable")

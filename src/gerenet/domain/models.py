@@ -22,21 +22,22 @@ from gerenet.db import Base
 COMM_STATUS = ("unknown", "ok", "fail")
 SNAPSHOT_STATUS = ("success", "partial", "error")
 JOB_STATUS = ("queued", "running", "success", "partial", "error")
-ORG_KIND = ("downstream", "parceiro")
+ORG_KIND = ("downstream", "parceiro", "operadora")
 CONTACT_KIND = ("tecnico", "noc", "admin")
 CIRCUIT_STACK = ("ipv4", "ipv6", "dual")
-VLAN_MODE = ("unica", "separada")
+VLAN_MODE = ("unica", "separada", "none")
 FAMILY = ("ipv4", "ipv6")
 ALLOC_STATUS = ("reservada", "liberada")
 PREFIX_KIND = ("p2p",)
 DIRECTION = ("import", "export")
 PROFILE_KIND = ("produto",)
-AUTH_ORIGIN = ("manual",)
+AUTH_ORIGIN = ("manual", "irr", "rpki")
 USER_ROLES = ("visualizador", "operador", "aprovador", "executor", "administrador")
 CHANGE_ACTION = ("provision", "remove")
 CHANGE_CRITICALITY = ("baixa", "media", "alta")
-# Escopo da mudança (spec §4/§9): circuito (ciclo D), l2vc/vsi (MPLS, fase 4).
-CHANGE_ESCOPO = ("circuito", "l2vc", "vsi")
+# Escopo da mudança (spec §4/§9): circuito (ciclo D), l2vc/vsi (MPLS, fase 4),
+# upstream (fase 5).
+CHANGE_ESCOPO = ("circuito", "l2vc", "vsi", "upstream")
 # Terminais: aplicado, com_divergencia, rejeitado, cancelado (spec §4.1).
 CHANGE_STATUS = ("rascunho", "aguardando_aprovacao", "aprovado", "executando",
                  "aplicado", "com_divergencia", "parcial", "erro", "rejeitado", "cancelado")
@@ -48,6 +49,12 @@ SERVICE_KIND = ("l2vc", "vsi")
 SERVICE_ENCAP = ("dot1q", "qinq", "ethernet_raw")
 SERVICE_SIGNALING = ("ldp",)
 VLAN_KIND = ("vlan", "s_vlan", "mpls_ac")
+# Fase 5 (upstreams): categorização de community (§7/§25.6) e tipos de upstream.
+COMMUNITY_TIPO = ("padrao", "acao_blackhole", "acao_prepend", "acao_lp", "informacao", "tag_produto")
+UPSTREAM_TIPO = ("transito", "ix", "pni", "contingencia")
+UPSTREAM_PAPEL = ("principal", "contingencia")
+UCOMM_PURPOSE = ("blackhole", "prepend", "lp", "info")
+UCOMM_DIR = ("import", "export", "ambos")
 
 
 class Device(Base):
@@ -75,6 +82,7 @@ class Device(Base):
     credential_group_id: Mapped[int | None] = mapped_column(ForeignKey("credential_groups.id"))
     tags: Mapped[list] = mapped_column(JSON, default=list)
     capabilities: Mapped[list] = mapped_column(JSON, default=list)  # §5: suportes por equipamento (ex.: "mpls_flow_label")
+    loopback: Mapped[str | None] = mapped_column(String(64))  # loopback do roteador (§5) — rotas internas F5
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -231,7 +239,7 @@ class Circuit(Base):
     code: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False)
     site_id: Mapped[int] = mapped_column(ForeignKey("sites.id"), nullable=False)
-    access_device_id: Mapped[int] = mapped_column(ForeignKey("devices.id"), nullable=False)
+    access_device_id: Mapped[int | None] = mapped_column(ForeignKey("devices.id"))  # nullable: upstream sem switch de acesso
     access_port: Mapped[str] = mapped_column(String(64), nullable=False)
     edge_device_id: Mapped[int] = mapped_column(ForeignKey("devices.id"), nullable=False)
     backup_edge_device_id: Mapped[int | None] = mapped_column(ForeignKey("devices.id"))
@@ -356,6 +364,9 @@ class Community(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    tipo: Mapped[str] = mapped_column(
+        Enum(*COMMUNITY_TIPO, name="community_tipo"), default="padrao", nullable=False
+    )  # §7/§25.6: categorização; criação de novas via UI/CLI desde a F5
     notes: Mapped[str | None] = mapped_column(Text())
     admin_status: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -429,7 +440,8 @@ class BgpSessionCommunity(Base):
 
 
 class BgpPrefixAuthorization(Base):
-    """Prefixo autorizado de um downstream (origem manual; IRR/RPKI = F5)."""
+    """Prefixo autorizado de um downstream (origem manual, IRR ou RPKI;
+    validação consultiva na F5 — nunca bloqueia)."""
 
     __tablename__ = "bgp_prefix_authorizations"
 
@@ -440,6 +452,7 @@ class BgpPrefixAuthorization(Base):
     origin: Mapped[str] = mapped_column(
         Enum(*AUTH_ORIGIN, name="auth_origin"), default="manual", nullable=False
     )
+    validacao: Mapped[str | None] = mapped_column(String(32))  # ok|diverge|desconhecida|nao_verificada (consultiva, F5)
     notes: Mapped[str | None] = mapped_column(Text())
     admin_status: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -488,8 +501,9 @@ class UserSession(Base):
 class ChangeRequest(Base):
     """Mudança controlada sobre um serviço de rede (§12) — aprovação e execução registradas.
 
-    Escopo generalizado (fase 4, §5): `circuito` (ciclo D) ou `l2vc`/`vsi` (MPLS);
-    o id correspondente ao escopo é o que carrega a FK (circuit_id | l2vc_id).
+    Escopo generalizado (fase 4, §5): `circuito` (ciclo D), `l2vc`/`vsi` (MPLS)
+    ou `upstream` (fase 5); o id correspondente ao escopo é o que carrega a FK
+    (circuit_id | l2vc_id | upstream_id).
     """
 
     __tablename__ = "change_requests"
@@ -500,6 +514,7 @@ class ChangeRequest(Base):
         Enum(*CHANGE_ESCOPO, name="change_escopo"), default="circuito", nullable=False
     )
     l2vc_id: Mapped[int | None] = mapped_column(ForeignKey("l2vc_services.id"))
+    upstream_id: Mapped[int | None] = mapped_column(ForeignKey("upstreams.id"))
     acao: Mapped[str] = mapped_column(Enum(*CHANGE_ACTION, name="change_action"), nullable=False)
     criticidade: Mapped[str] = mapped_column(
         Enum(*CHANGE_CRITICALITY, name="change_criticality"), default="media", nullable=False
@@ -520,6 +535,7 @@ class ChangeRequest(Base):
 
     circuito: Mapped[Circuit] = relationship()
     l2vc: Mapped["L2vcService | None"] = relationship()
+    upstream: Mapped["Upstream | None"] = relationship()
     solicitante: Mapped[User | None] = relationship()
     steps: Mapped[list["ChangeStep"]] = relationship(
         back_populates="change_request", order_by="ChangeStep.id", cascade="all, delete-orphan"
@@ -532,6 +548,11 @@ class ChangeRequest(Base):
     def l2vc_name(self) -> str | None:
         """Nome do serviço L2VC (CR de escopo l2vc) — exposto via ChangeRequestOut."""
         return self.l2vc.name if self.l2vc else None
+
+    @property
+    def upstream_name(self) -> str | None:
+        """Nome do upstream (CR de escopo upstream) — exposto via ChangeRequestOut."""
+        return self.upstream.name if self.upstream else None
 
 
 class ChangeStep(Base):
@@ -745,3 +766,125 @@ class VsiMember(Base):
 
     vsi: Mapped[VsiService] = relationship(back_populates="members")
     device: Mapped[Device] = relationship()
+
+
+# ---- Fase 5 (upstreams): conectividade própria de trânsito/IX/PNI (§7). ----
+
+class Upstream(Base):
+    """Conectividade própria de trânsito/IX/PNI (§7) — a intenção; nada roda no roteador sem CR."""
+
+    __tablename__ = "upstreams"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    tipo: Mapped[str] = mapped_column(Enum(*UPSTREAM_TIPO, name="upstream_tipo"), nullable=False)
+    capacity: Mapped[str | None] = mapped_column(String(32))
+    priority: Mapped[int | None] = mapped_column(Integer)
+    cost: Mapped[str | None] = mapped_column(String(32))
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False)
+    expected_prefixes_v4: Mapped[int | None] = mapped_column(Integer)
+    expected_prefixes_v6: Mapped[int | None] = mapped_column(Integer)
+    max_prefix_margin_pct: Mapped[int] = mapped_column(Integer, default=20, nullable=False)
+    rpki_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    entrada_local_preference: Mapped[int | None] = mapped_column(Integer)
+    contingencia_local_preference: Mapped[int | None] = mapped_column(Integer)
+    contingencia_prepend: Mapped[int | None] = mapped_column(Integer)  # 0-10
+    contingencia_notes: Mapped[str | None] = mapped_column(Text())
+    admin_status: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    organization: Mapped[Organization] = relationship()
+    circuitos: Mapped[list["UpstreamCircuit"]] = relationship(
+        back_populates="upstream", order_by="UpstreamCircuit.ordem",
+        cascade="all, delete-orphan")
+    comunidades: Mapped[list["UpstreamCommunity"]] = relationship(
+        back_populates="upstream", order_by="UpstreamCommunity.id",
+        cascade="all, delete-orphan")
+
+
+class UpstreamCircuit(Base):
+    """Vínculo upstream ↔ circuito (§7; design §3): papel e ordem de preferência.
+
+    Unicidade é em circuit_id: um circuito pertence a no máximo um upstream
+    (BR-1 §7) — a composta (upstream_id, circuit_id) deixaria a corrida
+    concurrence passar (ruling R-07).
+    """
+
+    __tablename__ = "upstream_circuits"
+    __table_args__ = (UniqueConstraint("circuit_id", name="uq_upstream_circuits_circuit_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    upstream_id: Mapped[int] = mapped_column(ForeignKey("upstreams.id"), nullable=False)
+    circuit_id: Mapped[int] = mapped_column(ForeignKey("circuits.id"), nullable=False)
+    papel: Mapped[str] = mapped_column(
+        Enum(*UPSTREAM_PAPEL, name="upstream_papel"), default="principal", nullable=False
+    )
+    ordem: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+    upstream: Mapped[Upstream] = relationship(back_populates="circuitos")
+    circuito: Mapped[Circuit] = relationship()
+
+
+class UpstreamCommunity(Base):
+    """Community de operadora com VALOR CONCRETO (design §3; §7.1) — cadastro livre."""
+
+    __tablename__ = "upstream_communities"
+    __table_args__ = (UniqueConstraint("upstream_id", "purpose", "value", "regiao"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    upstream_id: Mapped[int] = mapped_column(ForeignKey("upstreams.id"), nullable=False)
+    purpose: Mapped[str] = mapped_column(Enum(*UCOMM_PURPOSE, name="ucomm_purpose"), nullable=False)
+    value: Mapped[str] = mapped_column(String(64), nullable=False)  # valor concreto (ex.: 65530:20:0)
+    direcao: Mapped[str] = mapped_column(
+        Enum(*UCOMM_DIR, name="ucomm_dir"), default="ambos", nullable=False
+    )
+    regiao: Mapped[str | None] = mapped_column(String(64))
+    bloquear: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)  # info: deny no import
+    notes: Mapped[str | None] = mapped_column(Text())
+    admin_status: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    upstream: Mapped[Upstream] = relationship(back_populates="comunidades")
+
+
+class Roa(Base):
+    """ROA do validador local (rpki-client JSON → §6 design) — dado externo, regravável."""
+
+    __tablename__ = "roas"
+    __table_args__ = (UniqueConstraint("prefix", "origin_asn", "max_length"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    prefix: Mapped[str] = mapped_column(String(64), nullable=False)
+    origin_asn: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    max_length: Mapped[int | None] = mapped_column(Integer)
+    source: Mapped[str] = mapped_column(String(32), default="rpki-client", nullable=False)
+    valid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    imported_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class IrrCache(Base):
+    """Cache de consultas IRR (whois) — §6 design; TTL 24h."""
+
+    __tablename__ = "irr_cache"
+    __table_args__ = (UniqueConstraint("source", "key"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)  # radb|altdb|lacnic...
+    key: Mapped[str] = mapped_column(String(128), nullable=False)  # AS-SET ou ASN
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    queried_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

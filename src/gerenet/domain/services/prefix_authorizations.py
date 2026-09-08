@@ -1,14 +1,26 @@
-"""Autorizações de prefixo de downstreams (§6.4) — origem manual neste ciclo."""
+"""Autorizações de prefixo de downstreams (§6.4) — origem manual, IRR ou RPKI.
+
+A origem (`manual`|`irr`|`rpki`) indica como o prefixo foi autorizado; nas
+origens IRR/RPKI a validação é consultiva (§10.4): nasce `nao_verificada` e é
+recalculada por `revalidar_autorizacoes` (ao final do sync de ROAs do
+rpki-client e por CLI), sem nunca bloquear a autorização.
+"""
+import logging
+
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from gerenet.automation.irr import IrrError, consultar
+from gerenet.automation.rpki import IndiceRoas, avaliar_origem, indice_roas
 from gerenet.domain import models
 from gerenet.domain.audit import registrar
 from gerenet.domain.schemas import PrefixAuthorizationCreate
 from gerenet.domain.services.errors import ConflictError, NotFoundError, ValidationError
 from gerenet.domain.services.organizations import get_organization
 from gerenet.domain.validators import cidr_valido
+
+logger = logging.getLogger(__name__)
 
 
 def _organizacao_conflitante(
@@ -39,6 +51,14 @@ def create_authorization(
     org = get_organization(session, data.organization_id)
     if org.admin_status is False:
         raise ConflictError(f"Organização {org.name} desativada não recebe autorizações.")
+    if org.kind == "operadora":
+        # Design §3/§10.1 (G2/I-4): autorização é de downstream/parceiro — a
+        # operadora é provedor; sem a guarda o dado nasceria na SoT e seria
+        # apenas ignorado pelo render (defesa em profundidade mantida em
+        # `_autorizadas_clientes`).
+        raise ValidationError(
+            "Organização do tipo operadora não recebe autorizações de prefixo de cliente."
+        )
     cidr_valido(data.prefix, data.family)  # CIDR alinhado da família certa (mensagens PT)
     outra = _organizacao_conflitante(
         session, organization_id=data.organization_id, family=data.family, prefix=data.prefix
@@ -47,6 +67,10 @@ def create_authorization(
         raise ConflictError(f"Prefixo {data.prefix} sobrepõe autorização de {outra.name}.")
     dump = data.model_dump()
     auth = models.BgpPrefixAuthorization(**dump)
+    # Origem IRR/RPKI: validação consultiva (§10.4) — nasce não verificada e é
+    # recalculada por revalidar_autorizacoes; origem manual fica sem validação.
+    if data.origin in ("irr", "rpki"):
+        auth.validacao = "nao_verificada"
     session.add(auth)
     try:
         session.flush()  # valida a FK antes da auditoria
@@ -107,3 +131,77 @@ def disable_authorization(
     )
     session.commit()
     return auth
+
+
+def revalidar_autorizacoes(session: Session) -> int:
+    """Revalida as autorizações ativas de origem IRR/RPKI — total revalidado.
+
+    Consultiva (§10.4): nunca bloqueia nem desativa — só atualiza `validacao`.
+
+    - Origem `rpki`: `avaliar_origem` contra o índice de ROAs da SoT
+      (`indice_roas`, carregado UMA vez por lote — revisão final I-1) →
+      `ok` | `diverge` | `desconhecida` (ROAs vencidas ainda contam; a
+      frescura é do sync);
+    - Origem `irr`: `consultar("radb", asn)` — prefixo no payload ⇒ `ok`,
+      ausente ⇒ `diverge`; falha de rede sem cache vivo (`IrrError`) ⇒
+      fail-soft: mantém a `validacao` atual e não conta como revalidada.
+      O payload é memoizado por ASN no lote (uma consulta por organização).
+
+    Organização sem ASN ⇒ `log.warning` e `validacao` mantida (não conta).
+    Autorizações desativadas e de origem `manual` são ignoradas.
+
+    Um único commit ao final (o lote é uma transação; em exceção, rollback e a
+    exceção sobe). Retorna quantas autorizações tiveram a `validacao` atualizada.
+    """
+    autorizacoes = session.scalars(
+        select(models.BgpPrefixAuthorization).where(
+            models.BgpPrefixAuthorization.admin_status.is_(True),
+            models.BgpPrefixAuthorization.origin.in_(("irr", "rpki")),
+        )
+    ).all()
+    revalidadas = 0
+    # m-1 (revisão T23): autorizações da MESMA organização (mesmo ASN) custavam
+    # uma consulta IRR cada — memoiza o payload por ASN (um whois por
+    # organização no lote; irr_cache continua como segunda camada entre
+    # execuções). Falha não é memoizada: IrrError refaz o fail-soft por auth.
+    payloads_irr: dict[int, dict] = {}
+    # I-1 (revisão final): o índice de ROAs é carregado/parseado UMA vez por
+    # lote (M autorizações × N ROAs viraria O(M×N) com instanciação ORM +
+    # ip_network por autorização — o `rpki sync` com o lote real do
+    # rpki-client degeneraria para dezenas de minutos).
+    indice: IndiceRoas | None = None
+    try:
+        for auth in autorizacoes:
+            org = session.get(models.Organization, auth.organization_id)
+            if org is None or org.asn is None:
+                logger.warning(
+                    "Autorização %d não revalidada: organização %d sem ASN.",
+                    auth.id,
+                    auth.organization_id,
+                )
+                continue
+            if auth.origin == "rpki":
+                if indice is None:
+                    indice = indice_roas(session)
+                auth.validacao = avaliar_origem(auth.prefix, org.asn, indice)
+            else:  # irr
+                try:
+                    payload = payloads_irr.get(org.asn)
+                    if payload is None:
+                        payload = consultar("radb", str(org.asn))
+                        payloads_irr[org.asn] = payload
+                except IrrError as exc:
+                    logger.warning(
+                        "Autorização %d não revalidada: consulta IRR falhou (%s); "
+                        "validacao mantida.",
+                        auth.id,
+                        exc,
+                    )
+                    continue
+                auth.validacao = "ok" if auth.prefix in payload["prefixos"] else "diverge"
+            revalidadas += 1
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    return revalidadas

@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class DeviceCreate(BaseModel):
@@ -82,7 +82,7 @@ class SiteUpdate(BaseModel):
 class OrganizationCreate(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     legal_name: str | None = Field(default=None, max_length=255)
-    kind: Literal["downstream", "parceiro"] = "downstream"
+    kind: Literal["downstream", "parceiro", "operadora"] = "downstream"
     # Sem limites pydantic: a validação de ASN é do serviço (asn_valido), que
     # levanta ValidationError do gerenet também para valores fora da faixa.
     asn: int | None = None
@@ -93,7 +93,7 @@ class OrganizationCreate(BaseModel):
 class OrganizationUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=128)
     legal_name: str | None = Field(default=None, max_length=255)
-    kind: Literal["downstream", "parceiro"] | None = None
+    kind: Literal["downstream", "parceiro", "operadora"] | None = None
     asn: int | None = None
     irr_as_set: str | None = Field(default=None, max_length=64)
     notes: str | None = None
@@ -163,6 +163,7 @@ class PrefixAuthorizationCreate(BaseModel):
     organization_id: int
     family: Literal["ipv4", "ipv6"]
     prefix: str = Field(min_length=1, max_length=64)
+    origin: Literal["manual", "irr", "rpki"] = "manual"
     notes: str | None = None
 
 
@@ -279,6 +280,7 @@ class CircuitOut(BaseModel):
     notes: str | None
     edge_trunk: str | None
     admin_status: bool
+    organization_kind: str | None = None  # derivado da organização do circuito (router/fase 5)
 
 
 class CircuitDetailOut(CircuitOut):
@@ -292,6 +294,7 @@ class CircuitDetailOut(CircuitOut):
     ipv4_remote: str | None = None
     ipv6_local: str | None = None
     ipv6_remote: str | None = None
+    upstream_id: int | None = None  # vínculo com upstream (fase 5); no máx. 1 por circuito (BR-1 §7)
 
 
 class BgpSessionOut(BaseModel):
@@ -322,6 +325,7 @@ class BgpSessionOut(BaseModel):
     allow_default_route: bool
     has_password: bool  # property do modelo — o valor nunca trafega aqui
     admin_status: bool
+    organization_kind: str | None = None  # derivado da organização do circuito da sessão (router/fase 5)
 
 
 class PrefixAuthorizationOut(BaseModel):
@@ -332,6 +336,7 @@ class PrefixAuthorizationOut(BaseModel):
     family: str
     prefix: str
     origin: str
+    validacao: str | None  # ok|diverge|desconhecida|nao_verificada (consultiva, fase 5)
     notes: str | None
     admin_status: bool
 
@@ -432,17 +437,25 @@ class BgpSessionCommunityIn(BaseModel):
     community_id: int
 
 
+class CommunityCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    tipo: str = "padrao"  # validado no serviço contra models.COMMUNITY_TIPO
+    notes: str | None = None
+
+
 class CommunityOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     name: str
+    tipo: str
     notes: str | None = None
     admin_status: bool
 
 
 class CommunityUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=64)
+    tipo: str | None = None  # validado no serviço contra models.COMMUNITY_TIPO
     notes: str | None = None
     admin_status: bool | None = None  # PATCH puro {"admin_status": false} roteia ao disable (Ruling 1)
 
@@ -536,9 +549,10 @@ class JobRunOut(BaseModel):
 
 
 class ChangeRequestCreate(BaseModel):
-    escopo: Literal["circuito", "l2vc", "vsi"] = "circuito"
+    escopo: Literal["circuito", "l2vc", "vsi", "upstream"] = "circuito"
     circuit_id: int | None = None
     l2vc_id: int | None = None
+    upstream_id: int | None = None  # escopo upstream (fase 5)
     acao: Literal["provision", "remove"] = "provision"
     criticidade: Literal["baixa", "media", "alta"] = "media"
     motivo: str = Field(min_length=1, max_length=2000)
@@ -550,6 +564,8 @@ class ChangeRequestCreate(BaseModel):
             raise ValueError("circuit_id é obrigatório para escopo 'circuito'.")
         if self.escopo == "l2vc" and self.l2vc_id is None:
             raise ValueError("l2vc_id é obrigatório para escopo 'l2vc'.")
+        if self.escopo == "upstream" and self.upstream_id is None:
+            raise ValueError("upstream_id é obrigatório para escopo 'upstream'.")
         if self.escopo == "vsi":
             raise ValueError("Escopo 'vsi' não está disponível neste ciclo.")
         return self
@@ -593,6 +609,8 @@ class ChangeRequestOut(BaseModel):
     escopo: str
     l2vc_id: int | None = None
     l2vc_name: str | None = None
+    upstream_id: int | None = None
+    upstream_name: str | None = None  # espelho do modelo (propriedade upstream_name)
     acao: str
     criticidade: str
     motivo: str
@@ -733,3 +751,147 @@ class VsiOut(BaseModel):
     created_at: datetime
     members: list[VsiMemberOut] = Field(default_factory=list)
     domain_name: str | None = None
+
+
+# ---- Fase 5 (upstreams, §7): conectividade própria — trânsito/IX/PNI. ----
+
+def _valida_margem(v: int | None) -> int | None:
+    """Margem do maximum-prefix entre 0 e 100 — mensagem PT-BR (mode="before").
+
+    Aceita string numérica (JSON via API chega cru ao validator; `0 <= "101"`
+    era TypeError e pydantic v2 não converte TypeError em ValidationError —
+    virava 500 em vez de 422 — revisão final M-1). `None` atravessa (campo
+    opcional do Update).
+    """
+    if v is None:
+        return None
+    if isinstance(v, str):
+        try:
+            v = int(v)
+        except ValueError:
+            raise ValueError(
+                "margem (max_prefix_margin_pct) deve ser um inteiro entre 0 e 100."
+            ) from None
+    if not 0 <= v <= 100:
+        raise ValueError("margem (max_prefix_margin_pct) deve estar entre 0 e 100.")
+    return v
+
+
+class UpstreamCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=128)
+    tipo: Literal["transito", "ix", "pni", "contingencia"]
+    capacity: str | None = Field(default=None, max_length=32)
+    priority: int | None = None  # 1 = maior prioridade
+    cost: str | None = Field(default=None, max_length=32)
+    organization_id: int
+    expected_prefixes_v4: int | None = None
+    expected_prefixes_v6: int | None = None
+    max_prefix_margin_pct: int = Field(default=20, ge=0, le=100)
+    rpki_enabled: bool = True
+    entrada_local_preference: int | None = None
+    contingencia_local_preference: int | None = None
+    contingencia_prepend: int | None = Field(default=None, ge=0, le=10)
+    contingencia_notes: str | None = None
+
+    @field_validator("max_prefix_margin_pct", mode="before")
+    @classmethod
+    def _margem(cls, v: int | None) -> int | None:
+        # mode="before": o erro de margem em PT-BR precisa anteceder o do Field(ge/le).
+        return _valida_margem(v)
+
+
+class UpstreamUpdate(BaseModel):
+    name: str | None = None
+    tipo: Literal["transito", "ix", "pni", "contingencia"] | None = None
+    capacity: str | None = Field(default=None, max_length=32)
+    priority: int | None = None
+    cost: str | None = Field(default=None, max_length=32)
+    organization_id: int | None = None
+    expected_prefixes_v4: int | None = None
+    expected_prefixes_v6: int | None = None
+    # M-2 (revisão final): o Create tinha os limites; sem eles no PATCH/CLI
+    # valores absurdos iam direto ao banco (design §9: margem 0-100, prepend 0-10).
+    max_prefix_margin_pct: int | None = Field(default=None, ge=0, le=100)
+    rpki_enabled: bool | None = None
+    entrada_local_preference: int | None = None
+    contingencia_local_preference: int | None = None
+    contingencia_prepend: int | None = Field(default=None, ge=0, le=10)
+    contingencia_notes: str | None = None
+    admin_status: bool | None = None
+
+    @field_validator("max_prefix_margin_pct", mode="before")
+    @classmethod
+    def _margem(cls, v: int | None) -> int | None:
+        return _valida_margem(v)
+
+
+class UpstreamCommunityCreate(BaseModel):
+    purpose: Literal["blackhole", "prepend", "lp", "info"]
+    value: str = Field(min_length=2, max_length=64)
+    direcao: Literal["import", "export", "ambos"] = "ambos"
+    regiao: str | None = Field(default=None, max_length=64)
+    bloquear: bool = False
+    notes: str | None = None
+
+
+class UpstreamCircuitIn(BaseModel):
+    circuit_id: int
+    papel: Literal["principal", "contingencia"] = "principal"
+    ordem: int = 1
+
+
+class UpstreamCircuitOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    upstream_id: int
+    circuit_id: int
+    papel: str
+    ordem: int
+
+
+class UpstreamCommunityOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    upstream_id: int
+    purpose: str
+    value: str
+    direcao: str
+    regiao: str | None
+    bloquear: bool
+    notes: str | None
+    admin_status: bool
+
+
+class UpstreamOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    tipo: str
+    capacity: str | None
+    priority: int | None
+    cost: str | None
+    organization_id: int
+    expected_prefixes_v4: int | None
+    expected_prefixes_v6: int | None
+    max_prefix_margin_pct: int
+    rpki_enabled: bool
+    entrada_local_preference: int | None
+    contingencia_local_preference: int | None
+    contingencia_prepend: int | None
+    contingencia_notes: str | None
+    admin_status: bool
+    organization_kind: str | None = None  # kind da organização (operadora) — preenchido no router
+    organization_name: str | None = None  # nome da organização — preenchido no router
+    created_at: datetime
+    updated_at: datetime
+
+
+class UpstreamDetailOut(UpstreamOut):
+    """Detalhe do upstream: circuitos vinculados, sessões dos circuitos e communities (§7)."""
+
+    circuitos: list[UpstreamCircuitOut] = Field(default_factory=list)
+    sessoes: list[BgpSessionOut] = Field(default_factory=list)
+    comunidades: list[UpstreamCommunityOut] = Field(default_factory=list)

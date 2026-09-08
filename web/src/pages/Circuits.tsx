@@ -269,7 +269,16 @@ export default function Circuits() {
       <DataTable<CircuitOut>
         colunas={[
           { key: "code", title: "Código", render: (c) => <Link to={`/circuits/${c.id}`}>{c.code}</Link> },
-          { key: "organization", title: "Organização", render: (c) => organizations?.find((o) => o.id === c.organization_id)?.name ?? "—" },
+          {
+            key: "organization",
+            title: "Organização",
+            render: (c) => (
+              <>
+                {organizations?.find((o) => o.id === c.organization_id)?.name ?? "—"}
+                {c.organization_kind === "operadora" && <span className="badge-upstream">upstream</span>}
+              </>
+            ),
+          },
           { key: "site", title: "Site", render: (c) => sites?.find((s) => s.id === c.site_id)?.name ?? "—" },
           {
             key: "devices",

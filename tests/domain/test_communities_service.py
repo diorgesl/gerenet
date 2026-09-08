@@ -105,3 +105,88 @@ def test_disable_community_idempotente(db_session: Session) -> None:
         if com is not None:
             db_session.delete(com)
             db_session.commit()
+
+
+def _apaga_comunidade(session: Session, nome: str) -> None:
+    com = session.scalar(select(models.Community).where(models.Community.name == nome))
+    if com is not None:
+        session.delete(com)
+        session.commit()
+
+
+def test_cria_comunidade_global_com_tipo(session: Session) -> None:
+    from gerenet.domain.schemas import CommunityCreate
+
+    # F5/A4: catálogo permitiu criação desde a fase 5; tipo categoriza (§7/§25.6).
+    com = svc.create_community(
+        session,
+        CommunityCreate(name="blackhole-sul", tipo="acao_blackhole", notes="v6/32 p/ Sul"),
+        actor="cli",
+    )
+    assert com.tipo == "acao_blackhole"
+    assert com.notes == "v6/32 p/ Sul"
+    evento = session.scalar(
+        select(models.AuditEvent).where(models.AuditEvent.type == "community.create")
+    )
+    assert evento is not None
+    # M-12 (revisão final): `notes` fazia parte do painel do objeto criado (§18)
+    # e ficava de fora da trilha.
+    assert evento.details["depois"] == {
+        "name": "blackhole-sul", "tipo": "acao_blackhole", "notes": "v6/32 p/ Sul",
+    }
+    try:
+        assert "blackhole-sul" in [c.name for c in svc.list_communities(session)]
+    finally:
+        _apaga_comunidade(session, "blackhole-sul")
+
+
+def test_cria_comunidade_rejeita_tipo_invalido(session: Session) -> None:
+    from gerenet.domain.schemas import CommunityCreate
+
+    with pytest.raises(ValidationError, match="Tipo de community inválido"):
+        svc.create_community(
+            session, CommunityCreate(name="x-com-tipo", tipo="nao-existe"), actor="cli"
+        )
+
+
+def test_cria_comunidade_nome_duplicado_conflito(session: Session) -> None:
+    from gerenet.domain.schemas import CommunityCreate
+    from gerenet.domain.services.errors import ConflictError
+
+    svc.create_community(session, CommunityCreate(name="c5-com-dupe"), actor="cli")
+    try:
+        with pytest.raises(ConflictError, match="Community já existe: c5-com-dupe"):
+            svc.create_community(
+                session, CommunityCreate(name="c5-com-dupe", tipo="acao_lp"), actor="cli"
+            )
+    finally:
+        _apaga_comunidade(session, "c5-com-dupe")
+
+
+def test_list_communities_filtra_por_tipo(session: Session) -> None:
+    from gerenet.domain.schemas import CommunityCreate
+
+    svc.create_community(session, CommunityCreate(name="c5-com-lp", tipo="acao_lp"), actor="cli")
+    try:
+        nomes_lp = [c.name for c in svc.list_communities(session, tipo="acao_lp")]
+        assert nomes_lp == ["c5-com-lp"]
+        # tipo inválido → ValidationError (não lista o catálogo inteiro)
+        with pytest.raises(ValidationError, match="Tipo de community inválido"):
+            svc.list_communities(session, tipo="nao-existe")
+    finally:
+        _apaga_comunidade(session, "c5-com-lp")
+
+
+def test_update_community_aceita_tipo(session: Session) -> None:
+    from gerenet.domain.schemas import CommunityCreate, CommunityUpdate
+
+    com = svc.create_community(session, CommunityCreate(name="c5-com-up-tipo"), actor="cli")
+    try:
+        saida = svc.update_community(
+            session, com.id, CommunityUpdate(tipo="tag_produto"), actor="cli"
+        )
+        assert saida.tipo == "tag_produto"
+        with pytest.raises(ValidationError, match="Tipo de community inválido"):
+            svc.update_community(session, com.id, CommunityUpdate(tipo="nao"), actor="cli")
+    finally:
+        _apaga_comunidade(session, "c5-com-up-tipo")

@@ -1,4 +1,4 @@
-"""Communities — catálogo com PATCH de ativação (desativar/reativar) desde o C3; associações sessão ↔ community (spec §8)."""
+"""Communities — catálogo com criação (F5) e PATCH de ativação (desativar/reativar, C3); associações sessão ↔ community (spec §8)."""
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -61,13 +61,29 @@ def _sessao(db_session: Session) -> int:
     ).id
 
 
-def test_lista_communities_read_only(client: TestClient, db_session: Session) -> None:
+def test_catalogo_communities_com_criacao(client: TestClient, db_session: Session) -> None:
     lista = client.get("/api/v1/communities", headers=_auth())
     assert lista.status_code == 200
     assert [c["name"] for c in lista.json()] == ["blackhole", "no-advertise", "no-export"]
-    assert client.post("/api/v1/communities", json={}, headers=_auth()).status_code == 405
-    # caminho exato do catálogo: 405; subcaminho sem rota (ex.: /communities/1) → 404
-    assert client.delete("/api/v1/communities", headers=_auth()).status_code == 405
+    # F5: criação habilitada no catálogo (antes 405); corpo vazio → 422 (name obrigatório)
+    assert client.post("/api/v1/communities", json={}, headers=_auth()).status_code == 422
+    criada = client.post(
+        "/api/v1/communities", json={"name": "api-c5-com", "tipo": "acao_prepend"}, headers=_auth()
+    )
+    assert criada.status_code == 201
+    assert criada.json()["name"] == "api-c5-com" and criada.json()["tipo"] == "acao_prepend"
+    try:
+        filtrado = client.get("/api/v1/communities?tipo=acao_prepend", headers=_auth())
+        assert [c["name"] for c in filtrado.json()] == ["api-c5-com"]
+        # caminho exato do catálogo: post habilitado, delete continua sem rota → 405
+        assert client.delete("/api/v1/communities", headers=_auth()).status_code == 405
+    finally:
+        com = db_session.scalar(
+            select(models.Community).where(models.Community.name == "api-c5-com")
+        )
+        if com is not None:
+            db_session.delete(com)
+            db_session.commit()
 
 
 def test_associa_e_desassocia_community(client: TestClient, db_session: Session) -> None:

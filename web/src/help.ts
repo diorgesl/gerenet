@@ -23,7 +23,7 @@ export const HELP = {
   // Organizations
   "organization.name": "Nome de exibição da organização (1–128 caracteres).",
   "organization.legal_name": "Razão social completa (opcional).",
-  "organization.kind": "Tipo: downstream (cliente) ou parceiro.",
+  "organization.kind": "Tipo: downstream (cliente), parceiro ou operadora.",
   "organization.asn": "ASN do cliente (1–4294967295, reservados barrados) — único por organização.",
   "organization.irr_as_set": "AS-SET registrado no IRR (ex.: AS64500:AS-CLIENTE), opcional.",
   "organization.notes": "Observações livres.",
@@ -90,6 +90,7 @@ export const HELP = {
 
   // Communities
   "community.name": "Nome/valor da community no catálogo (1–64 caracteres; ex.: no-export ou 64500:100) — a aplicação do valor concreto na configuração é fase futura.",
+  "community.tipo": "Categoria da community (§7/§25.6): padrao (valor direto), acao_blackhole/acao_prepend/acao_lp (ação de tráfego), informacao (marcação informativa) ou tag_produto (tag de produto/serviço).",
   "community.notes": "Observações livres.",
 
   // Prefix authorizations
@@ -97,6 +98,22 @@ export const HELP = {
   "prefix.family": "Família: ipv4 ou ipv6.",
   "prefix.prefix": "Prefixo autorizado em CIDR (ex.: 10.0.0.0/24; 2001:db8::/48) — só autorizações ativas viram IP-PFX-<ASN>-IN-<AFI>.",
   "prefix.notes": "Observações livres.",
+
+  // Upstreams
+  "upstream.name": "Nome único do upstream (2–128 caracteres; ex.: transito-telco-01).",
+  "upstream.tipo": "trânsito, IX, PNI ou contingência.",
+  "upstream.organization_id": "Organização dona da conectividade — somente organizações do tipo operadora.",
+  "upstream.capacity": "Capacidade contratada (ex.: 10 Gbps).",
+  "upstream.priority": "Prioridade da conectividade (1 = maior), para seleção de rota preferida.",
+  "upstream.cost": "Custo da conectividade (ex.: R$/Mbps) — informativo no MVP.",
+  "upstream.expected_prefixes_v4": "Total de prefixos IPv4 esperados do upstream — base da faixa de normalidade.",
+  "upstream.expected_prefixes_v6": "Total de prefixos IPv6 esperados do upstream — base da faixa de normalidade.",
+  "upstream.max_prefix_margin_pct": "Margem percentual sobre o esperado de prefixos (0-100) com uso duplo: serve à faixa de normalidade da validação (esperado ± margem) e ao maximum-prefix repropagado nas sessões (esperado × (1+margem), limiar de proteção do VRP fixado em 80% quando ausente).",
+  "upstream.rpki_enabled": "Validação RPKI consultiva (§10.4): o hook apenas marca a validação (ok/diverge/desconhecida) nas autorizações de prefixo — sem RTR e sem bloqueio/rejeição; a aprovação continua humana.",
+  "upstream.entrada_local_preference": "Local-preference aplicado na importação das rotas deste upstream (maior = preferida).",
+  "upstream.contingencia_local_preference": "Local-preference aplicado quando o upstream é contingência (tipicamente menor que a da conectividade principal).",
+  "upstream.contingencia_prepend": "Prepend no AS-PATH quando o upstream é contingência (0–10) — desvaloriza os anúncios.",
+  "upstream.contingencia_notes": "Observações livres sobre o contexto de contingência.",
 
   // Users
   "user.username": "Nome de login (1–64), único.",

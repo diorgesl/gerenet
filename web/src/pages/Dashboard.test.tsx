@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import Dashboard from "./Dashboard";
@@ -58,6 +58,15 @@ describe("Dashboard", () => {
         if (url === "/api/v1/mpls/vsi") {
           return new Response(JSON.stringify([]), { status: 200, headers: { "Content-Type": "application/json" } });
         }
+        if (url === "/api/v1/upstreams") {
+          return new Response(
+            JSON.stringify([
+              { id: 1, name: "tr-01", tipo: "transito", admin_status: true },
+              { id: 2, name: "con-01", tipo: "contingencia", admin_status: false },
+            ]),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
         return new Response(null, { status: 404 });
       }),
     );
@@ -79,5 +88,14 @@ describe("Dashboard", () => {
     expect(screen.getByRole("link", { name: "Reconciliar" })).toBeTruthy();
     expect(screen.getByText(/mudanças/)).toBeTruthy();
     expect(screen.getByText("2")).toBeTruthy();
+    // Card de upstreams (R-28): 1 ativo de 2 cadastrados — a contagem usa useUpstreams().
+    // Escopo no metric: "1" sozinho colide com outras métricas; a label do card é
+    // "upstreams<br/>ativos" (textContent sem espaço — o <br/> separa na renderização).
+    const labelUpstream = screen.getByText(
+      (_texto, el) => el?.classList.contains("label") === true && el.textContent?.includes("upstreams") === true,
+    );
+    const cardUpstreams = labelUpstream.closest(".metric") as HTMLElement;
+    expect(within(cardUpstreams).getByText("1")).toBeTruthy();
+    expect(vi.mocked(fetch).mock.calls.some((c) => String(c[0]) === "/api/v1/upstreams")).toBe(true);
   });
 });

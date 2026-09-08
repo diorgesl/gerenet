@@ -1,9 +1,69 @@
-route-policy {{ nome }} permit node 10
+{% if fail_safe %}
+# fail-safe: sessão de upstream sem perfil de import — deny-all (nunca accept-all)
+route-policy {{ nome }} deny node 10
+{% else %}
+{% if produto == 'up-full' %}
+# up-full: accept-all do provedor, exceto as proteções — nós deny separados (if-match de tipos diferentes no mesmo nó é E; a negação de bogons e de communities de bloqueio exige OU)
+{% if lista %}
+route-policy {{ nome }} deny node 10
 {% if afi == 'ipv6' %}
 if-match ipv6 address prefix-list {{ lista }}
 {% else %}
 if-match ip-prefix {{ lista }}
 {% endif %}
+{% endif %}
+{% for c in deny_communities|default([]) %}
+route-policy {{ nome }} deny node {{ 10 + 10 * loop.index }}
+if-match community-filter {{ c }}
+{% endfor %}
+route-policy {{ nome }} permit node 100
 {% if local_preference %}
 apply local-preference {{ local_preference }}
+{% endif %}
+{% elif produto == 'up-parcial' %}
+# up-parcial: somente rota default + rotas com a community de "parcial" (lista chega em deny_communities — aqui são nós de aceite)
+route-policy {{ nome }} permit node 10
+{% if lista %}
+{% if afi == 'ipv6' %}
+if-match ipv6 address prefix-list {{ lista }}
+{% else %}
+if-match ip-prefix {{ lista }}
+{% endif %}
+{% endif %}
+{% if local_preference %}
+apply local-preference {{ local_preference }}
+{% endif %}
+{% for c in deny_communities|default([]) %}
+route-policy {{ nome }} permit node {{ 10 + 10 * loop.index }}
+if-match community-filter {{ c }}
+{% if local_preference %}
+apply local-preference {{ local_preference }}
+{% endif %}
+{% endfor %}
+{% elif produto == 'up-default' %}
+# up-default: somente a rota default do provedor
+route-policy {{ nome }} permit node 10
+{% if lista %}
+{% if afi == 'ipv6' %}
+if-match ipv6 address prefix-list {{ lista }}
+{% else %}
+if-match ip-prefix {{ lista }}
+{% endif %}
+{% endif %}
+{% if local_preference %}
+apply local-preference {{ local_preference }}
+{% endif %}
+{% else %}
+route-policy {{ nome }} permit node 10
+{% if lista %}
+{% if afi == 'ipv6' %}
+if-match ipv6 address prefix-list {{ lista }}
+{% else %}
+if-match ip-prefix {{ lista }}
+{% endif %}
+{% endif %}
+{% if local_preference %}
+apply local-preference {{ local_preference }}
+{% endif %}
+{% endif %}
 {% endif %}

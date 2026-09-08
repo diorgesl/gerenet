@@ -45,11 +45,12 @@ def _resolver_aprovador(session, aprovador: str) -> int:
 @app.command("add")
 def add(
     motivo: str = typer.Option(..., help="Motivo da mudança."),
-    escopo: Literal["circuito", "l2vc", "vsi"] = typer.Option(
-        "circuito", "--escopo", help="circuito, l2vc ou vsi."
+    escopo: Literal["circuito", "l2vc", "vsi", "upstream"] = typer.Option(
+        "circuito", "--escopo", help="circuito, l2vc, vsi ou upstream (fase 5)."
     ),
     circuit_id: int | None = typer.Option(None, "--circuit-id", help="ID do circuito (escopo circuito)."),
     l2vc_id: int | None = typer.Option(None, "--l2vc-id", help="ID do serviço L2VC (escopo l2vc)."),
+    upstream_id: int | None = typer.Option(None, "--upstream-id", help="ID do upstream (escopo upstream)."),
     ticket: str | None = typer.Option(None, help="Ticket de referência."),
     acao: Literal["provision", "remove"] = typer.Option("provision", "--acao", help="provision ou remove."),
     criticidade: Literal["baixa", "media", "alta"] = typer.Option(
@@ -63,7 +64,8 @@ def add(
                 session,
                 ChangeRequestCreate(
                     escopo=escopo, circuit_id=circuit_id, l2vc_id=l2vc_id,
-                    acao=acao, criticidade=criticidade, motivo=motivo, ticket=ticket,
+                    upstream_id=upstream_id, acao=acao, criticidade=criticidade,
+                    motivo=motivo, ticket=ticket,
                 ),
                 actor="cli",
             )
@@ -82,7 +84,7 @@ def add(
 @app.command("list")
 def listar(
     status: str | None = typer.Option(None, "--status", help="Filtra por status."),
-    escopo: Literal["circuito", "l2vc", "vsi"] | None = typer.Option(
+    escopo: Literal["circuito", "l2vc", "vsi", "upstream"] | None = typer.Option(
         None, "--escopo", help="Filtra por escopo."
     ),
     circuit_id: int | None = typer.Option(None, "--circuit-id", help="Filtra por circuito."),
@@ -92,9 +94,14 @@ def listar(
         for cr in svc.list_change_requests(
             session, status=status, escopo=escopo, circuit_id=circuit_id
         ):
+            if cr.escopo == "upstream":
+                alvo = f"upstream {cr.upstream_id:>4}"
+            else:
+                # guarda: CR l2vc/vsi tem circuit_id None e f"{None:>4}" quebra
+                alvo = f"circuito {cr.circuit_id:>4}" if cr.circuit_id is not None else "circuito —"
             typer.echo(
                 f"CR #{cr.id}  {cr.acao:<9} {cr.status:<18} {cr.escopo:<9} "
-                f"circuito {cr.circuit_id:>4}  {cr.criticidade:<5}  {cr.motivo[:48]}"
+                f"{alvo}  {cr.criticidade:<5}  {cr.motivo[:48]}"
             )
 
 

@@ -266,3 +266,64 @@ def test_cli_add_escopo_l2vc(db_session: Session) -> None:
     assert cr is not None and cr.escopo == "l2vc"
     assert len(cr.steps) == 2
     assert cr.circuit_id is None and cr.l2vc_id == l2vc_id
+
+
+def test_cli_add_list_show_escopo_upstream(db_session: Session,
+                                           up_com_2_circuitos) -> None:
+    """Task 15 (C4): add --escopo upstream --upstream-id N nasce rascunho com
+    steps; list --escopo upstream e list sem filtro mostram "upstream N" no
+    lugar de "circuito None"; show é escopo-independente (funciona como está)."""
+    up = up_com_2_circuitos
+    add = runner.invoke(app, [
+        "change-requests", "add", "--escopo", "upstream", "--upstream-id", str(up.id),
+        "--motivo", "Subir trânsito.",
+    ])
+    assert add.exit_code == 0, add.output
+    assert "rascunho" in add.output
+    cr_id = _cr_id(add.output)
+    cr = db_session.get(models.ChangeRequest, cr_id)
+    assert cr is not None and cr.escopo == "upstream"
+    assert cr.upstream_id == up.id and cr.circuit_id is None
+    assert cr.steps and all(s.plano_json for s in cr.steps)
+
+    filtrada = runner.invoke(app, ["change-requests", "list", "--escopo", "upstream"])
+    assert filtrada.exit_code == 0, filtrada.output
+    linha = next(l for l in filtrada.output.splitlines() if f"CR #{cr_id}" in l)
+    assert "upstream" in linha and str(up.id) in linha
+    assert "circuito None" not in filtrada.output
+
+    geral = runner.invoke(app, ["change-requests", "list"])
+    assert geral.exit_code == 0, geral.output
+    assert f"CR #{cr_id}" in geral.output
+
+    show = runner.invoke(app, ["change-requests", "show", str(cr_id)])
+    assert show.exit_code == 0, show.output
+    assert "step" in show.output
+
+
+def test_cli_add_upstream_sem_id_erro_limpo(db_session: Session) -> None:
+    """Task 15 (C4): escopo upstream sem --upstream-id ⇒ erro do schema, exit 1."""
+    add = runner.invoke(app, [
+        "change-requests", "add", "--escopo", "upstream", "--motivo", "sem id",
+    ])
+    assert add.exit_code == 1
+    assert "Erro:" in add.output
+    assert "Traceback" not in add.output
+
+
+def test_cli_add_upstream_sem_vinculos_nao_cria_cr(db_session: Session, up) -> None:
+    """Task 15 (C4): upstream sem circuitos/sessões ativas ⇒ erro limpo do
+    serviço (exit 1) e nenhuma CR persistida — sem órfão no banco."""
+    add = runner.invoke(app, [
+        "change-requests", "add", "--escopo", "upstream", "--upstream-id", str(up.id),
+        "--motivo", "Plano vazio.",
+    ])
+    assert add.exit_code == 1
+    assert "Erro:" in add.output
+    assert "sem circuitos/sessões ativas" in add.output
+    assert (
+        db_session.scalar(
+            select(models.ChangeRequest).where(models.ChangeRequest.upstream_id == up.id)
+        )
+        is None
+    )

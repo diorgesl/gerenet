@@ -18,6 +18,11 @@ router = APIRouter(prefix="/api/v1/circuits", tags=["circuits"], dependencies=[D
 SessionDep = Annotated[Session, Depends(get_db)]
 
 
+def _com_kind(circ: models.Circuit) -> dict[str, str | None]:
+    org = circ.organization  # lazy; identity-map deduplica por request
+    return {"organization_kind": org.kind if org else None}
+
+
 def _detalhe(session: Session, circ: models.Circuit) -> CircuitDetailOut:
     """CircuitDetailOut com as pontas derivadas dos enlaces reservados (ruling 4).
 
@@ -42,7 +47,14 @@ def _detalhe(session: Session, circ: models.Circuit) -> CircuitDetailOut:
         pontas["ipv4_local"], pontas["ipv4_remote"] = pontas_v4(por_versao[4])
     if circ.stack in ("ipv6", "dual") and 6 in por_versao:
         pontas["ipv6_local"], pontas["ipv6_remote"] = pontas_v6(por_versao[6])
-    return CircuitDetailOut.model_validate(circ).model_copy(update=pontas)
+    # R-25: vínculo com upstream — a UNIQUE em upstream_circuits.circuit_id (BR-1 §7)
+    # garante no máximo 1 upstream por circuito, então um scalar resolve.
+    vinculo = session.scalar(
+        select(models.UpstreamCircuit).where(models.UpstreamCircuit.circuit_id == circ.id)
+    )
+    return CircuitDetailOut.model_validate(circ).model_copy(
+        update={**pontas, **_com_kind(circ), "upstream_id": vinculo.upstream_id if vinculo else None}
+    )
 
 
 @router.get("", response_model=list[CircuitOut])
@@ -52,12 +64,15 @@ def listar(
     site_id: int | None = None,
     include_disabled: bool = False,
 ) -> list:
-    return svc.list_circuits(
-        session,
-        organization_id=organization_id,
-        site_id=site_id,
-        include_disabled=include_disabled,
-    )
+    return [
+        CircuitOut.model_validate(c).model_copy(update=_com_kind(c))
+        for c in svc.list_circuits(
+            session,
+            organization_id=organization_id,
+            site_id=site_id,
+            include_disabled=include_disabled,
+        )
+    ]
 
 
 @router.post("", response_model=CircuitOut, status_code=201)
@@ -65,13 +80,14 @@ def criar(
     data: CircuitCreate, session: SessionDep, actor: Annotated[Actor, Depends(require_actor)]
 ) -> object:
     try:
-        return svc.create_circuit(session, data, actor=actor.nome)
+        circ = svc.create_circuit(session, data, actor=actor.nome)
     except ConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return CircuitOut.model_validate(circ).model_copy(update=_com_kind(circ))
 
 
 @router.get("/{circuit_id}", response_model=CircuitDetailOut)
@@ -94,14 +110,16 @@ def atualizar(
         raise HTTPException(status_code=400, detail="admin_status não aceita null.")
     try:
         if mudancas == {"admin_status": False}:
-            return svc.disable_circuit(session, circuit_id, actor=actor.nome)
-        return svc.update_circuit(session, circuit_id, data, actor=actor.nome)
+            circ = svc.disable_circuit(session, circuit_id, actor=actor.nome)
+        else:
+            circ = svc.update_circuit(session, circuit_id, data, actor=actor.nome)
     except ConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return CircuitOut.model_validate(circ).model_copy(update=_com_kind(circ))
 
 
 @router.post("/{circuit_id}/reserve", response_model=CircuitDetailOut)

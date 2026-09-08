@@ -10,13 +10,16 @@ from gerenet.cli import (
     credential_groups,
     devices,
     hostkey,
+    irr,
     mpls,
     organizations,
     policy_profiles,
     prefix_authorizations,
     reconcile,
+    rpki,
     sites,
     snapshot,
+    upstreams,
     vault,
 )
 from gerenet.cli import users as cli_users
@@ -31,6 +34,8 @@ app.add_typer(bgp_sessions.app, name="bgp-sessions", help="Sessões BGP.")
 app.add_typer(change_requests.app, name="change-requests", help="Change requests (fluxo de mudança).")
 app.add_typer(mpls.app, name="mpls", help="MPLS em switches (domínios, L2VC, VSI).")
 app.add_typer(prefix_authorizations.app, name="prefix-authorizations", help="Autorizações de prefixo.")
+app.add_typer(rpki.app, name="rpki", help="Sincronização de ROAs do rpki-client (§7.5).")
+app.add_typer(irr.app, name="irr", help="Consultas IRR (ASN/AS-SET) com cache (§7.5).")
 app.add_typer(policy_profiles.app, name="policy-profiles", help="Produtos de roteamento.")
 app.add_typer(hostkey.app, name="hostkey", help="Host keys dos equipamentos.")
 app.add_typer(vault.app, name="vault", help="Credenciais de automação no Vault.")
@@ -41,3 +46,5 @@ app.add_typer(communities.app, name="communities", help="Communities BGP.")
 app.command(name="render-config")(reconcile.render_config)
 app.command(name="reconcile")(reconcile.reconcile)
 app.add_typer(cli_users.app, name="users", help="Usuários e perfis.")
+app.add_typer(upstreams.app, name="upstreams", help="Upstreams de trânsito/IX/PNI (§7).")
+app.add_typer(upstreams.communities, name="upstream-communities", help="Communities de operadora por upstream (§7.1).")

@@ -63,9 +63,11 @@ def listar(
     status: str | None = None,
     solicitante_id: int | None = None,
     circuit_id: int | None = None,
+    escopo: str | None = None,
 ) -> list:
     return svc.list_change_requests(
-        session, status=status, solicitante_id=solicitante_id, circuit_id=circuit_id
+        session, status=status, solicitante_id=solicitante_id, circuit_id=circuit_id,
+        escopo=escopo,
     )
 
 

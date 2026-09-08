@@ -193,6 +193,10 @@ input:focus, select:focus, textarea:focus {
 .badge-warn { color: var(--led-amber); }
 .badge-warn::before { background: var(--led-amber); }
 .badge-unknown { color: var(--paper-faint); }
+/* Marca de contexto "upstream" (circuitos/sessões de operadora): o ciano é o
+   terceiro status semântico da paleta (links/contexto) — não é alarme. */
+.badge-upstream { color: var(--led-cyan); }
+.badge-upstream::before { background: var(--led-cyan); }
 
 /* Cabeçalho de página */
 .page-header { display: flex; align-items: baseline; gap: 1rem; justify-content: space-between; margin-bottom: 1.4rem; }

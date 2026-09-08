@@ -23,7 +23,15 @@ const crL2vc = {
   ticket: "TICKET-43", solicitante_id: 1, status: "rascunho", rollback_de: null,
   created_at: "2026-09-03T10:00:00Z", steps: [], approvals: [],
 };
-let listaCRs = [cr]; // mutável por teste — cobre o cenário de CR de escopo l2vc
+// CR de escopo upstream: mesmo espelho (nome em vez de "—" na coluna Circuito)
+const crUpstream = {
+  id: 7, circuit_id: null, escopo: "upstream" as string, l2vc_id: null, l2vc_name: null,
+  upstream_id: 1, upstream_name: "upstream-tier1",
+  acao: "provision", criticidade: "media", motivo: "Troca de upstream de transito",
+  ticket: "TICKET-47", solicitante_id: 1, status: "rascunho", rollback_de: null,
+  created_at: "2026-09-06T10:00:00Z", steps: [], approvals: [],
+};
+let listaCRs = [cr]; // mutável por teste — cobre os cenários de escopo l2vc/upstream
 
 beforeAll(() => {
   vi.stubGlobal(
@@ -81,6 +89,15 @@ describe("ChangeRequests", () => {
     renderChangeRequests();
     expect(await screen.findByText("L2VC-0001")).toBeInTheDocument();
     expect(screen.queryByText("#null")).toBeNull();
+  });
+
+  it("exibe upstream_name na coluna Circuito para CR de escopo upstream", async () => {
+    // I-3 (revisão final T26 C4): mesmo espelho do l2vc — o nome do upstream
+    // substitui o "—" genérico na coluna Circuito da lista.
+    listaCRs = [crUpstream];
+    renderChangeRequests();
+    expect(await screen.findByText("upstream-tier1")).toBeInTheDocument();
+    expect(screen.queryByText(/^—$/)).toBeNull();
   });
 
   it("cria CR solicitando pela API", async () => {
