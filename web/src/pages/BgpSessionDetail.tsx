@@ -15,7 +15,7 @@ export default function BgpSessionDetail() {
   // Detalhe do circuito do peer — o upstream_id derivado (R-25) decide o escopo
   // da mudança: sessão de circuito vinculado a upstream muda pelo upstream
   // (matriz inteira), não por circuito. enabled: id>0 segura o fetch pré-carga.
-  const { data: circuito } = useCircuitDetail(data?.circuit_id ?? 0);
+  const { data: circuito, isPending: circuitoPendente } = useCircuitDetail(data?.circuit_id ?? 0);
   const { data: comunidades } = useSessionCommunities(sessionId);
   const { data: catalogo } = useCommunities();
   const assoc = useSessionCommunity();
@@ -38,7 +38,13 @@ export default function BgpSessionDetail() {
       <PageHeader
         titulo={`Sessão BGP #${data.id}`}
         acoes={
-          circuito?.upstream_id != null ? (
+          // M-1 (review T18): enquanto o detalhe do circuito carrega NÃO
+          // escolher escopo às cegas — clique rápido criaria CR de escopo
+          // circuito para sessão de upstream (bug do R-25); em erro cai no
+          // fallback circuito (draft exige aprovação).
+          circuitoPendente && data.circuit_id != null ? (
+            <span aria-busy="true">Verificando upstream…</span>
+          ) : circuito?.upstream_id != null ? (
             <SolicitarMudanca upstream_id={circuito.upstream_id} />
           ) : (
             <SolicitarMudanca circuit_id={data.circuit_id} />

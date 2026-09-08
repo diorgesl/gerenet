@@ -127,7 +127,7 @@ export default function UpstreamDetail() {
       />
       <table>
         <tbody>
-          <tr><th>Tipo</th><td><StatusBadge estado={TIPO_LABEL[data.tipo]} /></td></tr>
+          <tr><th>Tipo</th><td>{TIPO_LABEL[data.tipo]}</td></tr>
           <tr><th>Operadora</th><td>{data.organization_name ?? `#${data.organization_id}`}</td></tr>
           <tr><th>Capacidade</th><td>{data.capacity ?? "—"}</td></tr>
           <tr><th>Prioridade</th><td>{data.priority ?? "—"}</td></tr>
@@ -348,7 +348,7 @@ export default function UpstreamDetail() {
           {erroCommunity && <p role="alert">{erroCommunity}</p>}
         </Modal>
       )}
-      {erroCommunity && <p role="alert">{erroCommunity}</p>}
+      {!modalCommunity && erroCommunity && <p role="alert">{erroCommunity}</p>}
 
       <h2>Autorizações BGP da organização</h2>
       {!autorizacoes && <p aria-busy="true">Carregando autorizações…</p>}
