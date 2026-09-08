@@ -175,6 +175,17 @@ upstream (org do circuito é `operadora`):
   rotas com info-community marcada `bloquear` (via `community-filter` novo,
   valor concreto de `upstream_communities`), default quando
   `allow_default_route=false` na sessão, max-prefix-limiar da sessão.
+
+  > **Nota da revisão final (2026-09-08, G3):** a implementação da F5 NÃO nega
+  > bogons/martians no `up-full` — nunca houve um conjunto de bogons
+  > reutilizável na SoT (o §6.4 da spec descreve *regras de validação*, não um
+  > objeto; "reutilizar conjunto existente" era premissa insustentável e a
+  > frase acima não reflete o código). Modelar um conjunto de bogons (com
+  > prefix-lists/as-path-filters gerados a partir dele) é trabalho de fase
+  > futura — fora do escopo da onda de fix. As proteções do `up-full`
+  > implementadas ficam: default sob `allow_default_route=false`, prefix-list
+  > de internas + autorizações (rotas próprias/clientes) e communities de
+  > bloqueio + maximum-prefix na sessão.
 - `up-parcial`: **default + rotas portadoras da community de "parcial" do
   provedor** — definição determinística e parametrizável: a community é
   cadastrada em `upstream_communities` com `purpose=info` (direção
