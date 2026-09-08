@@ -1,7 +1,7 @@
 """Helper de rotas internas (Fase 5/B1): prefixos próprios — loopbacks + p2p alocados."""
 import pytest
 
-from gerenet.automation.naming import pfx_internas
+from gerenet.automation.naming import pfx_export
 from gerenet.automation.render import internas_prefixos
 from gerenet.domain import models
 from gerenet.domain.services.errors import ValidationError
@@ -45,8 +45,10 @@ def test_internas_prefixos_ordena_evita_dups_e_filtra(session, site_f5, edge_dev
     assert out["ipv6"] == []
 
 
-def test_pfx_internas_nome() -> None:
-    assert pfx_internas("ipv4") == "IP-PFX-INTERNAS-V4"
-    assert pfx_internas("ipv6") == "IP-PFX-INTERNAS-V6"
+def test_pfx_export_nome() -> None:
+    # §25.4: o nome deriva do ASN do par (IP-PFX-<ASN>-EXPORT-<AFI>) — nunca
+    # global; a mesma lista não é compartilhada entre upstreams.
+    assert pfx_export(64501, "ipv4") == "IP-PFX-64501-EXPORT-V4"
+    assert pfx_export(64501, "ipv6") == "IP-PFX-64501-EXPORT-V6"
     with pytest.raises(ValidationError):
-        pfx_internas("vpn")
+        pfx_export(64501, "vpn")

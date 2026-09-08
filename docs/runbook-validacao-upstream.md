@@ -44,7 +44,7 @@ ipv4-family unicast (ou ipv6-family unicast)
   peer <remoto> maximum-prefix <esperado×(1+margem)> [<limiar %>]
 
 ip ip-prefix IP-PFX-<ASN>-IN-<AFI> index N permit <prefixo>     # proteção do up-full: deny node 10 (internas + autorizações)
-ip ip-prefix IP-PFX-INTERNAS-<AFI> index N permit <prefixo>     # export: rotas internas + autorizações de clientes
+ip ip-prefix IP-PFX-<ASN>-EXPORT-<AFI> index N permit <prefixo> # export: rotas internas + autorizações de clientes
 route-policy RP-<ASN>-IMPORT-<AFI> ...                          # up-full: nós deny + permit 100
 route-policy RP-<ASN>-EXPORT-<AFI> ...                          # apply community <valores da operadora>
 ip community-filter CF-<ASN>-BLK-<n> permit <valor>             # communities info+bloquear (deny no import)
@@ -120,7 +120,7 @@ uv run ruff check src tests && uv run pytest -q
 O plano nasce da SoT × última coleta — antes de quadrar o desejado, entenda o
 encontrado no `display current-configuration` do edge: sessões BGP existentes
 (v4 e v6), route-policies/prefix-lists nomes no padrão do gerenet
-(`RP-<ASN>-…`, `IP-PFX-INTERNAS-…`), communities já aplicadas. Um peer ou
+(`RP-<ASN>-…`, `IP-PFX-<ASN>-EXPORT-…`), communities já aplicadas. Um peer ou
 policy manual fora do padrão aparece na [reconciliação](/wiki/operacao) como
 divergência, e não será apropriado pelo gerenet.
 
@@ -192,7 +192,7 @@ Na web, a página da CR (`/change-requests/<id>`) mostra o diff por bloco
 
 - máximo de prefixos na faixa do esperado × (1 + margem) — compara com o
   `PrefRcv` atual e com o que a operadora espera;
-- `IP-PFX-INTERNAS-<AFI>` com as rotas internas e clientes certos (um
+- `IP-PFX-<ASN>-EXPORT-<AFI>` com as rotas internas e clientes certos (um
   prefixo errado aqui vaza anúncio para o trânsito — ou nega o que deveria
   anunciar);
 - communities: `bloquear` como nó deny no import (community-filter

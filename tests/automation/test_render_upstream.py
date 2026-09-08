@@ -118,10 +118,11 @@ def test_render_upstream_export_anuncia_internas(session, up_com_sessao_upfull,
                                                  edge_device, circuito_com_p2p):
     resultado = render_desejado(session, edge_device.id)
     texto = resultado.texto
-    # anúncio = rotas internas (p2p alocado do circuito_com_p2p) + autorizadas
-    assert "ip ip-prefix IP-PFX-INTERNAS-V4 index 10 permit 100.64.10.0/31" in texto
+    # anúncio = rotas internas (p2p alocado do circuito_com_p2p) + autorizadas;
+    # o nome da lista deriva do ASN do par (§25.4), não é global
+    assert "ip ip-prefix IP-PFX-64501-EXPORT-V4 index 10 permit 100.64.10.0/31" in texto
     assert "route-policy RP-64501-EXPORT-V4 permit node 10" in texto
-    assert "if-match ip-prefix IP-PFX-INTERNAS-V4" in texto
+    assert "if-match ip-prefix IP-PFX-64501-EXPORT-V4" in texto
     assert texto.count("export route-policy RP-64501-EXPORT-V4") == 1
 
 

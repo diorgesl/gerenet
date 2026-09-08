@@ -571,9 +571,9 @@ def _bloco_export_upstream(
     """Exportação da sessão de upstream (§4.2) — anúncio NÃO é produto.
 
     Anúncio = rotas internas (internas_prefixos) + autorizações ATIVAS de
-    clientes (kind != operadora, mesma AFI), na prefix-list IP-PFX-INTERNAS-
-    <AFI> (naming.pfx_internas; o nome vem do conteúdo, não do ASN do par —
-    a mesma lista serve a todos os upstreams). Route_policy_export com
+    clientes (kind != operadora, mesma AFI), na prefix-list IP-PFX-<ASN>-
+    EXPORT-<AFI> (naming.pfx_export; nome derivado do ASN do par, §25.4 —
+    própria de cada upstream). Route_policy_export com
     aplicacoes = communities de AÇÃO da operadora (purpose prepend/lp/
     blackhole, direcao export/ambos), valores concretos direto de
     upstream_communities (§3.1 — sem associação intermediária); med/prepend/
@@ -584,7 +584,7 @@ def _bloco_export_upstream(
     """
     afi = sessao.afi
     nome_rp = naming.rp_export(sessao.asn_remote, afi)
-    nome_pfx = naming.pfx_internas(afi)
+    nome_pfx = naming.pfx_export(sessao.asn_remote, afi)
     anuncio = list(dict.fromkeys(
         internas_prefixos(session)[afi]
         + [a.prefix for a in _autorizadas_clientes(session, afi)]

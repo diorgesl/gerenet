@@ -149,7 +149,7 @@ def test_route_policy_import_up_default() -> None:
 def test_route_policy_export_upstream_aplicacoes() -> None:
     assert _render(
         "route_policy_export", nome="RP-64512-EXPORT-V4", afi="ipv4",
-        lista="IP-PFX-INTERNAS-V4", med=None, prepend=0, asn_local=61785,
+        lista="IP-PFX-64512-EXPORT-V4", med=None, prepend=0, asn_local=61785,
         aplicacoes=[
             {"tipo": "prepend", "valor": "65530:20:2", "regiao": "SP"},
             {"tipo": "blackhole", "valor": "65530:666:0", "regiao": None},
@@ -157,7 +157,7 @@ def test_route_policy_export_upstream_aplicacoes() -> None:
         ],
     ) == (
         "route-policy RP-64512-EXPORT-V4 permit node 10\n"
-        "if-match ip-prefix IP-PFX-INTERNAS-V4\n"
+        "if-match ip-prefix IP-PFX-64512-EXPORT-V4\n"
         "# TE: prepend (SP - if-match na camada de render)\n"
         "# TE: blackhole\n"
         "# TE: lp\n"
