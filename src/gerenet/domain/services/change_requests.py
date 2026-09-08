@@ -35,6 +35,31 @@ TRANSICOES: dict[str, set[str]] = {
 
 _ATUAIS = ("aplicado", "com_divergencia", "parcial", "erro")
 
+# Escopos SEM reconciliação/rollback automáticos (mensagem por escopo real §5):
+# o l2vc é reagendado por CR de remoção/provision nova (o re-diff aplica só a
+# ponta ausente — runbook §3.3); o vsi é multiponto em fase posterior.
+_RECONCILIA_INDISPONIVEL = {
+    "l2vc": (
+        "Reconciliação automática indisponível para CR de escopo l2vc. "
+        "Crie uma CR de remoção (--acao remove) ou uma CR de provision nova (o re-diff "
+        "aplica só a ponta ausente) — runbook §3.3."
+    ),
+    "vsi": (
+        "Reconciliação automática indisponível para CR de escopo vsi — "
+        "provisionamento multiponto em fase posterior."
+    ),
+}
+_ROLLBACK_INDISPONIVEL = {
+    "l2vc": (
+        "Rollback automático indisponível para CR de escopo l2vc. "
+        "Crie uma CR de remoção (--acao remove) ou reverta manualmente — runbook §3.3."
+    ),
+    "vsi": (
+        "Rollback automático indisponível para CR de escopo vsi — "
+        "provisionamento multiponto em fase posterior."
+    ),
+}
+
 
 def _transita(
     session: Session, cr: models.ChangeRequest, novo: str, *, ator: str, tipo: str,
@@ -63,11 +88,13 @@ def create_change_request(
 ) -> models.ChangeRequest:
     """Cria a CR já planejada (rascunho com steps), por escopo (§5 fase 4).
 
-    O schema validou a coerência do escopo (circuit_id/l2vc_id conforme o caso);
-    o fluxo de circuito do ciclo D permanece intacto abaixo.
+    O schema validou a coerência do escopo (circuit_id/l2vc_id/upstream_id
+    conforme o caso); o fluxo de circuito do ciclo D permanece intacto abaixo.
     """
     if data.escopo == "l2vc":
         return _create_l2vc(session, data, ator_id=ator_id, actor=actor)
+    if data.escopo == "upstream":
+        return _create_upstream(session, data, ator_id=ator_id, actor=actor)
     circ = get_circuit(session, data.circuit_id)
     if circ.admin_status is False:
         raise ConflictError(f"Circuito {circ.code} desativado não recebe mudanças.")
@@ -131,6 +158,55 @@ def _create_l2vc(
         session, tipo="change.created", ator=actor, objeto="change_request",
         objeto_id=cr.id, antes=None,
         depois={"l2vc_id": servico.id, "acao": cr.acao, "criticidade": cr.criticidade,
+                "steps": len(cr.steps), "blocos": sum(len(s.plano_json) for s in cr.steps)},
+    )
+    session.commit()
+    session.refresh(cr)
+    return cr
+
+
+def _create_upstream(
+    session: Session, data: schemas.ChangeRequestCreate, *, ator_id: int | None = None, actor: str = "cli",
+) -> models.ChangeRequest:
+    """CR de upstream (fase 5, §7) — mesmo ciclo do circuito (§5): plano na
+    criação agregado por device, validações de estado do upstream e PlanoVazio
+    sem sessões ativas sobre os vínculos."""
+    from gerenet.automation import upstream as up_auto
+    from gerenet.domain.services.bgp_sessions import list_sessions
+    from gerenet.domain.services.upstreams import get_upstream
+
+    up = get_upstream(session, data.upstream_id)  # NotFoundError propaga (404)
+    if not up.admin_status:
+        raise ConflictError(f"Upstream {up.name} desativado não recebe mudanças.")
+    # R-20: `plan_*_upstream` sinaliza upstream sem sessões ativas como
+    # ValidationError — o PlanoVazio (422, sem CR órfã) sai ANTES do planner;
+    # as ValidationError informativas dele (ex.: sem snapshot na remoção §5.2)
+    # continuam propagando.
+    if not any(list_sessions(session, circuit_id=vin.circuit_id) for vin in up.circuitos):
+        raise PlanoVazio(
+            f"Upstream {up.name} sem circuitos/sessões ativas — cadastre antes de planejar."
+        )
+    plano = (
+        up_auto.plan_provision_upstream(session, up)
+        if data.acao == "provision"
+        else up_auto.plan_remocao_upstream(session, up)
+    )
+    cr = models.ChangeRequest(
+        circuit_id=None, upstream_id=up.id, escopo="upstream", acao=data.acao,
+        criticidade=data.criticidade, motivo=data.motivo, ticket=data.ticket,
+        solicitante_id=ator_id, status="rascunho",
+    )
+    session.add(cr)
+    session.flush()
+    _cria_steps(session, cr, plano)
+    if not cr.steps:
+        raise PlanoVazio(
+            "Upstream sem circuitos/sessões ativas — cadastre antes de planejar."
+        )
+    registrar(
+        session, tipo="change.created", ator=actor, objeto="change_request",
+        objeto_id=cr.id, antes=None,
+        depois={"upstream_id": up.id, "acao": cr.acao, "criticidade": cr.criticidade,
                 "steps": len(cr.steps), "blocos": sum(len(s.plano_json) for s in cr.steps)},
     )
     session.commit()
@@ -243,6 +319,20 @@ def marcar_executando(session: Session, cr_id: int, *, actor: str = "cli") -> mo
 
 
 def _replaneja(session: Session, cr: models.ChangeRequest, device_id: int) -> changes.PlanoDevice:
+    if cr.escopo == "upstream":
+        from gerenet.automation import upstream as up_auto
+        from gerenet.domain.services.upstreams import get_upstream
+
+        up = get_upstream(session, cr.upstream_id)
+        plano = (
+            up_auto.plan_provision_upstream(session, up)
+            if cr.acao == "provision"
+            else up_auto.plan_remocao_upstream(session, up)
+        )
+        for item in plano:
+            if item.device_id == device_id:
+                return item
+        return changes.PlanoDevice(device_id=device_id, blocos=[], baseline_snapshot_id=None)
     circ = get_circuit(session, cr.circuit_id)
     if cr.acao == "provision":
         plano = changes.plan_provision(session, circ)
@@ -256,12 +346,8 @@ def _replaneja(session: Session, cr: models.ChangeRequest, device_id: int) -> ch
 
 def reconciliar(session: Session, cr_id: int, *, actor: str = "cli") -> models.ChangeRequest:
     cr = get_change_request(session, cr_id)
-    if cr.escopo != "circuito":
-        raise ValidationError(
-            "Reconciliação automática indisponível para CR de escopo l2vc. "
-            "Crie uma CR de remoção (--acao remove) ou uma CR de provision nova (o re-diff "
-            "aplica só a ponta ausente) — runbook §3.3."
-        )
+    if cr.escopo in _RECONCILIA_INDISPONIVEL:
+        raise ValidationError(_RECONCILIA_INDISPONIVEL[cr.escopo])
     if cr.status not in ("erro", "parcial"):
         raise ValidationError(f"Reconciliar só de erro|parcial (atual: {cr.status}).")
     pendentes = [s for s in cr.steps if s.status in ("pendente", "falhou")]
@@ -287,24 +373,34 @@ def gerar_rollback(
 
     provision → remove com plano derivado do BASELINE de cada step aplicado
     (o que a mudança adicionou, visto do snapshot pré-mudança);
-    remove → provision re-renderizado do desejado (SoT atual).
+    remove → provision re-renderizado do desejado (SoT atual). No escopo
+    upstream a mecânica é a mesma: o undo do filho remove agrega os circuitos
+    vinculados por device (na ordem dos vínculos), como o plano de provision.
     """
     cr = get_change_request(session, cr_id)
-    if cr.escopo != "circuito":
-        raise ValidationError(
-            "Rollback automático indisponível para CR de escopo l2vc. "
-            "Crie uma CR de remoção (--acao remove) ou reverta manualmente — runbook §3.3."
-        )
+    if cr.escopo in _ROLLBACK_INDISPONIVEL:
+        raise ValidationError(_ROLLBACK_INDISPONIVEL[cr.escopo])
     if cr.status not in ("aplicado", "com_divergencia", "parcial") or not any(
         s.status == "aplicado" for s in cr.steps
     ):
         raise ValidationError("Rollback só de aplicado/com_divergencia/parcial com steps aplicados.")
-    circ = get_circuit(session, cr.circuit_id)
-    filho = models.ChangeRequest(
-        circuit_id=cr.circuit_id, acao="remove" if cr.acao == "provision" else "provision",
-        criticidade=cr.criticidade, motivo=f"Rollback do CR #{cr.id}",
-        solicitante_id=ator_id, status="aguardando_aprovacao", rollback_de=cr.id,
-    )
+    if cr.escopo == "upstream":
+        from gerenet.domain.services.upstreams import get_upstream
+
+        up = get_upstream(session, cr.upstream_id)
+        filho = models.ChangeRequest(
+            circuit_id=None, upstream_id=up.id, escopo="upstream",
+            acao="remove" if cr.acao == "provision" else "provision",
+            criticidade=cr.criticidade, motivo=f"Rollback do CR #{cr.id}",
+            solicitante_id=ator_id, status="aguardando_aprovacao", rollback_de=cr.id,
+        )
+    else:
+        circ = get_circuit(session, cr.circuit_id)
+        filho = models.ChangeRequest(
+            circuit_id=cr.circuit_id, acao="remove" if cr.acao == "provision" else "provision",
+            criticidade=cr.criticidade, motivo=f"Rollback do CR #{cr.id}",
+            solicitante_id=ator_id, status="aguardando_aprovacao", rollback_de=cr.id,
+        )
     session.add(filho)
     session.flush()
     for step in cr.steps:
@@ -316,7 +412,15 @@ def gerar_rollback(
             snap = session.get(models.DeviceSnapshot, step.baseline_snapshot_id)
             if snap is None:
                 continue
-            blocos = removal.blocos_remocao(session, circ, step.device_id, snapshot=snap)
+            if cr.escopo == "upstream":
+                # agregação por device: undo de cada circuito vinculado no
+                # mesmo step do filho (na ordem dos vínculos, `ordem`)
+                blocos = [
+                    b for vin in up.circuitos
+                    for b in removal.blocos_remocao(session, vin.circuito, step.device_id, snapshot=snap)
+                ]
+            else:
+                blocos = removal.blocos_remocao(session, circ, step.device_id, snapshot=snap)
             session.add(models.ChangeStep(
                 change_request_id=filho.id, device_id=step.device_id, status="pendente",
                 plano_json=blocos, baseline_snapshot_id=snap.id,
