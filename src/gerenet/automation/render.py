@@ -355,6 +355,32 @@ def _cf_bloco(sessao_id: int, nome_cf: str, valor: str) -> BlocoRender:
     )
 
 
+def _fail_safe_import(
+    sessao: models.BgpSession, nome_rp: str,
+    definidas: dict[tuple[str, str], set[str]],
+) -> tuple[list[BlocoRender], str]:
+    """RP deny-all para sessão de upstream sem perfil válido de import (§4.1/R-09).
+
+    Mesmo texto para "sem perfil" e "perfil de cliente" — o template B2 fixa o
+    comentário; a CAUSA fica no comentário-dívida de quem chama. Passa pelo
+    dedup: duas sessões fail-safe do mesmo ASN emitem a definição uma vez só.
+    """
+    blocos: list[BlocoRender] = []
+    _apensa_definicao(
+        blocos, definidas,
+        BlocoRender(
+            "route_policy_import", "session", sessao.id,
+            _render_template("route_policy_import", {
+                "nome": nome_rp, "afi": sessao.afi, "lista": None,
+                "local_preference": sessao.local_preference,
+                "produto": None, "deny_communities": [], "fail_safe": True,
+            }).splitlines(),
+        ),
+        ("route_policy_import", nome_rp),
+    )
+    return blocos, nome_rp
+
+
 def _autorizadas_clientes(
     session: Session, afi: str,
 ) -> list[models.BgpPrefixAuthorization]:
@@ -406,23 +432,16 @@ def _bloco_import_upstream(
     )
     if perfil is None:
         # fail-safe §4.1: deny explícito, nunca accept-all
-        blocos: list[BlocoRender] = []
-        _apensa_definicao(
-            blocos, definidas,
-            BlocoRender(
-                "route_policy_import", "session", sessao.id,
-                _render_template("route_policy_import", {
-                    "nome": nome_rp, "afi": afi, "lista": None,
-                    "local_preference": sessao.local_preference,
-                    "produto": None, "deny_communities": [], "fail_safe": True,
-                }).splitlines(),
-            ),
-            ("route_policy_import", nome_rp),
-        )
-        return blocos, nome_rp
+        return _fail_safe_import(sessao, nome_rp, definidas)
     produto = perfil.name
     if produto not in ("up-full", "up-parcial", "up-default"):
-        return [], None
+        # R-09: produto de CLIENTE em sessão de upstream — a config é
+        # provavelmente incorreta; abandonar sem RP deixaria o peer accept-all
+        # (violação do fail-safe), então o caminho seguro é o deny-all + aviso.
+        blocos_fs, nome_fs = _fail_safe_import(sessao, nome_rp, definidas)
+        return [_bloco_divida(
+            f"produto '{produto}': perfil de cliente em sessão de upstream — negando tudo (fail-safe)."
+        )] + blocos_fs, nome_fs
 
     info_import = [
         uc for uc in list_upstream_communities(session, up.id)
@@ -470,22 +489,28 @@ def _bloco_import_upstream(
             blocos, definidas, _cf_bloco(sessao.id, nome_cf, uc.value),
             ("community_filter", nome_cf),
         )
-    _apensa_definicao(
-        blocos, definidas,
-        BlocoRender(
-            "prefix_list", "session", sessao.id,
-            _render_template(
-                "prefix_list", {"nome": nome_pfx, "afi": afi, "entradas": entradas}
-            ).splitlines(),
-        ),
-        ("prefix_list", nome_pfx),
-    )
+    # IMP-1: proteção VAZIA nunca é referenciada — prefix-list sem linhas não
+    # existe no VRP e o if-match dela iria falhar no commit (fail-stop); sem
+    # entradas, o template pula o nó de deny da proteção (o accept-all do
+    # up-full permanece só com os nós de community, permit node 100).
+    lista_protecao = nome_pfx if entradas else None
+    if entradas:
+        _apensa_definicao(
+            blocos, definidas,
+            BlocoRender(
+                "prefix_list", "session", sessao.id,
+                _render_template(
+                    "prefix_list", {"nome": nome_pfx, "afi": afi, "entradas": entradas}
+                ).splitlines(),
+            ),
+            ("prefix_list", nome_pfx),
+        )
     _apensa_definicao(
         blocos, definidas,
         BlocoRender(
             "route_policy_import", "session", sessao.id,
             _render_template("route_policy_import", {
-                "nome": nome_rp, "afi": afi, "lista": nome_pfx,
+                "nome": nome_rp, "afi": afi, "lista": lista_protecao,
                 "local_preference": sessao.local_preference,
                 "produto": produto, "deny_communities": [
                     f"CF-{asn_par}-{sufixo_cf}-{i + 1}" for i, _ in enumerate(cfs)
@@ -529,6 +554,10 @@ def _bloco_export_upstream(
         if uc.purpose in ("prepend", "lp", "blackhole")
         and uc.direcao in ("export", "ambos")
     ]
+    # Dívida (IMP-1 não vale aqui, por decisão): uma prefix-list VAZIA no
+    # export NÃO é pulada — lista=None deixaria o permit node 10 sem if-match
+    # = anunciar TUDO ao provedor (vazamento das rotas de outros vizinhos).
+    # O fail-stop do VRP (if-match de objeto inexistente) é a opção segura.
     blocos: list[BlocoRender] = []
     _apensa_definicao(
         blocos, definidas,

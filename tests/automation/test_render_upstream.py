@@ -78,6 +78,42 @@ def test_render_upstream_full_import_com_protecoes(session, up_com_sessao_upfull
     assert texto.count("import route-policy RP-64501-IMPORT-V4") == 1
 
 
+def test_render_upstream_full_sem_protecoes_nao_referencia_lista_vazia(
+        session, up_com_sessao_upfull, bgp_session_principal, edge_device):
+    # up-full sem default negada, sem internas (sem loopback/p2p) e sem
+    # autorizações ⇒ SEM prefix-list de proteção (vazia referenciada = fail-stop
+    # VRP) e RP sem o if-match da proteção — permit node 100 puro
+    bgp_session_principal.allow_default_route = True
+    session.commit()
+
+    resultado = render_desejado(session, edge_device.id)
+    assert "IP-PFX-64501-IN-V4" not in resultado.texto
+    rp = next(b.texto for b in resultado.blocos
+              if b.tipo == "route_policy_import" and "RP-64501-IMPORT-V4" in b.texto)
+    assert "if-match ip-prefix" not in rp
+    assert "route-policy RP-64501-IMPORT-V4 permit node 100" in rp
+    # R5: o peer continua referenciando a RP (a definição existe)
+    assert resultado.texto.count("import route-policy RP-64501-IMPORT-V4") == 1
+
+
+def test_render_upstream_perfil_de_cliente_vira_fail_safe(session, up, edge_device):
+    # R-09: produto de CLIENTE (não up-*) numa sessão de upstream ⇒ fail-safe
+    # deny-all com aviso — nunca accept-all implícito, nunca abandono sem RP
+    perfil_cli = _perfil(session, "default_internas", direction="export")
+    _link_upstream(session, up, edge_device, code="CIRC-UP-CLI",
+                   import_profile_id=perfil_cli.id)
+
+    resultado = render_desejado(session, edge_device.id)
+    texto = resultado.texto
+    rp = next(b.texto for b in resultado.blocos
+              if b.tipo == "route_policy_import" and "RP-64501-IMPORT-V4" in b.texto)
+    assert "# fail-safe: sessão de upstream sem perfil de import — deny-all (nunca accept-all)" in rp
+    assert "route-policy RP-64501-IMPORT-V4 deny node 10" in rp
+    assert "permit" not in rp
+    assert "default_internas" in texto  # comentário-dívida anota o produto indevido
+    assert texto.count("import route-policy RP-64501-IMPORT-V4") == 1  # R5: peer referencia
+
+
 def test_render_upstream_export_anuncia_internas(session, up_com_sessao_upfull,
                                                  edge_device, circuito_com_p2p):
     resultado = render_desejado(session, edge_device.id)
