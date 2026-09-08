@@ -494,8 +494,8 @@ export function useUpstreamCommunities(id: number) {
   const detalhe = useUpstreamDetail(id);
   return { ...detalhe, data: detalhe.data?.comunidades };
 }
-export const useUpstreamCreate = () => useCriar<UpstreamCreateIn, UpstreamOut>("upstreams", "/api/v1/upstreams");
-export const useUpstreamUpdate = () =>
+export const useUpstreamCriar = () => useCriar<UpstreamCreateIn, UpstreamOut>("upstreams", "/api/v1/upstreams");
+export const useUpstreamAtualizar = () =>
   useAtualizar<UpstreamUpdateIn, UpstreamOut>("upstreams", "/api/v1/upstreams");
 export function useVincularCircuito() {
   const qc = useQueryClient();

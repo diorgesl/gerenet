@@ -427,7 +427,7 @@ export interface VsiCreateIn {
   members: number[];
 }
 
-// Ciclo F5 — Upstreams (spec §7): conectividade própria — trânsito/IX/PNI.
+// Fase 5 — Upstreams (spec §7): conectividade própria — trânsito/IX/PNI.
 export type UpstreamTipo = "transito" | "ix" | "pni" | "contingencia";
 export interface UpstreamOut {
   id: number;
