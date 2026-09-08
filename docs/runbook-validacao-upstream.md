@@ -45,6 +45,7 @@ ipv4-family unicast (ou ipv6-family unicast)
 
 ip ip-prefix IP-PFX-<ASN>-IN-<AFI> index N permit <prefixo>     # proteção do up-full: deny node 10 (internas + autorizações)
 ip ip-prefix IP-PFX-<ASN>-EXPORT-<AFI> index N permit <prefixo> # export: rotas internas + autorizações de clientes
+ip as-path-filter AS-PATH-<ASN>-OWN permit _<ASN-local>_        # rotas próprias: deny no import do up-full (nó próprio)
 route-policy RP-<ASN>-IMPORT-<AFI> ...                          # up-full: nós deny + permit 100
 route-policy RP-<ASN>-EXPORT-<AFI> ...                          # apply community <valores da operadora>
 ip community-filter CF-<ASN>-BLK-<n> permit <valor>             # communities info+bloquear (deny no import)
@@ -52,8 +53,10 @@ ip community-filter CF-<ASN>-PART-<n> permit <valor>            # community de "
 ```
 
 - **Produto por tipo**: `transito`/`ix` → `up-full` (aceita tudo do
-  provedor, exceto prefix-list de proteção, communities `bloquear` e a
-  default quando `allow_default_route=false`); `pni` → `up-parcial` (default
+  provedor, exceto prefix-list de proteção, communities `bloquear`, rotas
+  com o ASN próprio no AS-PATH — `AS-PATH-<ASN>-OWN`, nó deny, quando o edge
+  tem `asn` cadastrado — e a default quando `allow_default_route=false`);
+  `pni` → `up-parcial` (default
   + rotas com a community de "parcial", identificada por `purpose=info` +
   `bloquear=False`); `contingencia` → `up-default` (só a default). Sem
   community de "parcial" cadastrada, o `up-parcial` sai como comentário-dívida
@@ -62,7 +65,12 @@ ip community-filter CF-<ASN>-PART-<n> permit <valor>            # community de "
   `route-policy RP-<ASN>-IMPORT-<AFI> deny node 10` (comentário) — nunca
   accept-all.
 - **Remoção**: a CR inversa gera os `undo` correspondentes (peer, route-policy
-  e prefix-list) — use o plano da CR, nunca remova à mão.
+  e prefix-list) — use o plano da CR, nunca remova à mão. Ao final, CR de
+  remoção classificada `aplicado` **desativa o upstream** na SoT
+  (`upstreams.admin_status=false` — §14.1: objeto em uso é desativado, nunca
+  excluído; circuitos e sessões permanecem; evento `upstream.disable` na
+  auditoria). Reative o upstream antes de reprovisionar;
+  `com_divergencia`/`parcial`/`erro` não desativam.
 
 ## Etapa 1 — Somente leitura (§21.3 itens 1–2)
 
@@ -104,6 +112,9 @@ Peer   V  AS        MsgRcvd  MsgSent  OutQ  Up/Down  State       PrefRcv
 |---|---|---|
 | `peer`/`asn`/`estado`/`pref_rcv` | linha da tabela | pré-check de ASN conflitante e pós-check (Established + contagem) |
 | `pref_rcv` | coluna PrefRcv | compara com esperado × (1 ± margem) do upstream |
+
+Peer sem rota recebida mostra `-` no PrefRcv — o parser converte para `None`
+(linha não derruba o merge; a contagem simplesmente não soma).
 
 **Se o output real divergir**, ajuste o `.template` em
 `src/gerenet/automation/parsers/huawei_vrp/textfsm/` (`bgp_peer`,
@@ -252,7 +263,12 @@ Na execução o worker, por step (device) e automaticamente:
    contagem de rotas dentro de esperado × (1 ± margem) — uma contagem fora
    da faixa ou peer sem sessão vira item de divergência (severidade
    conforme) e a CR é classificada; ver também o §13 (sem quedas
-   inesperadas de outros peers, logs limpos).
+   inesperadas de outros peers, logs limpos);
+7. **Registro antes/depois** (escopo upstream): o step grava
+   `prefixos_antes`/`prefixos_depois` no resultado do pós-check (soma
+   `pref_rcv` por família do encontrado pré e pós); na **remoção** as
+   sessões desativadas também contam — confira que a soma bate com o
+   `display bgp peer` da Etapa 1.
 
 Somente a aplicação manda comandos de configuração (`bgp ...`, `peer ...`,
 `route-policy ...`, `ip ip-prefix ...`); a allowlist `^display` vale para a
@@ -288,6 +304,28 @@ aplicação; `display alarm` sem nada novo.
       `.superpowers/sdd/2026-09-08-gerenet-fase5-upstreams/progress.md`).
 - [ ] Antes da Etapa 5: desativação do circuito/edge de teste e reversão da
       mudança conforme planejado.
+
+### 3.3 Variação anormal de prefixos (B5, §7)
+
+O alerta de variação é calculado no **job de coleta** — o histórico das
+coletas só existe lá, não na reconciliação (que apenas exibe). A cada coleta
+do device, por sessão de upstream:
+
+- peer `Established` com `pref_rcv` coletado; base = `expected_prefixes_v4/v6`
+  × margem (`max_prefix_margin_pct`) do upstream e, **sem esperado
+  cadastrado**, o histórico das últimas K coletas válidas do mesmo peer
+  (K = `GERENET_BGP_ANOMALIA_JANELA`, default 2; variação acima de
+  `GERENET_BGP_ANOMALIA_PCT` %, default 50, dispara).
+- O resultado vai no snapshot (`resources["anomalias_prefixos"]`: afi, peer,
+  contagem, base, `variacao_pct`, `base_tipo` `esperado`/`historico`,
+  upstream) e aparece como item `bgp.anomalia_prefixos` (severidade `alerta`)
+  na [reconciliação](/wiki/operacao) do device.
+
+Verificação: `uv run gerenet collect run --device <id>` e depois
+`uv run gerenet reconcile <device>` — com o esperado cadastrado direito, uma
+coleta após a mudança não deve gerar item de anomalia. Variação real de
+dimensão do trânsito se resolve nos esperados do upstream, não no threshold:
+o item é alerta ao operador, nunca um gate.
 
 ## Etapa 4 — IRR/RPKI consultivo (§7.5, §10.4 — nunca um gate)
 
