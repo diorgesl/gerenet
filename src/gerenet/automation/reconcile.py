@@ -15,14 +15,16 @@ from gerenet.domain import models
 from gerenet.domain.services.bgp_sessions import list_sessions
 from gerenet.domain.services.devices import get_device
 from gerenet.domain.services.errors import NotFoundError, ValidationError
+from gerenet.domain.services.upstreams import upstream_do_circuito
 
 ESTABLISHED = "Established"
+VAR_ANORMAL_PCT = 50  # fallback sem esperado: variação vs coletas anteriores (§7)
 
 
 @dataclass
 class ReconcileItem:
     tipo: str
-    severidade: str  # critica | atencao | aviso
+    severidade: str  # critica | atencao | aviso | alerta
     esperado: str
     encontrado: str
     acao: str
@@ -46,6 +48,43 @@ def _item(tipo: str, severidade: str, esperado: str, encontrado: str, acao: str)
 def _estado_efetivo(valor: str | None) -> bool:
     """True quando o valor NÃO indica down (up, up(s); valores como down/*down/administratively down dão False)."""
     return valor is not None and "down" not in str(valor).lower()
+
+
+def _var_anormal(contagem: int, base: int, pct: int) -> bool:
+    """Variação % acima da margem (base 0: só anormal se subiu de zero)."""
+    if base == 0:
+        return contagem > 0
+    return abs(contagem - base) * 100 / base > pct
+
+
+def _contagens_anteriores(
+    session: Session, *, device_id: int, snapshot_id: int, afi: str, peer: str,
+) -> list[int]:
+    """Pref_rcv nas coletas anteriores do mesmo peer (§7) — até 2 válidas (K=2).
+
+    Varre as 3 coletas anteriores (id desc): coleções sem o recurso `bgp_peers`
+    ou sem o peer com `pref_rcv` não contam como âncora.
+    """
+    snaps = session.scalars(
+        select(models.DeviceSnapshot)
+        .where(
+            models.DeviceSnapshot.device_id == device_id,
+            models.DeviceSnapshot.id < snapshot_id,
+        )
+        .order_by(models.DeviceSnapshot.id.desc())
+        .limit(3)
+    ).all()
+    contagens: list[int] = []
+    for s in snaps:
+        for linha in (s.resources or {}).get("bgp_peers", []):
+            if linha.get("afi") != afi or linha.get("peer") != peer:
+                continue
+            if linha.get("pref_rcv") is not None:
+                contagens.append(int(linha["pref_rcv"]))
+            break  # peer presente ou não, esta coleta não dá outra âncora
+        if len(contagens) == 2:
+            break
+    return contagens
 
 
 def _esperado_subinterfaces(blocos: list[BlocoRender]) -> dict[str, dict[str, list[str]]]:
@@ -191,6 +230,31 @@ def reconciliar_device(
                     "peer.estado", "atencao", ESTABLISHED, estado,
                     "Peer fora de Established — conferir se é transitório.",
                 ))
+            # B5 (§7): variação anormal de prefixos em sessões de upstream.
+            # Só com o peer Established (ausente/down já acusados acima) e com
+            # pref_rcv coletado. Com esperado cadastrado usa esperado×margem;
+            # sem esperado, compara com as 2 coletas anteriores (VAR_ANORMAL_PCT).
+            up = upstream_do_circuito(session, sessao.circuit_id)
+            if up is not None and estado == ESTABLISHED and esperado.get("pref_rcv") is not None:
+                contagem = int(esperado["pref_rcv"])
+                esperado_pref = (
+                    up.expected_prefixes_v4 if sessao.afi == "ipv4" else up.expected_prefixes_v6
+                )
+                if esperado_pref is not None:
+                    bases, pct = [esperado_pref], up.max_prefix_margin_pct
+                else:
+                    bases, pct = _contagens_anteriores(
+                        session, device_id=device_id, snapshot_id=snap.id,
+                        afi=sessao.afi, peer=sessao.remote_address,
+                    ), VAR_ANORMAL_PCT
+                for base in bases:
+                    if _var_anormal(contagem, base, pct):
+                        items.append(_item(
+                            "bgp.anomalia_prefixos", "alerta", str(base), str(contagem),
+                            f"Verificar o upstream {up.name} — variação de prefixos "
+                            "acima da margem.",
+                        ))
+                        break
             verbose = por_peer_verbose.get((sessao.afi, sessao.remote_address))
             rps = rp_por_sessao.get(sessao.id, {})
             if verbose is not None:

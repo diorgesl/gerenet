@@ -491,3 +491,72 @@ def test_reconciliar_usa_o_snapshot_mais_recente(db_session: Session) -> None:
     _snapshot(db_session, env, **ruim)  # mais recente: sem o peer v6
     itens = reconciliar_device(db_session, env["ne_id"]).items
     assert [i.tipo for i in itens] == ["peer.ausente"]
+
+
+def _snapshot_up(db_session: Session, edge_device, peers: list[dict]) -> int:
+    """Snapshot sintético do edge_device de upstream (recursos presentes, vazios)."""
+    return _snapshot(db_session, {"ne_id": edge_device.id}, bgp_peers=peers)
+
+
+def _peers_up(afi: str = "ipv4", peer: str = "100.64.10.2", asn: int = 64501,
+              estado: str = "Established", pref_rcv: int = 1000) -> list[dict]:
+    return [{"afi": afi, "peer": peer, "asn": asn, "estado": estado,
+             "pref_rcv": pref_rcv, "up_down": "1d02h"}]
+
+
+def test_reconcile_acusa_variacao_anormal_acima_da_margem(
+    session: Session, up_com_sessao_upfull, edge_device
+) -> None:
+    """B5 (§7): pref_rcv acima de esperado×margem do upstream vira item alerta."""
+    from gerenet.automation.reconcile import reconciliar_device
+
+    snap_id = _snapshot_up(session, edge_device, _peers_up(pref_rcv=1200))
+    itens = reconciliar_device(session, edge_device.id, snapshot_id=snap_id).items
+    assert [i.tipo for i in itens] == ["bgp.anomalia_prefixos"]
+    assert itens[0].severidade == "alerta"
+    assert itens[0].esperado == "1000"
+    assert itens[0].encontrado == "1200"
+    assert "transito-f5" in itens[0].acao
+
+
+def test_reconcile_sem_anomalia_dentro_da_margem(
+    session: Session, up_com_sessao_upfull, edge_device
+) -> None:
+    """pref_rcv dentro de esperado×margem (10% de 1000): nenhum item."""
+    from gerenet.automation.reconcile import reconciliar_device
+
+    snap_id = _snapshot_up(session, edge_device, _peers_up(pref_rcv=1050))
+    itens = reconciliar_device(session, edge_device.id, snapshot_id=snap_id).items
+    assert itens == []
+
+
+def test_reconcile_anomalia_fallback_historico(
+    session: Session, up_com_sessao_upfull, edge_device
+) -> None:
+    """Sem expected_prefixes: contagem atual vs as 2 coletas anteriores
+    (K=2) — variação > 50% (VAR_ANORMAL_PCT) ⇒ alerta."""
+    from gerenet.automation.reconcile import reconciliar_device
+
+    up_com_sessao_upfull.expected_prefixes_v4 = None
+    session.commit()
+    _snapshot_up(session, edge_device, _peers_up(pref_rcv=100))   # antigo
+    _snapshot_up(session, edge_device, _peers_up(pref_rcv=120))   # penúltimo
+    atual = _snapshot_up(session, edge_device, _peers_up(pref_rcv=1000))
+    itens = reconciliar_device(session, edge_device.id, snapshot_id=atual).items
+    assert [i.tipo for i in itens] == ["bgp.anomalia_prefixos"]
+    assert itens[0].severidade == "alerta"
+    assert itens[0].esperado == "120"  # baseline mais recente que disparou
+    assert itens[0].encontrado == "1000"
+
+
+def test_reconcile_sem_historico_nao_alerta(
+    session: Session, up_com_sessao_upfull, edge_device
+) -> None:
+    """Sem expected_prefixes e sem histórico (1 único snapshot): ignora."""
+    from gerenet.automation.reconcile import reconciliar_device
+
+    up_com_sessao_upfull.expected_prefixes_v4 = None
+    session.commit()
+    snap_id = _snapshot_up(session, edge_device, _peers_up(pref_rcv=1000))
+    itens = reconciliar_device(session, edge_device.id, snapshot_id=snap_id).items
+    assert itens == []
