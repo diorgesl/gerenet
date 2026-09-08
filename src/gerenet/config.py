@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     cookie_secure: bool = False  # True em produção sob HTTPS
     static_dir: Path = Path("web/dist")  # build da SPA (ciclo C2)
     wiki_dir: Path = Path("docs/wiki")  # páginas do wiki operacional (ciclo E)
+    # Arquivo JSON do rpki-client com as ROAs (§7.5) — None = sincronização
+    # desabilitada; o CLI `gerenet rpki sync` exige o caminho explícito (E4).
+    rpki_roas_file: str | None = None
 
     # IPAM p2p (§25.8): bloco privado de enlaces v4 e base v6 por padrão;
     # cada site pode sobrescrever.
