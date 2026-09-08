@@ -7,24 +7,44 @@ rede (timeout, returncode != 0, servidor indisponível) ⇒ `log.warning` e o
 cache é o refúgio — payload vivo é devolvido mesmo com a rede fora; sem nada
 vivo, `IrrError` sobe para o chamador tratar.
 
-Decisões desta task (controller E1):
+Capacidade real dos servidores (sondada ao vivo em 2026-09-08, raw socket
+porta 43 — o cliente whois então é irrelevante):
+
+- `whois.radb.net` (irrd v4): **não expande mais conjuntos**. A consulta de um
+  AS-SET devolve só o(s) objeto(s) `as-set:` (com `members:`); a de um ASN
+  devolve só `aut-num:`. As rotas só vêm da consulta invertida
+  `-i origin as<asn>` — `whois -h whois.radb.net -i origin AS13335` devolve
+  os objetos `route:`/`route6:` com `origin:` (577.294 linhas na sondagem).
+- `whois.altdb.net`: espelho vivo porém sem dados (`% No entries found for
+  the selected source(s).` para qualquer consulta) — nada a expandir.
+- `whois.lacnic.net`: *joint whois* LACNIC/ARIN — rejeita consultas invertidas
+  (`% No match for "-I ORIGIN AS714"... accepts only direct match queries`);
+  usa o fallback de consulta simples (e o formato direto dele não é RPSL —
+  resultado em `asns`/`prefixos` vazios, sem exceção).
+
+Decisões desta task (controller E1 + review F1):
 - `consultar` abre a própria sessão (padrão do repo — `runner.py` usa
   `session_override or SessionLocal()`; aqui a assinatura do plano é
   `consultar(source, key, *, ttl_horas=24)`), commita o upsert e fecha no
   `finally`.
 - Source→servidor: `radb`/`altdb`/`lacnic`; source desconhecido ⇒
   `whois.radb.net` (fallback).
-- `key` só de dígitos ⇒ alvo `as{key}`; senão o próprio AS-SET vai na linha
-  de comando.
+- `key` só de dígitos (ASN) ⇒ consulta invertida `-i origin as<asn>`; se o
+  servidor não suportar a inversão (marcadores `% No match for "-I ORIGIN..."`
+  / `accepts only direct match queries`), cai para a consulta simples (o
+  formato clássico do RADB, era irrd v2/v3).
+- AS-SET: 1) consulta do conjunto (`members:`); 2) membro numérico (último
+  componente `AS?<asn>`, ex.: `AS64512` ou `AS13335:AS-CUSTOMERS` que é um
+  conjunto, mas `AS13335:AS132892` é o ASN 132892) ⇒ `-i origin as<asn>`;
+  membro com `/` é prefixo (route-set — fora do escopo dos as-set, ignorado);
+  membro nome de conjunto ⇒ recursão de 1 nível com guarda de ciclo;
+  3) dedup global preservando a ordem.
+- `route:`/`route6:` viram `prefixos`; `origin:` (nos objetos de rota) viram
+  `asns`. `member-of:`/`aut-num:` NÃO são fonte de rotas (sem regras).
 - Vivo (critério simples, E1-1): `expires_at` nulo ou no futuro. Para
   **pular** a rede, porém, só `expires_at` definido e no futuro é suficiente
   — linha sem TTL não dá para saber se está fresca; ela vale como refúgio na
   falha (quem grava `irr_cache` nesta task sempre define `expires_at`).
-- AS-SET: a consulta do conjunto devolve os registros dos membros
-  (sinalizados pelo `member-of:` do conjunto) — `route:`/`route6:` viram
-  `prefixos` e `origin:`/`as-number:` viram `asns`; o atributo `members:` do
-  objeto de conjunto expande membros declarados (ASNs numéricos + conjuntos
-  aninhados com profundidade 1 e guarda de ciclo).
 - Payload dedup preservando a ordem da resposta.
 """
 import logging
@@ -58,11 +78,16 @@ _SERVIDOR_PADRAO: Final = "whois.radb.net"
 _TIMEOUT_SEG: Final = 20
 _PROFUNDIDADE_MAX: Final = 1  # conjuntos aninhados: 1 nível a partir do raiz
 
-_RE_ROUTE = re.compile(r"^route(?:6)?:\s*(\S+)", re.MULTILINE)
+_RE_ROUTE = re.compile(r"^route(?:6)?:\s*(\S+)", re.MULTILINE | re.IGNORECASE)
 _RE_ORIGIN = re.compile(r"^origin:\s*AS(\d+)", re.MULTILINE | re.IGNORECASE)
-_RE_AS_NUMBER = re.compile(r"^as-number:\s*AS(\d+)", re.MULTILINE | re.IGNORECASE)
-_RE_MEMBERS = re.compile(r"^members:\s*(.+)", re.MULTILINE)
-_RE_ASN = re.compile(r"^AS(\d+)$", re.IGNORECASE)
+_RE_MEMBERS = re.compile(r"^members:\s*(.+)", re.MULTILINE | re.IGNORECASE)
+_RE_MEMBRO_ASN = re.compile(r"^(?:AS)?(\d+)$", re.IGNORECASE)
+# Marcadores das respostas de servidores que rejeitam consulta invertida
+# (sondagem LACNIC 2026-09-08: `% No match for "-I ORIGIN AS714"` +
+# "accepts only direct match queries").
+_RE_INVERSAO_NAO_SUPORTADA = re.compile(
+    r"(?i)no match for\s*[\"']?-i\b|accepts only direct match queries"
+)
 
 
 def _dedup_ordem(itens: list) -> list:
@@ -70,32 +95,33 @@ def _dedup_ordem(itens: list) -> list:
     return list(dict.fromkeys(itens))
 
 
-def _executa_whois(servidor: str, alvo: str) -> str:
-    """`whois -h <servidor> <alvo>` — retorna o stdout; falha ⇒ `_FalhaRede`."""
+def _executa_whois(servidor: str, argumentos: list[str]) -> str:
+    """`whois -h <servidor> <argumentos...>` — stdout; falha ⇒ `_FalhaRede`."""
     try:
         resultado = subprocess.run(
-            ["whois", "-h", servidor, alvo],
+            ["whois", "-h", servidor, *argumentos],
             capture_output=True,
             text=True,
             timeout=_TIMEOUT_SEG,
             check=False,  # returncode tratado abaixo (≠ 0 = falha de rede)
         )
     except (OSError, subprocess.SubprocessError) as exc:
-        raise _FalhaRede(f"whois {alvo}@{servidor}: {exc}") from exc
+        raise _FalhaRede(f"whois {argumentos}@{servidor}: {exc}") from exc
     if resultado.returncode != 0:
-        raise _FalhaRede(f"whois {alvo}@{servidor}: returncode {resultado.returncode}")
+        raise _FalhaRede(
+            f"whois {argumentos}@{servidor}: returncode {resultado.returncode}"
+        )
     return resultado.stdout
 
 
 def _parseia_resposta(texto: str) -> tuple[list[int], list[str], list[str]]:
     """Resposta whois → (asns, prefixos, membros_declarados).
 
-    `asns` vêm de `origin:`/`as-number:` dos registros; `prefixos` de
-    `route:`/`route6:`; `members:` declara os membros do conjunto (valores
-    separados por vírgula na mesma linha).
+    `asns` vêm de `origin:` dos objetos de rota; `prefixos` de `route:`/
+    `route6:`; `members:` declara os membros do conjunto (valores separados
+    por vírgula na mesma linha, chave repetida por linha — irrd v4).
     """
     asns = [int(n) for n in _RE_ORIGIN.findall(texto)]
-    asns += [int(n) for n in _RE_AS_NUMBER.findall(texto)]
     prefixos = _RE_ROUTE.findall(texto)
     membros: list[str] = []
     for linha in _RE_MEMBERS.findall(texto):
@@ -103,37 +129,76 @@ def _parseia_resposta(texto: str) -> tuple[list[int], list[str], list[str]]:
     return asns, prefixos, membros
 
 
+def _membro_para_alvo(membro: str) -> tuple[bool, str]:
+    """Membro de `members:` → (é_ASN, alvo).
+
+    Último componente numérico ⇒ ASN (`AS64512` e também `AS13335:AS132892` —
+    referência qualificada de uma ASN); membro com `/` é prefixo (membro de
+    route-set — ignorado); resto é nome de conjunto (a consulta usa o nome
+    completo, ex.: `AS13335:AS-CUSTOMERS`).
+    """
+    if "/" in membro:
+        return False, ""
+    ultimo = membro.split(":")[-1].strip()
+    numero = _RE_MEMBRO_ASN.match(ultimo)
+    if numero:
+        return True, f"as{int(numero.group(1))}"
+    return False, membro.strip()
+
+
+def _consulta_rotas_do_asn(servidor: str, alvo: str) -> tuple[list[int], list[str]]:
+    """Rotas de um ASN via consulta invertida `-i origin <alvo>` (irrd v4).
+
+    Se o servidor não suportar a inversão (marcadores de LACNIC), cai para a
+    consulta simples no formato clássico do RADB (era irrd v2/v3, que
+    expandia o ASN) — quem sabe devolve rotas naquele formato.
+    """
+    texto = _executa_whois(servidor, ["-i", "origin", alvo])
+    asns, prefixos, _ = _parseia_resposta(texto)
+    if not asns and not prefixos and _RE_INVERSAO_NAO_SUPORTADA.search(texto):
+        texto = _executa_whois(servidor, [alvo])
+        asns, prefixos, _ = _parseia_resposta(texto)
+    return asns, prefixos
+
+
 def _resolve(source: str, key: str) -> dict:
     """Busca whois de um ASN ou AS-SET → payload `{"asns", "prefixos"}`.
 
-    ASN numérico (`key` só de dígitos) ⇒ alvo `as{key}`; AS-SET ⇒ o próprio
-    nome. Conjuntos aninhados expandem até `_PROFUNDIDADE_MAX` com guarda de
-    ciclo (`visitados`) para não repetir consultas nem entrar em loop.
+    ASN numérico (`key` só de dígitos) ⇒ consulta invertida `-i origin
+    as{key}`; AS-SET ⇒ consulta do conjunto, e para cada membro: ASN ⇒
+    `-i origin as<n>`, conjunto aninhado ⇒ recursão até `_PROFUNDIDADE_MAX`
+    com guarda de ciclo (`visitados`), prefixo (route-set) ⇒ ignorado.
     """
     servidor = _SERVIDORES.get(source, _SERVIDOR_PADRAO)
     asns: list[int] = []
     prefixos: list[str] = []
     visitados: set[str] = set()
 
-    def _consulta_alvo(alvo: str, profundidade: int) -> None:
+    def _coleta_set(alvo: str, profundidade: int) -> None:
         identidade = alvo.lower()
         if identidade in visitados:
             return  # guarda de ciclo: conjunto de novo não é consultado
         visitados.add(identidade)
-        texto = _executa_whois(servidor, alvo)
-        encontrados, rotas, membros = _parseia_resposta(texto)
-        asns.extend(encontrados)
-        prefixos.extend(rotas)
-        if profundidade >= _PROFUNDIDADE_MAX:
-            return
+        texto = _executa_whois(servidor, [alvo])
+        _, _, membros = _parseia_resposta(texto)
+        alvos_asn: list[str] = []
         for membro in membros:
-            numero = _RE_ASN.match(membro)
-            if numero:
-                asns.append(int(numero.group(1)))
-            else:
-                _consulta_alvo(membro, profundidade + 1)
+            eh_asn, alvo_membro = _membro_para_alvo(membro)
+            if eh_asn:
+                alvos_asn.append(alvo_membro)
+            elif alvo_membro and profundidade < _PROFUNDIDADE_MAX:
+                _coleta_set(alvo_membro, profundidade + 1)
+        for alvo_asn in _dedup_ordem(alvos_asn):
+            a, p = _consulta_rotas_do_asn(servidor, alvo_asn)
+            asns.extend(a)
+            prefixos.extend(p)
 
-    _consulta_alvo(f"as{key}" if key.isdigit() else key, 0)
+    if key.isdigit():
+        a, p = _consulta_rotas_do_asn(servidor, f"as{key}")
+        asns.extend(a)
+        prefixos.extend(p)
+    else:
+        _coleta_set(key, 0)
     return {"asns": _dedup_ordem(asns), "prefixos": _dedup_ordem(prefixos)}
 
 
@@ -152,6 +217,8 @@ def consultar(source: str, key: str, *, ttl_horas: int = 24) -> dict:
 
     Retorno: `{"asns": [ASN...], "prefixos": ["pref/len"...]}` — ASNs
     encontrados e prefixos `route:`/`route6:`, dedup na ordem da resposta.
+    Respostas sem dados (`% No entries found...`/as-set vazio) ⇒ payload
+    vazio, sem exceção.
 
     Fluxo (controle E1): cache em `irr_cache` (única por source+key) — uma
     linha com `expires_at` no futuro responde sem whois; senão consulta a
