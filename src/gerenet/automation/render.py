@@ -19,6 +19,8 @@ from gerenet.domain.services.devices import get_device
 from gerenet.domain.services.ipam import pontas_v4, pontas_v6
 from gerenet.domain.services.policy_profiles import get_policy_profile
 from gerenet.domain.services.prefix_authorizations import list_authorizations
+from gerenet.domain.services.upstream_communities import list_upstream_communities
+from gerenet.domain.services.upstreams import upstream_do_circuito
 
 TEMPLATES_DIR = Path(__file__).parent / "templates" / "huawei_vrp"
 
@@ -240,13 +242,18 @@ def _bloco_import(
     return blocos, nome_rp
 
 
-def _bloco_rp_export(sessao: models.BgpSession, nome_rp: str, afi: str, lista: str | None) -> BlocoRender:
+def _bloco_rp_export(
+    sessao: models.BgpSession, nome_rp: str, afi: str, lista: str | None,
+    aplicacoes: list[dict] | None = None,
+) -> BlocoRender:
+    """RP de exportação; no caminho do cliente `aplicacoes` fica vazio (B1 intacto)."""
     comandos = _render_template(
         "route_policy_export",
         {
             "nome": nome_rp, "afi": afi, "lista": lista,
             "med": sessao.med, "prepend": sessao.prepend or 0,
             "asn_local": sessao.asn_local,
+            "aplicacoes": aplicacoes or [],
         },
     ).splitlines()
     return BlocoRender("route_policy_export", "session", sessao.id, comandos)
@@ -329,6 +336,222 @@ def _bloco_export(
     )], None
 
 
+def _eh_upstream(session: Session, sessao: models.BgpSession) -> models.Upstream | None:
+    """Upstream que vincula o circuito da sessão (None = sessão de cliente).
+
+    O despacho é pelo VÍNCULO circuito↔upstream (§7) — um circuito pertence a
+    no máximo um upstream (BR-1) — e não pelo kind da organização: circuito de
+    upstream tem org operadora, mas um circuito de cliente poderia ser de
+    org "parceiro" e não deve cair neste caminho.
+    """
+    return upstream_do_circuito(session, sessao.circuit_id)
+
+
+def _cf_bloco(sessao_id: int, nome_cf: str, valor: str) -> BlocoRender:
+    """Community-filter `ip community-filter <nome> permit <valor>` (§4.1)."""
+    return BlocoRender(
+        "community_filter", "session", sessao_id,
+        _render_template("community_filter", {"nome": nome_cf, "valor": valor}).splitlines(),
+    )
+
+
+def _autorizadas_clientes(
+    session: Session, afi: str,
+) -> list[models.BgpPrefixAuthorization]:
+    """Autorizações ATIVAS de clientes (org de kind != operadora) na AFI (§4.1/§4.2).
+
+    O pedido de proteção/anúncio é "prefixos de clientes": as organizações de
+    kind operadora são provedores, não clientes — suas autorizações ficam de
+    fora. BgpPrefixAuthorization não tem relationship de org (só
+    organization_id), então os ids das operadoras são resolvidos uma vez.
+    """
+    ids_operadora = set(session.scalars(
+        select(models.Organization.id).where(models.Organization.kind == "operadora")
+    ))
+    return [
+        a for a in list_authorizations(session, family=afi)
+        if a.organization_id not in ids_operadora
+    ]
+
+
+def _bloco_import_upstream(
+    session: Session, sessao: models.BgpSession, up: models.Upstream,
+    definidas: dict[tuple[str, str], set[str]],
+) -> tuple[list[BlocoRender], str | None]:
+    """Importação da sessão de upstream (§4.1) — nunca accept-all implícito.
+
+    up-full: accept-all do provedor EXCETO as proteções — default negada
+    quando allow_default_route=false (index 5), prefix-list de proteção
+    (internas + autorizações ativas de clientes, kind != operadora, na mesma
+    AFI, via naming.pfx_in) em deny node 10, info-communities marcadas
+    bloquear (direcao import/ambos) como nós deny separados (um por filter —
+    o VRP faz E de if-match de tipos diferentes no mesmo nó), permit node 100
+    com local-preference.
+    up-parcial: default + rotas com a info-community de "parcial"
+    (bloquear=False) — nós PERMIT no template B2; sem a community cadastrada
+    ⇒ comentário-dívida, nunca política permissiva derivada de palpite.
+    up-default: somente a rota default (prefix-list IP-PFX-DEFAULT-<AFI>).
+    Sem import_profile_id ⇒ fail-safe (deny-all). Perfil que NÃO seja up-*
+    numa sessão de upstream ⇒ nada (sem definição; o fail-safe vale só para
+    "sem perfil" — o operador foi explícito).
+    Nome dos community-filters: inline (naming.py não tem helper de CF):
+    CF-<ASN do par>-BLK-<i> (bloqueio) / CF-<ASN do par>-PART-<i> (parcial).
+    """
+    afi = sessao.afi
+    asn_par = sessao.asn_remote
+    nome_rp = naming.rp_import(asn_par, afi)
+    perfil = (
+        get_policy_profile(session, sessao.import_profile_id)
+        if sessao.import_profile_id else None
+    )
+    if perfil is None:
+        # fail-safe §4.1: deny explícito, nunca accept-all
+        blocos: list[BlocoRender] = []
+        _apensa_definicao(
+            blocos, definidas,
+            BlocoRender(
+                "route_policy_import", "session", sessao.id,
+                _render_template("route_policy_import", {
+                    "nome": nome_rp, "afi": afi, "lista": None,
+                    "local_preference": sessao.local_preference,
+                    "produto": None, "deny_communities": [], "fail_safe": True,
+                }).splitlines(),
+            ),
+            ("route_policy_import", nome_rp),
+        )
+        return blocos, nome_rp
+    produto = perfil.name
+    if produto not in ("up-full", "up-parcial", "up-default"):
+        return [], None
+
+    info_import = [
+        uc for uc in list_upstream_communities(session, up.id)
+        if uc.purpose == "info" and uc.direcao in ("import", "ambos")
+    ]
+    if produto == "up-full":
+        entradas: list[dict] = []
+        if sessao.allow_default_route is False:
+            entradas.append(
+                {"index": 5, "prefixo": "0.0.0.0/0" if afi == "ipv4" else "::/0"}
+            )
+        protecoes = list(dict.fromkeys(
+            internas_prefixos(session)[afi]
+            + [a.prefix for a in _autorizadas_clientes(session, afi)]
+        ))
+        entradas += [
+            {"index": 10 * (i + 1), "prefixo": p} for i, p in enumerate(protecoes)
+        ]
+        nome_pfx = naming.pfx_in(asn_par, afi)
+        cfs = [uc for uc in info_import if uc.bloquear]
+        sufixo_cf = "BLK"
+    elif produto == "up-parcial":
+        cfs = [uc for uc in info_import if not uc.bloquear]
+        if not cfs:
+            return [_bloco_divida(
+                "produto 'up-parcial': sem community de 'parcial' cadastrada para o upstream."
+            )], None
+        nome_pfx = naming.pfx_produto("default", afi)
+        entradas = [
+            {"index": 10, "prefixo": "0.0.0.0/0" if afi == "ipv4" else "::/0"}
+        ]
+        sufixo_cf = "PART"
+    else:  # up-default
+        cfs = []
+        nome_pfx = naming.pfx_produto("default", afi)
+        entradas = [
+            {"index": 10, "prefixo": "0.0.0.0/0" if afi == "ipv4" else "::/0"}
+        ]
+        sufixo_cf = "PART"  # sem communities no up-default
+
+    blocos = []
+    for i, uc in enumerate(cfs):
+        nome_cf = f"CF-{asn_par}-{sufixo_cf}-{i + 1}"
+        _apensa_definicao(
+            blocos, definidas, _cf_bloco(sessao.id, nome_cf, uc.value),
+            ("community_filter", nome_cf),
+        )
+    _apensa_definicao(
+        blocos, definidas,
+        BlocoRender(
+            "prefix_list", "session", sessao.id,
+            _render_template(
+                "prefix_list", {"nome": nome_pfx, "afi": afi, "entradas": entradas}
+            ).splitlines(),
+        ),
+        ("prefix_list", nome_pfx),
+    )
+    _apensa_definicao(
+        blocos, definidas,
+        BlocoRender(
+            "route_policy_import", "session", sessao.id,
+            _render_template("route_policy_import", {
+                "nome": nome_rp, "afi": afi, "lista": nome_pfx,
+                "local_preference": sessao.local_preference,
+                "produto": produto, "deny_communities": [
+                    f"CF-{asn_par}-{sufixo_cf}-{i + 1}" for i, _ in enumerate(cfs)
+                ],
+                "fail_safe": False,
+            }).splitlines(),
+        ),
+        ("route_policy_import", nome_rp),
+    )
+    return blocos, nome_rp
+
+
+def _bloco_export_upstream(
+    session: Session, sessao: models.BgpSession, up: models.Upstream,
+    definidas: dict[tuple[str, str], set[str]],
+) -> tuple[list[BlocoRender], str | None]:
+    """Exportação da sessão de upstream (§4.2) — anúncio NÃO é produto.
+
+    Anúncio = rotas internas (internas_prefixos) + autorizações ATIVAS de
+    clientes (kind != operadora, mesma AFI), na prefix-list IP-PFX-INTERNAS-
+    <AFI> (naming.pfx_internas; o nome vem do conteúdo, não do ASN do par —
+    a mesma lista serve a todos os upstreams). Route_policy_export com
+    aplicacoes = communities de AÇÃO da operadora (purpose prepend/lp/
+    blackhole, direcao export/ambos), valores concretos direto de
+    upstream_communities (§3.1 — sem associação intermediária); med/prepend/
+    asn_local vêm da sessão. O template B2 mescla as aplicações em uma única
+    linha `apply community` (apply múltiplo seria semântica de replace).
+    Dedup de definições idêntico ao caminho do cliente; a referência no peer
+    segue o critério de definição (Ruling R5).
+    """
+    afi = sessao.afi
+    nome_rp = naming.rp_export(sessao.asn_remote, afi)
+    nome_pfx = naming.pfx_internas(afi)
+    anuncio = list(dict.fromkeys(
+        internas_prefixos(session)[afi]
+        + [a.prefix for a in _autorizadas_clientes(session, afi)]
+    ))
+    aplicacoes = [
+        {"tipo": uc.purpose, "valor": uc.value, "regiao": uc.regiao or ""}
+        for uc in list_upstream_communities(session, up.id)
+        if uc.purpose in ("prepend", "lp", "blackhole")
+        and uc.direcao in ("export", "ambos")
+    ]
+    blocos: list[BlocoRender] = []
+    _apensa_definicao(
+        blocos, definidas,
+        BlocoRender(
+            "prefix_list", "session", sessao.id,
+            _render_template("prefix_list", {
+                "nome": nome_pfx, "afi": afi,
+                "entradas": [
+                    {"index": 10 * (i + 1), "prefixo": p}
+                    for i, p in enumerate(anuncio)
+                ],
+            }).splitlines(),
+        ),
+        ("prefix_list", nome_pfx),
+    )
+    _apensa_definicao(
+        blocos, definidas,
+        _bloco_rp_export(sessao, nome_rp, afi, nome_pfx, aplicacoes),
+        ("route_policy_export", nome_rp),
+    )
+    return blocos, nome_rp
+
+
 def _bloco_peer(sessao: models.BgpSession, rp_import: str | None, rp_export: str | None) -> BlocoRender:
     comandos = _render_template(
         "bgp_peer",
@@ -402,8 +625,13 @@ def render_desejado(session: Session, device_id: int) -> RenderResult:
             # As referências do peer vêm do critério de definição (nome §25.4),
             # NUNCA do que sobrou dos blocos: com dedup, a 2ª sessão da mesma
             # definição não apensa bloco, mas a referência continua (Ruling R5).
-            import_blocos, rp_import = _bloco_import(session, circuito, sessao, definidas)
-            export_blocos, rp_export = _bloco_export(session, sessao, definidas)
+            up = _eh_upstream(session, sessao)
+            if up is not None:
+                import_blocos, rp_import = _bloco_import_upstream(session, sessao, up, definidas)
+                export_blocos, rp_export = _bloco_export_upstream(session, sessao, up, definidas)
+            else:
+                import_blocos, rp_import = _bloco_import(session, circuito, sessao, definidas)
+                export_blocos, rp_export = _bloco_export(session, sessao, definidas)
             blocos.extend(import_blocos)
             blocos.extend(export_blocos)
             blocos.append(_bloco_peer(sessao, rp_import, rp_export))
