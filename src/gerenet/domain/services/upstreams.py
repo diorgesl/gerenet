@@ -60,7 +60,9 @@ def _validar_org_operadora(session: Session, organization_id: int) -> models.Org
     return org
 
 
-def _valida_nomes(nome: str) -> None:
+def _valida_nomes(nome: str | None) -> None:
+    if nome is None:
+        raise ValidationError("Nome do upstream não pode ser nulo.")
     if len(nome) < 2 or len(nome) > 128:
         raise ValidationError("Nome do upstream deve ter entre 2 e 128 caracteres.")
 

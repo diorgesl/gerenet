@@ -1,6 +1,7 @@
 """Serviço de upstreams (A3) — CRUD, vínculo de circuitos e propagação de defaults (§7)."""
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from gerenet.domain import models
 from gerenet.domain.schemas import UpstreamCreate, UpstreamUpdate
@@ -248,3 +249,19 @@ def test_desvincular_circuito_remove_e_audita(session, up_com_circuito, circuito
     svc.desvincular_circuito(session, up_com_circuito.id, circuito_up.id, actor="cli")
     assert svc.upstream_do_circuito(session, circuito_up.id) is None
     assert "upstream.desvincular_circuito" in _audit_tipos(session)
+
+
+def test_circuito_nao_se_repetir_em_outro_upstream(session, up, up2, circuito_up):
+    """BR-1 no banco: UNIQUE(circuit_id) barra circuito em dois upstreams (R-07)."""
+    session.add(models.UpstreamCircuit(upstream_id=up.id, circuit_id=circuito_up.id))
+    session.commit()
+    with pytest.raises(IntegrityError):
+        session.add(models.UpstreamCircuit(upstream_id=up2.id, circuit_id=circuito_up.id))
+        session.commit()
+    session.rollback()  # integridade da sessão pós-IntegrityError (padrão test_upstream_models:31)
+
+
+def test_update_upstream_nome_nulo_vira_erro_de_validacao(session, up):
+    """name explicitamente None não pode estourar TypeError — 400 ValidationError."""
+    with pytest.raises(ValidationError, match="Nome do upstream"):
+        svc.update_upstream(session, up.id, UpstreamUpdate(name=None), actor="cli")

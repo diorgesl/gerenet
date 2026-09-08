@@ -807,10 +807,15 @@ class Upstream(Base):
 
 
 class UpstreamCircuit(Base):
-    """Vínculo upstream ↔ circuito (§7; design §3): papel e ordem de preferência."""
+    """Vínculo upstream ↔ circuito (§7; design §3): papel e ordem de preferência.
+
+    Unicidade é em circuit_id: um circuito pertence a no máximo um upstream
+    (BR-1 §7) — a composta (upstream_id, circuit_id) deixaria a corrida
+    concurrence passar (ruling R-07).
+    """
 
     __tablename__ = "upstream_circuits"
-    __table_args__ = (UniqueConstraint("upstream_id", "circuit_id"),)
+    __table_args__ = (UniqueConstraint("circuit_id", name="uq_upstream_circuits_circuit_id"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     upstream_id: Mapped[int] = mapped_column(ForeignKey("upstreams.id"), nullable=False)
