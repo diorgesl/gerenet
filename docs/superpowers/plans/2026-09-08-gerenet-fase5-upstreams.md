@@ -27,10 +27,11 @@
 
 # Estágio A — Fundamentos (modelo, migração, serviços, API, CLI)
 
-## Task A1: Modelos + migração Alembic (upstreams, communities.tipo, enums, roas, irr_cache)
+## Task 1 (A1): Modelos + migração Alembic (upstreams, communities.tipo, enums, roas, irr_cache)
 
 **Files:**
 - Modify: `src/gerenet/domain/models.py` (enums L25-40; Org L184; Circuit L229-239; Device L70; Community L348-366; BgpPrefixAuthorization L431-450; ChangeRequest L488-535)
+- Modify: `tests/conftest.py` (fixtures compartilhadas da fase 5 + TRUNCATE das tabelas novas)
 - Create: `alembic/versions/<rev>_upstreams_f5.py` (gerada com `uv run alembic revision -m "upstreams_f5"`; depois preencher)
 - Test: `tests/domain/test_upstream_models.py` (novo)
 
@@ -79,6 +80,176 @@ def test_roa_unicidade(session):
         session.add(models.Roa(prefix="180.10.0.0/16", origin_asn=64512, max_length=24))
         session.commit()
 ```
+
+- [ ] **Step 1b: Fixtures compartilhadas da fase 5 + TRUNCATE (tests/conftest.py)**
+
+Os testes dos estágios A–E compartilham entidades de upstream. A suíte não tem
+fixtures de entidades (padrão: builders inline + `db_session` do conftest raiz),
+então esta tarefa cria **um bloco de fixtures no `tests/conftest.py`** (visíveis
+a toda a suíte) com alias `session` (o corpo dos testes do plano usa `session`),
+e **inclui as 5 tabelas novas no `TRUNCATE`** do autouse `_limpa_tabelas` (sem
+isso, dados de `upstreams` etc. vazam entre testes — o catálogo fica de fora de
+propósito: é seedado pela migration):
+
+```python
+# ---- Fase 5 (upstreams): fixtures compartilhadas — testes usam `session`. ----
+
+@pytest.fixture
+def session(db_session) -> Session:
+    yield db_session
+
+
+@pytest.fixture
+def org_operadora(db_session: Session) -> models.Organization:
+    org = models.Organization(name="Operadora F5", asn=64501, kind="operadora")
+    db_session.add(org)
+    db_session.commit()
+    return org
+
+
+@pytest.fixture
+def org_downstream(db_session: Session) -> models.Organization:
+    org = models.Organization(name="Cliente F5", asn=64512, kind="downstream")
+    db_session.add(org)
+    db_session.commit()
+    return org
+
+
+@pytest.fixture
+def site_f5(db_session: Session) -> models.Site:
+    site = models.Site(name="pop-spo-f5", p2p_ipv4_block="100.64.10.0/24")
+    db_session.add(site)
+    db_session.commit()
+    return site
+
+
+@pytest.fixture
+def edge_device(db_session: Session, site_f5: models.Site) -> models.Device:
+    dev = models.Device(name="edge-f5", management_address="10.99.0.1",
+                        site_id=site_f5.id, asn_local=65001)
+    db_session.add(dev)
+    db_session.commit()
+    return dev
+
+
+@pytest.fixture
+def circuito_up(db_session: Session, org_operadora: models.Organization,
+                site_f5: models.Site, edge_device: models.Device) -> models.Circuit:
+    circ = models.Circuit(
+        code="CIRC-UP-0001", organization_id=org_operadora.id, site_id=site_f5.id,
+        access_device_id=None, access_port="GE0/0/0", edge_device_id=edge_device.id,
+        vlan_mode="none", bandwidth="10 Gbps", mtu=9214,
+    )
+    db_session.add(circ)
+    db_session.commit()
+    return circ
+
+
+@pytest.fixture
+def circuito_com_p2p(db_session: Session, org_downstream: models.Organization,
+                     site_f5: models.Site, edge_device: models.Device) -> models.Circuit:
+    circ = models.Circuit(
+        code="CIRC-DN-0001", organization_id=org_downstream.id, site_id=site_f5.id,
+        access_device_id=edge_device.id, access_port="GE0/0/1", edge_device_id=edge_device.id,
+    )
+    db_session.add(circ)
+    db_session.flush()
+    db_session.add(models.IpPrefix(site_id=site_f5.id, network="100.64.10.0/31",
+                                   circuit_id=circ.id))
+    db_session.commit()
+    return circ
+
+
+@pytest.fixture
+def up(db_session: Session, org_operadora: models.Organization) -> models.Upstream:
+    up = models.Upstream(name="transito-f5", tipo="transito", organization_id=org_operadora.id,
+                         expected_prefixes_v4=1000, expected_prefixes_v6=200,
+                         entrada_local_preference=100, contingencia_local_preference=60,
+                         contingencia_prepend=3, max_prefix_margin_pct=10)
+    db_session.add(up)
+    db_session.commit()
+    return up
+
+
+@pytest.fixture
+def up2(db_session: Session, org_operadora: models.Organization) -> models.Upstream:
+    up = models.Upstream(name="ix-f5", tipo="ix", organization_id=org_operadora.id)
+    db_session.add(up)
+    db_session.commit()
+    return up
+
+
+@pytest.fixture
+def bgp_session_principal(db_session: Session, circuito_up: models.Circuit,
+                          edge_device: models.Device) -> models.BgpSession:
+    """Sessão V4 do circuito de upstream (perfil import up-full do seed)."""
+    perfil = db_session.scalar(select(models.PolicyProfile).where(
+        models.PolicyProfile.name == "up-full",
+        models.PolicyProfile.direction == "import"))
+    sessao = models.BgpSession(
+        circuit_id=circuito_up.id, device_id=edge_device.id, afi="ipv4",
+        local_address="100.64.10.1", remote_address="100.64.10.2",
+        asn_local=65001, asn_remote=64501,
+        import_profile_id=perfil.id if perfil else None)
+    db_session.add(sessao)
+    db_session.commit()
+    return sessao
+
+
+@pytest.fixture
+def up_com_circuito(db_session, up: models.Upstream, circuito_up: models.Circuit) -> models.Upstream:
+    db_session.add(models.UpstreamCircuit(upstream_id=up.id, circuit_id=circuito_up.id,
+                                          papel="principal", ordem=1))
+    db_session.commit()
+    return up
+
+
+@pytest.fixture
+def up_com_sessao_upfull(db_session, up_com_circuito: models.Upstream,
+                         bgp_session_principal: models.BgpSession) -> models.Upstream:
+    return up_com_circuito
+
+
+@pytest.fixture
+def up_com_2_circuitos(db_session, up: models.Upstream, org_operadora: models.Organization,
+                       site_f5: models.Site, edge_device: models.Device) -> models.Upstream:
+    c1 = models.Circuit(code="CIRC-UP-0002", organization_id=org_operadora.id,
+                        site_id=site_f5.id, access_device_id=None, access_port="GE0/0/1",
+                        edge_device_id=edge_device.id, vlan_mode="none")
+    c2 = models.Circuit(code="CIRC-UP-0003", organization_id=org_operadora.id,
+                        site_id=site_f5.id, access_device_id=None, access_port="GE0/0/2",
+                        edge_device_id=edge_device.id, vlan_mode="none")
+    db_session.add_all([c1, c2])
+    db_session.flush()
+    s1 = models.BgpSession(circuit_id=c1.id, device_id=edge_device.id, afi="ipv4",
+                           local_address="100.64.10.1", remote_address="100.64.10.2",
+                           asn_local=65001, asn_remote=64501)
+    s2 = models.BgpSession(circuit_id=c2.id, device_id=edge_device.id, afi="ipv4",
+                           local_address="100.64.10.5", remote_address="100.64.10.6",
+                           asn_local=65001, asn_remote=64501)
+    db_session.add_all([s1, s2])
+    db_session.add(models.UpstreamCircuit(upstream_id=up.id, circuit_id=c1.id,
+                                          papel="principal", ordem=1))
+    db_session.add(models.UpstreamCircuit(upstream_id=up.id, circuit_id=c2.id,
+                                          papel="contingencia", ordem=2))
+    db_session.commit()
+    return up
+
+
+@pytest.fixture
+def snapshot_bgp_ok(db_session: Session, edge_device: models.Device) -> models.DeviceSnapshot:
+    snap = models.DeviceSnapshot(
+        device_id=edge_device.id, status="success",
+        resources={"interfaces": [], "bgp_peers": [
+            {"peer": "100.64.10.2", "asn": 64501, "estado": "established", "prefixos": 1000},
+        ]})
+    db_session.add(snap)
+    db_session.commit()
+    return snap
+```
+
+No `_limpa_tabelas`, a lista de TRUNCATE ganha (antes do `RESTART IDENTITY`):
+`upstreams, upstream_circuits, upstream_communities, roas, irr_cache`.
 
 - [ ] **Step 2: Rodar e verificar que falha**
 
@@ -296,7 +467,12 @@ _Nota do executor:_ siga o padrão de `downgrade` do projeto (ex.: `alembic/vers
 
 - [ ] **Step 6: Rodar migração e testes**
 
-Run: `uv run alembic upgrade head` (banco dev) e `uv run pytest tests/domain/test_upstream_models.py -q`
+Run (banco dev): `uv run alembic upgrade head`; e, o mais importante — **o banco de
+teste `gerenet_test` precisa da migração** (a suíte TRUNCATE a cada teste mas os
+catálogos/perfis up-* vêm da migration — sem migrar, os testes que usam
+`bgp_session_principal` falham):
+`GERENET_DATABASE_URL=postgresql+psycopg://gerenet:gerenet@localhost:5432/gerenet_test uv run alembic upgrade head`
+Depois: `uv run pytest tests/domain/test_upstream_models.py -q`
 Expected: migration aplica; testes PASS.
 
 - [ ] **Step 7: Rodar suíte completa e commit**
@@ -309,7 +485,7 @@ git add src/gerenet/domain/models.py alembic/versions/<rev>_upstreams_f5.py test
 git commit -m "feat(f5): modelos e migração da fase 5 (upstreams, communities tipo, roas, irr_cache)"
 ```
 
-## Task A2: Schemas Pydantic (upstreams, upstream_communities, ChangeRequest, autorizações)
+## Task 2 (A2): Schemas Pydantic (upstreams, upstream_communities, ChangeRequest, autorizações)
 
 **Files:**
 - Modify: `src/gerenet/domain/schemas.py` (junto de `ChangeRequestCreate` L538 e `ChangeRequestOut` L588)
@@ -429,7 +605,7 @@ class ChangeRequestCreate(BaseModel):
 
 - [ ] **Step 4: Rodar testes PASS; commit (`feat(f5): schemas de upstream e escopo upstream na CR`).**
 
-## Task A3: Serviço de upstreams (CRUD + vínculo de circuitos + propagação)
+## Task 3 (A3): Serviço de upstreams (CRUD + vínculo de circuitos + propagação)
 
 **Files:**
 - Create: `src/gerenet/domain/services/upstreams.py`
@@ -603,7 +779,7 @@ _Nota:_ importar `list_sessions` de `services.bgp_sessions` e `IntegrityError` d
 
 - [ ] **Step 4: Rodar testes PASS; commit (`feat(f5): serviço de upstreams com propagação de defaults às sessões`).**
 
-## Task A4: Communities — tipo no catálogo + CRUD habilitado + serviço de upstream_communities
+## Task 4 (A4): Communities — tipo no catálogo + CRUD habilitado + serviço de upstream_communities
 
 **Files:**
 - Modify: `src/gerenet/domain/services/communities.py`, `src/gerenet/domain/schemas.py` (CommunityCreate/CommunityUpdate com `tipo`), `src/gerenet/api/routers/communities.py` (POST habilitado + filtro tipo)
@@ -665,7 +841,7 @@ def add_upstream_community(session, upstream_id, data, *, actor):
 
 - [ ] **Step 4: Rodar PASS; commit (`feat(f5): communities por operadora (upstream_communities) e tipo no catálogo com criação habilitada`).**
 
-## Task A5: API routers — upstreams + ajustes de organizations/circuits/sessions/authorizations/change_requests
+## Task 5 (A5): API routers — upstreams + ajustes de organizations/circuits/sessions/authorizations/change_requests
 
 **Files:**
 - Create: `src/gerenet/api/routers/upstreams.py`
@@ -708,7 +884,7 @@ organization_kind: str | None = None  # preenchido no router via session.get(Org
 
 - [ ] **Step 4: PASS + commit (`feat(f5): API de upstreams e exposição de kind/validacao/upstream_name`).**
 
-## Task A6: CLI — `gerenet upstreams` e `gerenet upstream-communities`
+## Task 6 (A6): CLI — `gerenet upstreams` e `gerenet upstream-communities`
 
 **Files:**
 - Create: `src/gerenet/cli/upstreams.py`
@@ -740,7 +916,7 @@ def test_upstreams_add_cli(monkeypatch, session_factory, org_operadora):
 
 # Estágio B — Render e políticas
 
-## Task B1: `internas_prefixos()` + `naming.pfx_internas` + coluna `devices.loopback` em uso
+## Task 7 (B1): `internas_prefixos()` + `naming.pfx_internas` + coluna `devices.loopback` em uso
 
 **Files:**
 - Modify: `src/gerenet/automation/naming.py` (nova função), `src/gerenet/automation/render.py` (helper + exposição), criar `src/gerenet/automation/internas.py` OU adicionar em `render.py` (preferir módulo pequeno `render` mesmo — seguir o padrão: render é o orquestrador)
@@ -752,10 +928,12 @@ def test_upstreams_add_cli(monkeypatch, session_factory, org_operadora):
 - [ ] **Step 1-2: teste + falha** — exemplo:
 
 ```python
-def test_internas_prefixos_loopback_e_p2p(session, device_edge, circuito_com_p2p):
+def test_internas_prefixos_loopback_e_p2p(session, edge_device, circuito_com_p2p):
+    edge_device.loopback = "10.99.0.253"
+    session.commit()
     out = internas_prefixos(session)
-    assert "10.0.0.0/31" in out["ipv4"]  # p2p reservado do circuito
-    assert device_edge.loopback in out["ipv4"]
+    assert "100.64.10.0/31" in out["ipv4"]  # p2p reservado do circuito
+    assert "10.99.0.253/32" in out["ipv4"]
 ```
 
 - [ ] **Step 3: Implementar**
@@ -787,7 +965,7 @@ def internas_prefixos(session: Session) -> dict[str, list[str]]:
 
 - [ ] **Step 4: PASS; commit (`feat(f5): rotas internas — helper internas_prefixos e nome de prefix-list`).**
 
-## Task B2: Templates — `community_filter.j2` + `route_policy_import.j2` (produtos up-*) + `route_policy_export.j2` (anúncio ao trânsito)
+## Task 8 (B2): Templates — `community_filter.j2` + `route_policy_import.j2` (produtos up-*) + `route_policy_export.j2` (anúncio ao trânsito)
 
 **Files:**
 - Create: `src/gerenet/automation/templates/huawei_vrp/community_filter.j2`
@@ -842,7 +1020,7 @@ ip community-filter {{ nome }} permit {{ valor }}
 
 - [ ] **Step 4: rodar goldens existentes (`tests/automation/test_templates.py`) + novos; PASS; commit (`feat(f5): templates de community-filter e variantes upstream no import/export`).**
 
-## Task B3: Render — `_bloco_import`/`_bloco_export` para sessões de upstream
+## Task 9 (B3): Render — `_bloco_import`/`_bloco_export` para sessões de upstream
 
 **Files:**
 - Modify: `src/gerenet/automation/render.py` (funções novas: `_eh_upstream(session, sessao) -> bool` via `services.upstreams.upstream_do_circuito`; `_bloco_import_upstream`; `_bloco_export_upstream`; despacho em `render_desejado`)
@@ -926,7 +1104,7 @@ def _bloco_import_upstream(session, circuito, sessao, definidas, up) -> tuple[li
 
 - [ ] **Step 4: PASS (suíte de render/divergência e goldens continuam verdes); commit (`feat(f5): render de upstream — import com proteções e export de internas+clientes`).**
 
-## Task B4: Pagar a dívida `default_internas`/`parcial` (render para clientes)
+## Task 10 (B4): Pagar a dívida `default_internas`/`parcial` (render para clientes)
 
 **Files:**
 - Modify: `src/gerenet/automation/render.py` (`_bloco_export` branch final)
@@ -942,7 +1120,7 @@ def _bloco_import_upstream(session, circuito, sessao, definidas, up) -> tuple[li
 
 - [ ] **Step 4: PASS + commit (`feat(f5): render de default_internas/parcial com rotas internas (dívida ciclo B paga)`).**
 
-## Task B5: Variação anormal — contagem vs esperado×margem na reconciliação/coleta
+## Task 11 (B5): Variação anormal — contagem vs esperado×margem na reconciliação/coleta
 
 **Files:**
 - Modify: `src/gerenet/automation/reconcile.py` (nova checagem `bgp.variação_anormal` no `reconciliar_device`), `src/gerenet/api/routers/reconciliation.py` (nada — lista itens já genérica), dashboard/metrics se existir
@@ -955,7 +1133,7 @@ def _bloco_import_upstream(session, circuito, sessao, definidas, up) -> tuple[li
 - [ ] **Step 1: teste** (montar snapshot com `bgp_peers` de contagem alta vs esperado do upstream):
 
 ```python
-def test_reconcile_acusa_variacao_anormal_acima_da_margem(session, up_com_sessao, edge_device, snapshot_bgp_ok, monkeypatch):
+def test_reconcile_acusa_variacao_anormal_acima_da_margem(session, up_com_sessao_upfull, edge_device, snapshot_bgp_ok, monkeypatch):
     # snapshot com peer contagem 1000; sessão com maximum_prefix 1100 e esperado 1000->margem 10%
     ...
     res = reconciliar_device(session, edge_device.id, snapshot_id=snapshot_bgp_ok.id)
@@ -970,7 +1148,7 @@ def test_reconcile_acusa_variacao_anormal_acima_da_margem(session, up_com_sessao
 
 # Estágio C — CR escopo `upstream`
 
-## Task C1: `automation/upstream.py` — plano de provision/remoção agregado + pre/post-checks
+## Task 12 (C1): `automation/upstream.py` — plano de provision/remoção agregado + pre/post-checks
 
 **Files:**
 - Create: `src/gerenet/automation/upstream.py`
@@ -1056,7 +1234,7 @@ def valida_pos_upstream(session, up, snapshot) -> list[dict]:
 
 - [ ] **Step 4: PASS + commit (`feat(f5): plano e checks de CR upstream (provision/remoção/pos)`).**
 
-## Task C2: `domain/services/change_requests.py` — branch `_create_upstream`, `_replaneja`, rollback/reconcile por escopo
+## Task 13 (C2): `domain/services/change_requests.py` — branch `_create_upstream`, `_replaneja`, rollback/reconcile por escopo
 
 **Files:**
 - Modify: `src/gerenet/domain/services/change_requests.py` (L61-99 create; L245-280 reconciliar; L283-344 gerar_rollback; L259/293 guards)
@@ -1077,7 +1255,7 @@ def test_create_cr_upstream_plano_na_criacao(session, up_com_2_circuitos, actor)
     assert cr.steps and all(s.plano_json for s in cr.steps)
 
 
-def test_create_cr_upstream_sem_sessoes_eh_plano_vazio(session, up_sem_circuitos):
+def test_create_cr_upstream_sem_circuitos_eh_plano_vazio(session, up):
     with pytest.raises(PlanoVazio):
         create_change_request(...)
 ```
@@ -1108,7 +1286,7 @@ def _create_upstream(session, data, *, ator_id=None, actor="cli"):
 
 - [ ] **Step 4: PASS + commit (`feat(f5): CR escopo upstream com plano na criação, rollback e reconciliação`).**
 
-## Task C3: Worker/runner — chaves de re-diff e pre/post-check por escopo
+## Task 14 (C3): Worker/runner — chaves de re-diff e pre/post-check por escopo
 
 **Files:**
 - Modify: `src/gerenet/automation/runner.py` (L92-110 `_CHAVES_POR_ESCOPO` + L593-660 pre/post; L794), `src/gerenet/worker/tasks.py` (passagem do escopo — verificar como o re-diff usa; se `changes.plan_provision` for chamado por circuito, adaptar para upstream via helper `plan_do_escopo`)
@@ -1122,7 +1300,7 @@ def _create_upstream(session, data, *, ator_id=None, actor="cli"):
 
 - [ ] **Step 4: PASS + commit (`feat(f5): runner/worker escopo upstream (re-diff, pré e pós-check)`).**
 
-## Task C4: API/CLI change-requests por escopo upstream + detalhe
+## Task 15 (C4): API/CLI change-requests por escopo upstream + detalhe
 
 **Files:**
 - Modify: `src/gerenet/api/routers/change_requests.py` (query param/valores; já aceita escopo — confirmar os literais), `src/gerenet/cli/change_requests.py` (opção `--escopo upstream`/`--upstream-id`)
@@ -1138,7 +1316,7 @@ def _create_upstream(session, data, *, ator_id=None, actor="cli"):
 
 > Padrões F4: páginas em `web/src/pages/`, rotas em `App.tsx`, API client em `web/src/api/client.ts` + `types.ts` + `hooks.ts`, tooltips em `web/src/help.ts`. Seguir `MplsL2vcDetail.tsx`/`MplsDomains.tsx` como molde de lista/detalhe e dialogs.
 
-## Task D1: types/hooks + rotas + nav
+## Task 16 (D1): types/hooks + rotas + nav
 
 **Files:**
 - Modify: `web/src/api/types.ts`, `web/src/api/hooks.ts`, `web/src/App.tsx`, nav (onde MPC pages estão agrupadas — seguir o grupo “MPLS”)
@@ -1168,7 +1346,7 @@ Rotas: `/upstreams`, `/upstreams/:id`; nav item “Upstreams” (grupo onde “M
 
 - [ ] **Step 4: `cd web && npm run build` PASS + commit (`feat(f5): web — tipos, hooks, rotas e nav de upstreams`).**
 
-## Task D2: Página lista `/upstreams` (+ dialogs criar/editar/desativar)
+## Task 17 (D2): Página lista `/upstreams` (+ dialogs criar/editar/desativar)
 
 **Files:**
 - Create: `web/src/pages/Upstreams.tsx` (+ `Upstreams.test.tsx`)
@@ -1182,7 +1360,7 @@ Rotas: `/upstreams`, `/upstreams/:id`; nav item “Upstreams” (grupo onde “M
 
 - [ ] **Step 4: `npm run build && npm run test` PASS + commit (`feat(f5): web — página de upstreams com criar/editar`).**
 
-## Task D3: Página detalhe `/upstreams/:id` (matriz, communities, solicitar mudança)
+## Task 18 (D3): Página detalhe `/upstreams/:id` (matriz, communities, solicitar mudança)
 
 **Files:**
 - Create: `web/src/pages/UpstreamDetail.tsx` (+ teste)
@@ -1197,7 +1375,7 @@ Rotas: `/upstreams`, `/upstreams/:id`; nav item “Upstreams” (grupo onde “M
 
 - [ ] **Step 4: build/test PASS + commit (`feat(f5): web — detalhe de upstream com matriz, communities e solicitar mudança`).**
 
-## Task D4: Badges e dashboard + comunidades (tipo/criação na página)
+## Task 19 (D4): Badges e dashboard + comunidades (tipo/criação na página)
 
 **Files:**
 - Modify: `web/src/pages/Circuits.tsx`/`BgpSessions.tsx` (badge “upstream” quando `organization_kind === "operadora"`), `web/src/pages/Dashboard.tsx` (card “Upstreams” — total ativos × por tipo e alertas de variação recentes; seguir shape dos cards existentes), `web/src/pages/Communities.tsx` (coluna `tipo` + criação via dialog)
@@ -1207,7 +1385,7 @@ Rotas: `/upstreams`, `/upstreams/:id`; nav item “Upstreams” (grupo onde “M
 
 - [ ] **Step 4: build/test PASS + commit (`feat(f5): web — badges, card de upstreams no dashboard e tipo/criação no catálogo de communities`).**
 
-## Task D5: e2e fumo `upstream.spec.ts`
+## Task 20 (D5): e2e fumo `upstream.spec.ts`
 
 **Files:**
 - Create: `web/e2e/upstream.spec.ts`; Modify: `web/e2e/setup.ts` (seed de operadora + upstream + circuito upstream + sessão — **idempotente** via API/CLI como os demais objetos)
@@ -1221,7 +1399,7 @@ Rotas: `/upstreams`, `/upstreams/:id`; nav item “Upstreams” (grupo onde “M
 
 # Estágio E — IRR/RPKI e documentação
 
-## Task E1: `automation/irr.py` — consulta whois com cache (`irr_cache`)
+## Task 21 (E1): `automation/irr.py` — consulta whois com cache (`irr_cache`)
 
 **Files:**
 - Create: `src/gerenet/automation/irr.py`
@@ -1234,7 +1412,7 @@ Rotas: `/upstreams`, `/upstreams/:id`; nav item “Upstreams” (grupo onde “M
 
 - [ ] **Step 4: PASS + commit (`feat(f5): consulta IRR com cache (irr.py)`).**
 
-## Task E2: `automation/rpki.py` — sincronização de ROAs + validação consultiva
+## Task 22 (E2): `automation/rpki.py` — sincronização de ROAs + validação consultiva
 
 **Files:**
 - Create: `src/gerenet/automation/rpki.py`; `src/gerenet/config.py` (setting `rpki_roas_file: str | None` + env `GERENET_RPKI_ROAS_FILE`)
@@ -1247,7 +1425,7 @@ Rotas: `/upstreams`, `/upstreams/:id`; nav item “Upstreams” (grupo onde “M
 
 - [ ] **Step 4: PASS + commit (`feat(f5): sincronização de ROAs do rpki-client e validação de origem consultiva`).**
 
-## Task E3: autorizações com origem irr/rpki + `validacao` exposta
+## Task 23 (E3): autorizações com origem irr/rpki + `validacao` exposta
 
 **Files:**
 - Modify: `src/gerenet/domain/services/prefix_authorizations.py` (validar origin enum; `validacao` setada/default `nao_verificada` para irr/rpki; `revalidar_autorizacoes(session)` chamada após sync de ROAs — atualiza `validacao` via `validar_origem`), `src/gerenet/api/routers/prefix_authorizations.py` (campo `validacao` nas respostas + origem aceita), `src/gerenet/cli/prefix_authorizations.py` (opções `--origin irr|rpki`)
@@ -1261,7 +1439,7 @@ Rotas: `/upstreams`, `/upstreams/:id`; nav item “Upstreams” (grupo onde “M
 
 - [ ] **Step 4: PASS + commit (`feat(f5): autorizações com origem IRR/RPKI e validação consultiva exposta`).**
 
-## Task E4: CLI `gerenet rpki sync` + `gerenet irr query` + jobs
+## Task 24 (E4): CLI `gerenet rpki sync` + `gerenet irr query` + jobs
 
 **Files:**
 - Create: `src/gerenet/cli/rpki.py` (ou integrar em `cli/prefix_authorizations.py` — preferir arquivo próprio `cli/rpki.py`)
@@ -1272,7 +1450,7 @@ Rotas: `/upstreams`, `/upstreams/:id`; nav item “Upstreams” (grupo onde “M
 
 - [ ] **Step 4: PASS + commit (`feat(f5): CLI rpki sync e irr query`).**
 
-## Task E5: Documentação — runbook de validação + wiki upstream real + estado do repositório
+## Task 25 (E5): Documentação — runbook de validação + wiki upstream real + estado do repositório
 
 **Files:**
 - Create: `docs/runbook-validacao-upstream.md`; Modify: `docs/wiki/em-breve/upstreams.md` → mover para `docs/wiki/upstreams.md` (`em_breve: false`), e a página `/wiki` passa a mostrá-la real; `CLAUDE.md` (seção “clico/estado” — atualizar com a F5 como nas fases anteriores)
@@ -1282,7 +1460,7 @@ Rotas: `/upstreams`, `/upstreams/:id`; nav item “Upstreams” (grupo onde “M
 
 - [ ] **Step 4: `cd web && npm run build && npm run test` PASSA; e2e (`npm run test:e2e`) PASSA` + commit (`docs(f5): runbook de validação upstream, wiki real e estado do repositório`).**
 
-## Task E6: Fechamento — suíte completa + graphify update + revisão
+## Task 26 (E6): Fechamento — suíte completa + graphify update + revisão
 
 - [ ] **Step 1:** `uv run pytest -q` (banco dev + test), `uv run ruff check src tests`, `cd web && npm run build && npm run test`, e2e (`npm run test:e2e` com banco `gerenet_e2e`).
 - [ ] **Step 2:** `graphify update .` (rule do projeto — manter o grafo corrente).
