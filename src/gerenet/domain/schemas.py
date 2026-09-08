@@ -433,17 +433,25 @@ class BgpSessionCommunityIn(BaseModel):
     community_id: int
 
 
+class CommunityCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    tipo: str = "padrao"  # validado no serviço contra models.COMMUNITY_TIPO
+    notes: str | None = None
+
+
 class CommunityOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     name: str
+    tipo: str
     notes: str | None = None
     admin_status: bool
 
 
 class CommunityUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=64)
+    tipo: str | None = None  # validado no serviço contra models.COMMUNITY_TIPO
     notes: str | None = None
     admin_status: bool | None = None  # PATCH puro {"admin_status": false} roteia ao disable (Ruling 1)
 
