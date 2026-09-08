@@ -124,6 +124,19 @@ def test_sincronizar_roas_lote_vazio_remove_tudo_do_source(session, tmp_path):
     assert _por_prefixo(session) == {}
 
 
+def test_sincronizar_roas_lote_com_duplicata_nao_quebra_ou_duplica(
+    session, tmp_path
+):
+    """m-2 (revisão T22): ROA repetida no mesmo lote (mesma chave) era
+    IntegrityError no commit — o dedup preserva a 1ª ocorrência e a sync conta
+    as ROAs únicas."""
+    arquivo = tmp_path / "roas.json"
+    _escreve(arquivo, [ROA_V4_A, ROA_V4_A, ROA_V6_C])
+
+    assert sincronizar_roas(session, str(arquivo)) == 2
+    assert len(_por_prefixo(session)) == 2
+
+
 def test_json_invalido_levanta_valor_error_sem_tocar_o_banco(session, tmp_path):
     """JSON malformado ⇒ ValueError com mensagem PT-BR e nenhuma escrita."""
     arquivo = tmp_path / "roas.json"

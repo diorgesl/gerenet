@@ -44,7 +44,9 @@ def _asn_para_int(valor: int | str) -> int:
     """
     texto = str(valor).strip().upper().removeprefix("AS")
     if not texto or not texto.isdigit():
-        raise ValueError(f"ASN inválido nos ROAs: {valor!r}")
+        # m-3 (revisão T22): a mensagem é usada também por validar_origem,
+        # onde o ASN vem do chamador — sem "nos ROAs" vira engano.
+        raise ValueError(f"ASN inválido: {valor!r}")
     return int(texto)
 
 
@@ -111,7 +113,12 @@ def _le_roas(caminho: str) -> list[dict]:
             raise ValueError(
                 f"ROA de índice {indice} inválida no arquivo '{caminho}': {exc}"
             ) from exc
-    return lote
+    # m-2 (revisão T22): ROA repetida no MESMO lote (mesma chave) quebraria o
+    # UniqueConstraint no commit — dedup preservando a primeira ocorrência.
+    unicas: dict[tuple, dict] = {}
+    for roa in lote:
+        unicas.setdefault((roa["prefix"], roa["origin_asn"], roa["max_length"]), roa)
+    return list(unicas.values())
 
 
 def sincronizar_roas(session: Session, caminho: str) -> int:
