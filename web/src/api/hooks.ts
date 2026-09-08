@@ -547,7 +547,10 @@ export const useCommunityAtualizar = () =>
 export const usePolicyProfileAtualizar = () =>
   useAtualizar<PolicyProfileUpdateIn, PolicyProfileOut>("policy-profiles", "/api/v1/policy-profiles");
 
-export const usePrefixAuthorizations = (filtros?: { organization_id?: number; family?: string; include_disabled?: boolean }) =>
+export const usePrefixAuthorizations = (
+  filtros?: { organization_id?: number; family?: string; include_disabled?: boolean },
+  enabled = true,
+) =>
   useQuery({
     queryKey: ["prefix-authorizations", filtros],
     queryFn: () => {
@@ -558,6 +561,7 @@ export const usePrefixAuthorizations = (filtros?: { organization_id?: number; fa
       const suf = qs.size > 0 ? `?${qs.toString()}` : "";
       return apiFetch<PrefixAuthorizationOut[]>(`/api/v1/prefix-authorizations${suf}`);
     },
+    enabled,
   });
 export type PrefixAuthorizationCreateIn = {
   organization_id: number;

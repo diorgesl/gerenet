@@ -193,6 +193,27 @@ def test_upstream_detail_traz_circuitos(client: TestClient, up_com_circuito: mod
     assert data["organization_name"] == "Operadora F5"
 
 
+def test_circuito_detalhe_expoe_upstream_id(
+    client: TestClient, db_session: Session, up: models.Upstream,
+    circuito_up_detalhe: models.Circuit,
+) -> None:
+    """R-25: o detalhe do circuito vinculado expõe o upstream_id (derivado)."""
+    db_session.add(models.UpstreamCircuit(upstream_id=up.id, circuit_id=circuito_up_detalhe.id,
+                                          papel="principal", ordem=1))
+    db_session.commit()
+    resp = client.get(f"/api/v1/circuits/{circuito_up_detalhe.id}", headers=_auth())
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["upstream_id"] == up.id
+
+
+def test_circuito_detalhe_sem_upstream_expoe_none(
+    client: TestClient, circuito_up_detalhe: models.Circuit
+) -> None:
+    resp = client.get(f"/api/v1/circuits/{circuito_up_detalhe.id}", headers=_auth())
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["upstream_id"] is None
+
+
 def test_upstream_detail_traz_sessoes_dos_circuitos(
     client: TestClient, up_com_sessao_upfull: models.Upstream
 ) -> None:

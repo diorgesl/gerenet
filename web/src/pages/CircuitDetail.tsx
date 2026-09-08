@@ -33,7 +33,11 @@ export default function CircuitDetail() {
         acoes={
           <>
             <Link to="/circuits">← Voltar</Link>
-            <SolicitarMudanca circuit_id={data.id} />
+            {data.upstream_id !== null ? (
+              <SolicitarMudanca upstream_id={data.upstream_id} />
+            ) : (
+              <SolicitarMudanca circuit_id={data.id} />
+            )}
           </>
         }
       />

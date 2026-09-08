@@ -104,6 +104,21 @@ def circuito_up(db_session: Session, org_operadora: models.Organization,
 
 
 @pytest.fixture
+def circuito_up_detalhe(db_session: Session, org_operadora: models.Organization,
+                        site_f5: models.Site, edge_device: models.Device) -> models.Circuit:
+    """Circuito de upstream com access_device preenchido — compatível com o
+    CircuitDetailOut (access_device_id: int) para testes do GET /circuits/{id}."""
+    circ = models.Circuit(
+        code="CIRC-UP-DET-0001", organization_id=org_operadora.id, site_id=site_f5.id,
+        access_device_id=edge_device.id, access_port="GE0/0/0", edge_device_id=edge_device.id,
+        vlan_mode="none", bandwidth="10 Gbps", mtu=9214,
+    )
+    db_session.add(circ)
+    db_session.commit()
+    return circ
+
+
+@pytest.fixture
 def circuito_com_p2p(db_session: Session, org_downstream: models.Organization,
                      site_f5: models.Site, edge_device: models.Device) -> models.Circuit:
     circ = models.Circuit(

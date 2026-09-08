@@ -47,7 +47,14 @@ def _detalhe(session: Session, circ: models.Circuit) -> CircuitDetailOut:
         pontas["ipv4_local"], pontas["ipv4_remote"] = pontas_v4(por_versao[4])
     if circ.stack in ("ipv6", "dual") and 6 in por_versao:
         pontas["ipv6_local"], pontas["ipv6_remote"] = pontas_v6(por_versao[6])
-    return CircuitDetailOut.model_validate(circ).model_copy(update={**pontas, **_com_kind(circ)})
+    # R-25: vínculo com upstream — a UNIQUE em upstream_circuits.circuit_id (BR-1 §7)
+    # garante no máximo 1 upstream por circuito, então um scalar resolve.
+    vinculo = session.scalar(
+        select(models.UpstreamCircuit).where(models.UpstreamCircuit.circuit_id == circ.id)
+    )
+    return CircuitDetailOut.model_validate(circ).model_copy(
+        update={**pontas, **_com_kind(circ), "upstream_id": vinculo.upstream_id if vinculo else None}
+    )
 
 
 @router.get("", response_model=list[CircuitOut])

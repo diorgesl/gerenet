@@ -79,6 +79,7 @@ export interface CircuitDetailOut extends CircuitOut {
   ipv4_remote: string | null;
   ipv6_local: string | null;
   ipv6_remote: string | null;
+  upstream_id: number | null; // vínculo com upstream (fase 5): no máx. 1 por circuito (BR-1)
 }
 export interface BgpSessionOut {
   id: number;
@@ -114,6 +115,7 @@ export interface PrefixAuthorizationOut {
   family: "ipv4" | "ipv6";
   prefix: string;
   origin: string;
+  validacao: string | null; // ok|diverge|desconhecida|nao_verificada (consultiva, fase 5)
   notes: string | null;
   admin_status: boolean;
 }
@@ -275,9 +277,11 @@ export interface ChangeStepOut {
 export interface ChangeRequestOut {
   id: number;
   circuit_id: number | null;
-  escopo: "circuito" | "l2vc" | "vsi";
+  escopo: "circuito" | "l2vc" | "vsi" | "upstream";
   l2vc_id: number | null;
   l2vc_name: string | null;
+  upstream_id: number | null;
+  upstream_name: string | null;
   acao: "provision" | "remove";
   criticidade: "baixa" | "media" | "alta";
   motivo: string;
@@ -290,9 +294,10 @@ export interface ChangeRequestOut {
   approvals: ApprovalOut[];
 }
 export type ChangeRequestCreateIn = {
-  escopo?: "circuito" | "l2vc" | "vsi";
+  escopo?: "circuito" | "l2vc" | "vsi" | "upstream";
   circuit_id?: number | null;
   l2vc_id?: number | null;
+  upstream_id?: number | null;
   acao: "provision" | "remove";
   criticidade: "baixa" | "media" | "alta";
   motivo: string;

@@ -13,7 +13,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Modal } from "@/components/Modal";
 import { help } from "@/help";
 
-const TIPO_LABEL: Record<UpstreamTipo, string> = {
+export const TIPO_LABEL: Record<UpstreamTipo, string> = {
   transito: "Trânsito",
   ix: "IX",
   pni: "PNI",

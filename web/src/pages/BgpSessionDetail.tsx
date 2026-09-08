@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { ApiError } from "@/api/client";
-import { useBgpSession, useCommunities, useSessionCommunities, useSessionCommunity, useSessionSenha } from "@/api/hooks";
+import { useBgpSession, useCircuitDetail, useCommunities, useSessionCommunities, useSessionCommunity, useSessionSenha } from "@/api/hooks";
 import { help } from "@/help";
 import { StatusBadge } from "@/components/StatusBadge";
 import { FormField } from "@/components/FormField";
@@ -12,6 +12,10 @@ export default function BgpSessionDetail() {
   const { id } = useParams();
   const sessionId = Number(id);
   const { data, isLoading, error } = useBgpSession(sessionId);
+  // Detalhe do circuito do peer — o upstream_id derivado (R-25) decide o escopo
+  // da mudança: sessão de circuito vinculado a upstream muda pelo upstream
+  // (matriz inteira), não por circuito. enabled: id>0 segura o fetch pré-carga.
+  const { data: circuito } = useCircuitDetail(data?.circuit_id ?? 0);
   const { data: comunidades } = useSessionCommunities(sessionId);
   const { data: catalogo } = useCommunities();
   const assoc = useSessionCommunity();
@@ -31,7 +35,16 @@ export default function BgpSessionDetail() {
 
   return (
     <main>
-      <PageHeader titulo={`Sessão BGP #${data.id}`} acoes={<SolicitarMudanca circuit_id={data.circuit_id} />} />
+      <PageHeader
+        titulo={`Sessão BGP #${data.id}`}
+        acoes={
+          circuito?.upstream_id != null ? (
+            <SolicitarMudanca upstream_id={circuito.upstream_id} />
+          ) : (
+            <SolicitarMudanca circuit_id={data.circuit_id} />
+          )
+        }
+      />
       <table>
         <tbody>
           <tr><th>Família</th><td><StatusBadge estado={data.afi} /></td></tr>

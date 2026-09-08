@@ -293,6 +293,7 @@ class CircuitDetailOut(CircuitOut):
     ipv4_remote: str | None = None
     ipv6_local: str | None = None
     ipv6_remote: str | None = None
+    upstream_id: int | None = None  # vínculo com upstream (fase 5); no máx. 1 por circuito (BR-1 §7)
 
 
 class BgpSessionOut(BaseModel):
