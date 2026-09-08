@@ -191,6 +191,60 @@ def sincronizar_roas(session: Session, caminho: str) -> int:
     return len(lote)
 
 
+# ROA já parseada no índice: (rede, origin_asn, max_length) — a rede com
+# `ip_network` resolvida UMA vez (usar `linha.prefix`/ORM por autorização era
+# O(M×N) no lote do `rpki sync` — revisão final I-1/T22 C1).
+RoaEstruturada = tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, int, int | None]
+IndiceRoas = dict[int, list[RoaEstruturada]]
+
+
+def indice_roas(session: Session) -> IndiceRoas:
+    """ROAs da SoT indexadas por versão de IP — uma passada no banco, parse único.
+
+    Cada ROA vira `(rede, origin_asn, max_length)` com o `ip_network`
+    parseado uma única vez; os objetos ORM não são retidos. Prefixo que não
+    parseia é ignorado com `log.warning` (mesma tolerância de
+    `validar_origem`/`avaliar_origem`).
+    """
+    indice: IndiceRoas = {4: [], 6: []}
+    for linha in session.scalars(select(models.Roa)).all():
+        try:
+            rede = ipaddress.ip_network(linha.prefix)
+        except ValueError:
+            logger.warning(
+                "ROA %s ignorada na validação: prefixo não parseia: %r",
+                linha.id,
+                linha.prefix,
+            )
+            continue
+        indice[rede.version].append((rede, linha.origin_asn, linha.max_length))
+    return indice
+
+
+def avaliar_origem(prefixo: str, asn: int | str, indice: IndiceRoas) -> str:
+    """Núcleo consultivo da validação (§7.5) contra um índice de ROAs carregado.
+
+    Mesma semântica de `validar_origem` — `ok` | `diverge` | `desconhecida`,
+    `valid_until` ignorado (frescura é do sync, E3-3). O índice é o
+    `indice_roas` (uma passada no banco por lote); `validar_origem` embala a
+    chamada unitária.
+    """
+    alvo = _rede(prefixo)
+    asn_origem = _asn_para_int(asn)
+    cobrim = [
+        (rede, origin_asn, max_length)
+        for rede, origin_asn, max_length in indice.get(alvo.version, [])
+        if alvo.subnet_of(rede)
+    ]
+    if not cobrim:
+        return _RESULT_DESCONHECIDA
+    for rede, origin_asn, max_length in cobrim:
+        limite = rede.prefixlen if max_length is None else max_length
+        if origin_asn == asn_origem and alvo.prefixlen <= limite:
+            return _RESULT_OK
+    return _RESULT_DIVERGE
+
+
 def validar_origem(session: Session, prefixo: str, asn: int | str) -> str:
     """Validação consultiva de origem (§7.5) → `ok` | `diverge` | `desconhecida`.
 
@@ -209,28 +263,10 @@ def validar_origem(session: Session, prefixo: str, asn: int | str) -> str:
     ROAs vencidas ainda contam como cobertura — a frescura dos dados é
     responsabilidade do sync (`sincronizar_roas`, que renova o lote a cada
     execução; validação consultiva, §10.4).
+
+    Chamadas unitárias usam este wrapper (carrega o índice do banco a cada
+    chamada); o lote em `revalidar_autorizacoes` carrega o índice UMA vez e
+    usa `avaliar_origem` (I-1/T22 C1 — sem isso o `rpki sync` degenera em
+    O(M×N) com o lote real do rpki-client).
     """
-    alvo = _rede(prefixo)
-    asn_origem = _asn_para_int(asn)
-    cobrem: list[tuple[models.Roa, ipaddress.IPv4Network | ipaddress.IPv6Network]] = []
-    for linha in session.scalars(select(models.Roa)).all():
-        try:
-            rede_roa = ipaddress.ip_network(linha.prefix)
-        except ValueError:
-            logger.warning(
-                "ROA %s ignorada na validação: prefixo não parseia: %r",
-                linha.id,
-                linha.prefix,
-            )
-            continue
-        if rede_roa.version != alvo.version:
-            continue
-        if alvo.subnet_of(rede_roa):
-            cobrem.append((linha, rede_roa))
-    if not cobrem:
-        return _RESULT_DESCONHECIDA
-    for linha, rede_roa in cobrem:
-        limite = rede_roa.prefixlen if linha.max_length is None else linha.max_length
-        if linha.origin_asn == asn_origem and alvo.prefixlen <= limite:
-            return _RESULT_OK
-    return _RESULT_DIVERGE
+    return avaliar_origem(prefixo, asn, indice_roas(session))

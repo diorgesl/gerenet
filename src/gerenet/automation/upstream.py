@@ -135,6 +135,35 @@ def valida_pre_upstream(session: Session, up: models.Upstream, device: models.De
     return None
 
 
+def prefixos_recebidos(session: Session, up: models.Upstream,
+                       recursos: dict) -> dict[str, int]:
+    """Soma `pref_rcv` por família nas sessões ativas do upstream (§7.1).
+
+    Alimenta o registro antes/depois da CR (design §5): casa cada sessão dos
+    vínculos com a linha do recurso `bgp_peers` (peer + afi) e soma a
+    contagem recebida. Sessão sem linha no recurso (outro device, peer
+    ausente) ou com `pref_rcv` não numérico não conta; famílias sem nenhuma
+    contagem ficam de fora do retorno.
+    """
+    totais: dict[str, int] = {}
+    for vin in up.circuitos:
+        for s in list_sessions(session, circuit_id=vin.circuit_id):
+            linha = next(
+                (l for l in (recursos or {}).get("bgp_peers", [])
+                 if l.get("peer") == s.remote_address
+                 and str(l.get("afi", "")) == s.afi),
+                None,
+            )
+            if linha is None:
+                continue
+            try:
+                contagem = int(linha.get("pref_rcv"))
+            except (TypeError, ValueError):
+                continue
+            totais[s.afi] = totais.get(s.afi, 0) + contagem
+    return totais
+
+
 def valida_pos_upstream(session: Session, up: models.Upstream,
                         snapshot: models.DeviceSnapshot) -> list[dict]:
     """§13 pós-check upstream — por sessão no device do snapshot: peer listado,
@@ -174,6 +203,14 @@ def valida_pos_upstream(session: Session, up: models.Upstream,
                             "fora de established (display bgp peer).",
                 })
             contagem = linha.get("pref_rcv")
+            # M-11 (revisão final): snapshot parcial/corrompido pode trazer
+            # `pref_rcv` como string não numérica — a contagem deixa de contar
+            # em vez de TypeError derrubar o pós-check (alinhado a reconcile.py).
+            if contagem is not None:
+                try:
+                    contagem = int(contagem)
+                except (TypeError, ValueError):
+                    contagem = None
             esperado = (
                 up.expected_prefixes_v4 if s.afi == "ipv4" else up.expected_prefixes_v6
             )

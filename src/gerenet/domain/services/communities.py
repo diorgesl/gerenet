@@ -39,7 +39,7 @@ def create_community(
         session.flush()
         registrar(
             session, tipo="community.create", ator=actor, objeto="community", objeto_id=com.id,
-            antes=None, depois={"name": nome, "tipo": data.tipo},
+            antes=None, depois={"name": nome, "tipo": data.tipo, "notes": data.notes},
         )
         session.commit()
     except IntegrityError:

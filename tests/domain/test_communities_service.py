@@ -129,7 +129,11 @@ def test_cria_comunidade_global_com_tipo(session: Session) -> None:
         select(models.AuditEvent).where(models.AuditEvent.type == "community.create")
     )
     assert evento is not None
-    assert evento.details["depois"] == {"name": "blackhole-sul", "tipo": "acao_blackhole"}
+    # M-12 (revisão final): `notes` fazia parte do painel do objeto criado (§18)
+    # e ficava de fora da trilha.
+    assert evento.details["depois"] == {
+        "name": "blackhole-sul", "tipo": "acao_blackhole", "notes": "v6/32 p/ Sul",
+    }
     try:
         assert "blackhole-sul" in [c.name for c in svc.list_communities(session)]
     finally:

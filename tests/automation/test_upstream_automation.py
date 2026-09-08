@@ -253,3 +253,27 @@ def test_valida_pos_upstream_sem_esperado_cadastrado_sem_item_contagem(
     peers = _peers_up(pref_rcv=99999) + _peers_up(peer="100.64.10.6", pref_rcv=99999)
     snap = _snapshot_up(session, edge_device, peers)
     assert valida_pos_upstream(session, up_com_2_circuitos, snap) == []
+
+
+def test_valida_pos_upstream_pref_rcv_string_numerica_converte(
+    session, up_com_2_circuitos, edge_device
+):
+    """M-11 (revisão final): `pref_rcv` como string numérica (snapshot parcial)
+    não vira TypeError — é convertida e a contagem segue comparada."""
+    peers = _peers_up(pref_rcv="1200") + _peers_up(peer="100.64.10.6", pref_rcv="1200")
+    snap = _snapshot_up(session, edge_device, peers)
+    itens = valida_pos_upstream(session, up_com_2_circuitos, snap)
+    assert [i["tipo"] for i in itens] == [
+        "upstream.contagem_fora_esperado", "upstream.contagem_fora_esperado",
+    ]
+    assert all(i["encontrado"] == "1200" for i in itens)
+
+
+def test_valida_pos_upstream_pref_rcv_malformada_sem_typeerror(
+    session, up_com_2_circuitos, edge_device
+):
+    """M-11: `pref_rcv` não numérico (snapshot corrompido) é descartado — a
+    contagem deixa de contar em vez de derrubar o pós-check com TypeError."""
+    peers = _peers_up(pref_rcv="?") + _peers_up(peer="100.64.10.6", pref_rcv="?")
+    snap = _snapshot_up(session, edge_device, peers)
+    assert valida_pos_upstream(session, up_com_2_circuitos, snap) == []

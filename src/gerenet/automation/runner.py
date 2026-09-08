@@ -658,6 +658,19 @@ def _executa_step(
             # inverso do §13: cada bloco delete não pode mais constar.
             items = _verifica_aplicados(step, snap_pos)
             step.post_check_json = {"snapshot_id": snap_pos.id, "items": items}
+            if cr.escopo == "upstream":
+                # §7.1/design §5 (G1): registro do nº de rotas antes/depois.
+                # DIC fresca (não mutação em lugar): JSON do SQLA não rastreia
+                # mutação de dict após `refresh`/expire — assign novamente.
+                step.post_check_json = {
+                    **step.post_check_json,
+                    "prefixos_antes": up_auto.prefixos_recebidos(
+                        session, up, recursos_pre
+                    ),
+                    "prefixos_depois": up_auto.prefixos_recebidos(
+                        session, up, recursos_pos
+                    ),
+                }
         else:
             # Provision: pós-check é o reconciliador §13 (desejado × encontrado)
             # — subinterface ausente/sem o endereço esperado, peer ausente/ASN,
@@ -679,6 +692,19 @@ def _executa_step(
                     up = get_upstream(session, cr.upstream_id)
                     itens += up_auto.valida_pos_upstream(session, up, snap_pos)
             step.post_check_json = {"snapshot_id": snap_pos.id, "aviso": resultado.aviso, "items": itens}
+            if cr.escopo == "upstream":
+                # §7.1/design §5 (G1): registro do nº de rotas antes/depois no
+                # step — soma `pref_rcv` por família do baseline pré e do pós
+                # (DIC fresca: JSON do SQLA não rastreia mutação em lugar).
+                step.post_check_json = {
+                    **step.post_check_json,
+                    "prefixos_antes": up_auto.prefixos_recebidos(
+                        session, up, recursos_pre
+                    ),
+                    "prefixos_depois": up_auto.prefixos_recebidos(
+                        session, up, recursos_pos
+                    ),
+                }
 
         label = "aplicado" if a_aplicar else "pulado"
         step.status = label

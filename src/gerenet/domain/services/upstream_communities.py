@@ -71,7 +71,10 @@ def remove_upstream_community(
         raise NotFoundError(
             f"Community {community_id} não encontrada no upstream {upstream_id}."
         )
-    antes = {"purpose": uc.purpose, "value": uc.value, "regiao": uc.regiao}
+    # M-12 (revisão final): `direcao` faltava na trilha — §18 pede o painel
+    # completo do que foi removido.
+    antes = {"purpose": uc.purpose, "value": uc.value, "regiao": uc.regiao,
+             "direcao": uc.direcao}
     session.delete(uc)
     registrar(
         session, tipo="upstream_community.remove", ator=actor,

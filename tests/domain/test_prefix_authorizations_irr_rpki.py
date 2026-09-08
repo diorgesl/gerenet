@@ -6,6 +6,7 @@ nos dois ramos (rpki via `validar_origem` real contra ROAs da SoT; irr via
 `consultar` monkeypatchado — o serviço importa o nome real no módulo).
 Molde: `tests/domain/test_prefix_authorizations_service.py`. Fixture
 `db_session` do conftest (banco truncado a cada teste)."""
+import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -64,6 +65,40 @@ def test_create_sem_origin_default_manual_sem_validacao(db_session: Session) -> 
     auth = _auth(db_session, org_id, "200.162.0.0/22")
     assert auth.origin == "manual"
     assert auth.validacao is None
+
+
+def test_create_org_operadora_recusada(db_session: Session) -> None:
+    """Design §3/§10.1 (G2/I-4): operadora não recebe autorização de prefixo —
+    a autorização seria criada e depois apenas ignorada pelo render."""
+    from gerenet.domain.services.errors import ValidationError
+    from gerenet.domain.services.organizations import create_organization
+
+    org_id = create_organization(
+        db_session, OrganizationCreate(name="Operadora F5", asn=64512, kind="operadora"),
+        actor="cli",
+    ).id
+    with pytest.raises(
+        ValidationError, match="operadora não recebe autorizações de prefixo"
+    ):
+        create_authorization(
+            db_session,
+            PrefixAuthorizationCreate(
+                organization_id=org_id, family="ipv4", prefix="180.10.0.0/16"
+            ),
+            actor="cli",
+        )
+    # autorização de downstream na mesma organização continua criando
+    downstream_id = create_organization(
+        db_session, OrganizationCreate(name="Cliente Pós-Guarda", asn=64515, kind="downstream"),
+        actor="cli",
+    ).id
+    assert create_authorization(
+        db_session,
+        PrefixAuthorizationCreate(
+            organization_id=downstream_id, family="ipv4", prefix="180.11.0.0/16"
+        ),
+        actor="cli",
+    ).prefix == "180.11.0.0/16"
 
 
 def test_revalida_rpki_ok_com_roa_cobrindo(db_session: Session) -> None:
@@ -166,9 +201,53 @@ def test_revalida_org_sem_asn_mantem_e_nao_conta(db_session: Session, monkeypatc
     monkeypatch.setattr(
         "gerenet.domain.services.prefix_authorizations.consultar", explodir
     )
+    # revisão final I-1: o lote reusa o índice (avaliar_origem) — o guard de
+    # sem-ASN precede tanto o índice quanto a avaliação.
     monkeypatch.setattr(
-        "gerenet.domain.services.prefix_authorizations.validar_origem", explodir
+        "gerenet.domain.services.prefix_authorizations.indice_roas", explodir
+    )
+    monkeypatch.setattr(
+        "gerenet.domain.services.prefix_authorizations.avaliar_origem", explodir
     )
 
     assert revalidar_autorizacoes(db_session) == 0
     assert _por_prefixo(db_session)["200.160.0.0/22"].validacao == "nao_verificada"
+
+
+def test_revalida_rpki_indice_carregado_uma_vez_por_lote(
+    db_session: Session, monkeypatch
+) -> None:
+    """I-1 (revisão final T22 C1): o índice de ROAs é carregado UMA vez por
+    lote — não por autorização (com o lote real do rpki-client ~400 mil ROAs,
+    O(M×N) degenerava o `rpki sync`)."""
+    org_ok = _org(db_session, "Cliente Índice Ok", 64512)
+    _auth(db_session, org_ok, "200.160.0.0/22", origin="rpki")
+    org_sem = _org(db_session, "Cliente Índice Sem ROA", 64513)
+    _auth(db_session, org_sem, "200.161.0.0/22", origin="rpki")
+    org_div = _org(db_session, "Cliente Índice Diverge", 64514)
+    _auth(db_session, org_div, "200.163.0.0/23", origin="rpki")
+    db_session.add_all([
+        models.Roa(prefix="200.160.0.0/22", origin_asn=64512, max_length=24,
+                   source="rpki-client"),
+        models.Roa(prefix="200.163.0.0/23", origin_asn=64513, max_length=24,
+                   source="rpki-client"),
+    ])
+    db_session.commit()
+
+    chamadas: list[int] = []
+
+    def conta_indice(session):
+        chamadas.append(1)
+        from gerenet.automation.rpki import indice_roas as real
+        return real(session)
+
+    monkeypatch.setattr(
+        "gerenet.domain.services.prefix_authorizations.indice_roas", conta_indice
+    )
+    assert revalidar_autorizacoes(db_session) == 3
+    assert chamadas == [1]
+
+    por_prefixo = _por_prefixo(db_session)
+    assert por_prefixo["200.160.0.0/22"].validacao == "ok"
+    assert por_prefixo["200.161.0.0/22"].validacao == "desconhecida"
+    assert por_prefixo["200.163.0.0/23"].validacao == "diverge"  # ASN 64514 ≠ ROA 64513

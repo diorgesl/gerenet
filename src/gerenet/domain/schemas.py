@@ -755,6 +755,28 @@ class VsiOut(BaseModel):
 
 # ---- Fase 5 (upstreams, §7): conectividade própria — trânsito/IX/PNI. ----
 
+def _valida_margem(v: int | None) -> int | None:
+    """Margem do maximum-prefix entre 0 e 100 — mensagem PT-BR (mode="before").
+
+    Aceita string numérica (JSON via API chega cru ao validator; `0 <= "101"`
+    era TypeError e pydantic v2 não converte TypeError em ValidationError —
+    virava 500 em vez de 422 — revisão final M-1). `None` atravessa (campo
+    opcional do Update).
+    """
+    if v is None:
+        return None
+    if isinstance(v, str):
+        try:
+            v = int(v)
+        except ValueError:
+            raise ValueError(
+                "margem (max_prefix_margin_pct) deve ser um inteiro entre 0 e 100."
+            ) from None
+    if not 0 <= v <= 100:
+        raise ValueError("margem (max_prefix_margin_pct) deve estar entre 0 e 100.")
+    return v
+
+
 class UpstreamCreate(BaseModel):
     name: str = Field(min_length=2, max_length=128)
     tipo: Literal["transito", "ix", "pni", "contingencia"]
@@ -773,11 +795,9 @@ class UpstreamCreate(BaseModel):
 
     @field_validator("max_prefix_margin_pct", mode="before")
     @classmethod
-    def _margem(cls, v: int) -> int:
+    def _margem(cls, v: int | None) -> int | None:
         # mode="before": o erro de margem em PT-BR precisa anteceder o do Field(ge/le).
-        if not 0 <= v <= 100:
-            raise ValueError("margem (max_prefix_margin_pct) deve estar entre 0 e 100.")
-        return v
+        return _valida_margem(v)
 
 
 class UpstreamUpdate(BaseModel):
@@ -789,13 +809,20 @@ class UpstreamUpdate(BaseModel):
     organization_id: int | None = None
     expected_prefixes_v4: int | None = None
     expected_prefixes_v6: int | None = None
-    max_prefix_margin_pct: int | None = None
+    # M-2 (revisão final): o Create tinha os limites; sem eles no PATCH/CLI
+    # valores absurdos iam direto ao banco (design §9: margem 0-100, prepend 0-10).
+    max_prefix_margin_pct: int | None = Field(default=None, ge=0, le=100)
     rpki_enabled: bool | None = None
     entrada_local_preference: int | None = None
     contingencia_local_preference: int | None = None
-    contingencia_prepend: int | None = None
+    contingencia_prepend: int | None = Field(default=None, ge=0, le=10)
     contingencia_notes: str | None = None
     admin_status: bool | None = None
+
+    @field_validator("max_prefix_margin_pct", mode="before")
+    @classmethod
+    def _margem(cls, v: int | None) -> int | None:
+        return _valida_margem(v)
 
 
 class UpstreamCommunityCreate(BaseModel):

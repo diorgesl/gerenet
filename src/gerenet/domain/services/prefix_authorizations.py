@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from gerenet.automation.irr import IrrError, consultar
-from gerenet.automation.rpki import validar_origem
+from gerenet.automation.rpki import IndiceRoas, avaliar_origem, indice_roas
 from gerenet.domain import models
 from gerenet.domain.audit import registrar
 from gerenet.domain.schemas import PrefixAuthorizationCreate
@@ -51,6 +51,14 @@ def create_authorization(
     org = get_organization(session, data.organization_id)
     if org.admin_status is False:
         raise ConflictError(f"Organização {org.name} desativada não recebe autorizações.")
+    if org.kind == "operadora":
+        # Design §3/§10.1 (G2/I-4): autorização é de downstream/parceiro — a
+        # operadora é provedor; sem a guarda o dado nasceria na SoT e seria
+        # apenas ignorado pelo render (defesa em profundidade mantida em
+        # `_autorizadas_clientes`).
+        raise ValidationError(
+            "Organização do tipo operadora não recebe autorizações de prefixo de cliente."
+        )
     cidr_valido(data.prefix, data.family)  # CIDR alinhado da família certa (mensagens PT)
     outra = _organizacao_conflitante(
         session, organization_id=data.organization_id, family=data.family, prefix=data.prefix
@@ -130,8 +138,10 @@ def revalidar_autorizacoes(session: Session) -> int:
 
     Consultiva (§10.4): nunca bloqueia nem desativa — só atualiza `validacao`.
 
-    - Origem `rpki`: `validar_origem` contra as ROAs da SoT → `ok` | `diverge` |
-      `desconhecida` (ROAs vencidas ainda contam; a frescura é do sync);
+    - Origem `rpki`: `avaliar_origem` contra o índice de ROAs da SoT
+      (`indice_roas`, carregado UMA vez por lote — revisão final I-1) →
+      `ok` | `diverge` | `desconhecida` (ROAs vencidas ainda contam; a
+      frescura é do sync);
     - Origem `irr`: `consultar("radb", asn)` — prefixo no payload ⇒ `ok`,
       ausente ⇒ `diverge`; falha de rede sem cache vivo (`IrrError`) ⇒
       fail-soft: mantém a `validacao` atual e não conta como revalidada.
@@ -155,6 +165,11 @@ def revalidar_autorizacoes(session: Session) -> int:
     # organização no lote; irr_cache continua como segunda camada entre
     # execuções). Falha não é memoizada: IrrError refaz o fail-soft por auth.
     payloads_irr: dict[int, dict] = {}
+    # I-1 (revisão final): o índice de ROAs é carregado/parseado UMA vez por
+    # lote (M autorizações × N ROAs viraria O(M×N) com instanciação ORM +
+    # ip_network por autorização — o `rpki sync` com o lote real do
+    # rpki-client degeneraria para dezenas de minutos).
+    indice: IndiceRoas | None = None
     try:
         for auth in autorizacoes:
             org = session.get(models.Organization, auth.organization_id)
@@ -166,7 +181,9 @@ def revalidar_autorizacoes(session: Session) -> int:
                 )
                 continue
             if auth.origin == "rpki":
-                auth.validacao = validar_origem(session, auth.prefix, org.asn)
+                if indice is None:
+                    indice = indice_roas(session)
+                auth.validacao = avaliar_origem(auth.prefix, org.asn, indice)
             else:  # irr
                 try:
                     payload = payloads_irr.get(org.asn)

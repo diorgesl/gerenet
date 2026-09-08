@@ -136,6 +136,48 @@ def test_run_change_upstream_fluxo_ok(
         assert all(i["severidade"] != "critica" for i in step.post_check_json["items"])
 
 
+def test_run_change_upstream_grava_prefixos_antes_depois(
+    db_session: Session, tmp_path: Path, monkeypatch, edge_device, up_com_2_circuitos,
+) -> None:
+    """§7.1/design §5 (G1/I-3): o step grava `prefixos_antes`/`prefixos_depois`
+    no post_check_json — soma `pref_rcv` por família no recurso pré e no pós.
+
+    CR de REMOÇÃO (o cenário com antes reais): o encontrado pré-mudança ainda
+    lista os peers (2 × 1350) e o plano de delete os remove — no pós não há
+    mais linha do upstream ⇒ depois {}. (Provision com peers já presentes
+    abortaria no re-diff §5.3: bindings do plano exigem `bgp_peers_verbose` e
+    os blocos route-policy constam como ausentes — o passo serve ao registro.)
+    """
+    _grupo_credential(db_session, edge_device)
+    _snapshot_com_peers(db_session, edge_device,
+                        _peers_aplicados(db_session, up_com_2_circuitos))
+    cr = _cr_up_aprovada(db_session, up_com_2_circuitos, acao="remove")
+
+    def _linhas(pref_rcv: int) -> list[dict]:
+        """Duas linhas `bgp_peers` no shape real do parser, com a contagem dada."""
+        return [
+            {"afi": "ipv4", "peer": "100.64.10.2", "asn": 64501, "estado": "Established",
+             "pref_rcv": pref_rcv, "up_down": "1d02h"},
+            {"afi": "ipv4", "peer": "100.64.10.6", "asn": 64501, "estado": "Established",
+             "pref_rcv": pref_rcv, "up_down": "1d02h"},
+        ]
+
+    colas = [
+        _recursos_up_vazios(peers=_linhas(1350)),  # pré: peers ainda no ar (2 × 1350)
+        _recursos_up_vazios(peers=[]),              # pós: sessões do upstream removidas
+    ]
+    _fakes_de_mudanca(monkeypatch, db_session, edge_device, colas)
+
+    resultado = run_change(cr.id, settings=Settings(_env_file=None, backups_dir=tmp_path),
+                           session_override=db_session)
+    assert resultado["status"] == "aplicado"
+    db_session.refresh(cr)
+    step = next(s for s in cr.steps if s.device_id == edge_device.id)
+    assert step.status == "aplicado"
+    assert step.post_check_json["prefixos_antes"] == {"ipv4": 2700}
+    assert step.post_check_json["prefixos_depois"] == {}
+
+
 def test_run_change_upstream_pre_check_erro_aborta(
     db_session: Session, tmp_path: Path, monkeypatch, edge_device, up_com_2_circuitos,
 ) -> None:

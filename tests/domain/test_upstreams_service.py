@@ -265,3 +265,14 @@ def test_update_upstream_nome_nulo_vira_erro_de_validacao(session, up):
     """name explicitamente None não pode estourar TypeError — 400 ValidationError."""
     with pytest.raises(ValidationError, match="Nome do upstream"):
         svc.update_upstream(session, up.id, UpstreamUpdate(name=None), actor="cli")
+
+
+def test_update_upstream_org_nula_explicita_vira_validacao(session, up):
+    """M-9 (revisão final): `organization_id: None` explícito passava o guard
+    `is not None`, o setattr violava o NOT NULL e o IntegrityError virava
+    ConflictError enganosa ("Já existe um upstream com o nome None.")."""
+    with pytest.raises(ValidationError, match="Organização do upstream não pode ser nula"):
+        svc.update_upstream(session, up.id, UpstreamUpdate(organization_id=None), actor="cli")
+    # nada persistiu: o upstream continua com a organização original
+    session.refresh(up)
+    assert up.organization_id is not None

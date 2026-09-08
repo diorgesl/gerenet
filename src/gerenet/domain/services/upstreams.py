@@ -93,7 +93,11 @@ def update_upstream(session: Session, upstream_id: int, data: UpstreamUpdate, *,
     mudancas = data.model_dump(exclude_unset=True)
     if not mudancas:
         return up
-    if "organization_id" in mudancas and mudancas["organization_id"] is not None:
+    if "organization_id" in mudancas:
+        if mudancas["organization_id"] is None:
+            # M-9 (revisão final): null explícito passava o guard e o NOT NULL
+            # estourava IntegrityError → ConflictError "nome None" enganosa.
+            raise ValidationError("Organização do upstream não pode ser nula.")
         _validar_org_operadora(session, mudancas["organization_id"])
     if "name" in mudancas:
         _valida_nomes(mudancas["name"])

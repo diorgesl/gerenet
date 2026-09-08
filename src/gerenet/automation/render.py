@@ -456,9 +456,11 @@ def _bloco_import_upstream(
     (bloquear=False) — nós PERMIT no template B2; sem a community cadastrada
     ⇒ comentário-dívida, nunca política permissiva derivada de palpite.
     up-default: somente a rota default (prefix-list IP-PFX-DEFAULT-<AFI>).
-    Sem import_profile_id ⇒ fail-safe (deny-all). Perfil que NÃO seja up-*
-    numa sessão de upstream ⇒ nada (sem definição; o fail-safe vale só para
-    "sem perfil" — o operador foi explícito).
+    Sem import_profile_id ⇒ fail-safe deny-all. Perfil que NÃO seja up-*
+    numa sessão de upstream ⇒ o MESMO deny-all (R-09) + comentário-dívida
+    ("produto de cliente em sessão de upstream — negando tudo"): sem a
+    route-policy o peer voltaria a accept-all, então o caminho seguro é
+    negar, nunca aceitar.
     Nome dos community-filters: inline (naming.py não tem helper de CF):
     CF-<ASN do par>-BLK-<i> (bloqueio) / CF-<ASN do par>-PART-<i> (parcial).
     """

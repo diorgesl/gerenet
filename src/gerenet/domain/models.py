@@ -440,7 +440,8 @@ class BgpSessionCommunity(Base):
 
 
 class BgpPrefixAuthorization(Base):
-    """Prefixo autorizado de um downstream (origem manual; IRR/RPKI = F5)."""
+    """Prefixo autorizado de um downstream (origem manual, IRR ou RPKI;
+    validação consultiva na F5 — nunca bloqueia)."""
 
     __tablename__ = "bgp_prefix_authorizations"
 

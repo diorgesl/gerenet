@@ -80,8 +80,11 @@ def test_remove_upstream_community(session, up) -> None:
         select(models.AuditEvent).where(models.AuditEvent.type == "upstream_community.remove")
     )
     assert evento is not None
+    # M-12 (revisão final): `direcao` é campo do objeto removido (§18) e
+    # ficava fora do painel "antes".
     assert evento.details["antes"] == {
         "purpose": "prepend", "value": "65530:50:0", "regiao": "norte",
+        "direcao": "ambos",
     }
     with pytest.raises(NotFoundError, match="não encontrada no upstream"):
         ucomm.remove_upstream_community(session, up.id, uc.id, actor="cli")
