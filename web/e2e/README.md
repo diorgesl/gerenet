@@ -1,6 +1,7 @@
 # Fumos e2e da interface web (Playwright)
 
-Os 7 fumos (3 de login + 3 de smoke + 1 de mudança) exercitam a SPA real
+Os 9 fumos (3 de login + 3 de smoke + 1 de mudança + 1 de MPLS + 1 de
+upstream) exercitam a SPA real
 contra o backend real (FastAPI + PostgreSQL) — sem mocks. Rodam tudo por um
 único comando:
 
@@ -60,7 +61,12 @@ docker compose start api worker
   - site `e2e-site-01`, device `ne8000-01`, organização
     `e2e-cliente-downstream`, circuito `e2e-circ-01` e autorização de prefixo
     `192.0.2.0/24` via API com `X-Api-Key` (`GERENET_API_KEY` ou
-    `dev-key-change-me`). POST que devolve 409 (já existe) segue em frente.
+    `dev-key-change-me`). POST que devolve 409 (já existe) segue em frente;
+  - fase 5 (upstreams): organização operadora `e2e-operadora-tier1`
+    (kind `operadora`), upstream `e2e-upstream-tier1` (trânsito — fixtures
+    estáveis, sem vínculos), circuito `e2e-circ-operadora-01` + sessão BGP
+    V4 par `10.99.128.1/2` e community `prepend`/Região Sul — checados
+    antes de POSTar (padrão do prefix-authorization, sem 409 como controle).
 
 ## Banco dedicado `gerenet_e2e`
 
@@ -113,6 +119,12 @@ reutiliza esses objetos) e um job órfão consumido depois pelo worker é no-op
   circuito, envia para aprovação, aprova como `e2e-aprovador` (o admin não
   pode aprovar o próprio pedido) e executa como admin — sem worker, a CR
   fica `executando` com o job na fila Redis.
+- `upstream.spec.ts` — fase 5: cria organização operadora pela página de
+  Organizações (R-27 — kind `operadora` no select), upstream pelo dialog
+  (trânsito, operadora), device/circuito/sessão BGP novos (API, rerun-safe),
+  vincula o circuito pela UI (matriz principal × contingência), adiciona a
+  community `prepend`/Região Sul pelo dialog e solicita a CR de escopo
+  `upstream` no detalhe — aprovada pelo `e2e-aprovador` (usuário distinto).
 
 Relatório: `playwright-report/` (html) e artefatos em `test-results/`
 (ambos ignorados pelo git).

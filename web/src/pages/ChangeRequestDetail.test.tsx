@@ -12,6 +12,7 @@ const circ = { id: 1, code: "CIRC-01", organization_id: 1, site_id: 1, access_de
 const dev1 = { id: 1, name: "ne-01", management_address: "10.9.0.2", site_id: 1, model: null, family: "NE8000", role: "edge", asn: 64600, tags: [], ssh_port: 22, vendor: "Huawei", vrp_version: null, comm_status: "ok", admin_status: true, last_collected_at: null };
 const crBase = {
   id: 1, circuit_id: 1 as number | null, escopo: "circuito" as string, l2vc_id: null as number | null, l2vc_name: null as string | null,
+  upstream_id: null as number | null, upstream_name: null as string | null,
   acao: "provision", criticidade: "media", motivo: "Novo cliente GALAXIA",
   ticket: "TICKET-42", rollback_de: null, created_at: "2026-09-01T10:00:00Z",
   approvals: [{ id: 1, user_id: 9, decisao: "aprovar", comentario: "ok", created_at: "2026-09-02T10:00:00Z" }],
@@ -110,6 +111,22 @@ describe("ChangeRequestDetail", () => {
     crAtual = { ...crDe(2, "aguardando_aprovacao"), circuit_id: null, escopo: "l2vc", l2vc_id: 1, l2vc_name: "L2VC-0001" };
     renderDetail();
     expect(await screen.findByText("L2VC-0001")).toBeInTheDocument();
+    expect(screen.queryByText("#null")).toBeNull();
+  });
+
+  it("exibe upstream_name na linha Circuito para CR de escopo upstream", async () => {
+    // Mesma regressão do l2vc para a fase 5: o nome do upstream substitui "—"
+    crAtual = {
+      ...crDe(2, "aguardando_aprovacao"),
+      circuit_id: null,
+      escopo: "upstream",
+      l2vc_id: null,
+      l2vc_name: null,
+      upstream_id: 7,
+      upstream_name: "upstream-tier1",
+    };
+    renderDetail();
+    expect(await screen.findByText("upstream-tier1")).toBeInTheDocument();
     expect(screen.queryByText("#null")).toBeNull();
   });
 

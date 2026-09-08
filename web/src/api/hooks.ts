@@ -182,7 +182,7 @@ export const useSiteAtualizar = () => useAtualizar<Partial<SiteCreateIn> & { adm
 export type OrganizationCreateIn = {
   name: string;
   legal_name?: string | null;
-  kind: "downstream" | "parceiro";
+  kind: "downstream" | "parceiro" | "operadora";
   asn?: number | null;
   irr_as_set?: string | null;
   notes?: string | null;

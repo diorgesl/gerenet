@@ -23,7 +23,7 @@ export const HELP = {
   // Organizations
   "organization.name": "Nome de exibição da organização (1–128 caracteres).",
   "organization.legal_name": "Razão social completa (opcional).",
-  "organization.kind": "Tipo: downstream (cliente) ou parceiro.",
+  "organization.kind": "Tipo: downstream (cliente), parceiro ou operadora.",
   "organization.asn": "ASN do cliente (1–4294967295, reservados barrados) — único por organização.",
   "organization.irr_as_set": "AS-SET registrado no IRR (ex.: AS64500:AS-CLIENTE), opcional.",
   "organization.notes": "Observações livres.",

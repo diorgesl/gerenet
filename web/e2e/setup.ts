@@ -158,6 +158,119 @@ async function seed(): Promise<void> {
       throw new Error(`POST /prefix-authorizations inesperado: ${auth.status} ${auth.detail}`);
     }
   }
+
+  // ---- Fase 5 — upstreams (§7): fixtures estáveis do fumo de upstream. ----
+  // A organização operadora nasce AQUI via API (idempotente); a criação que
+  // exercita a página (R-27) é do próprio fumo, com nome único por rodada.
+  const idOperadora = await criarOuAchar("/organizations", "e2e-operadora-tier1", {
+    name: "e2e-operadora-tier1",
+    legal_name: "Operadora E2E Tier 1 Ltda",
+    kind: "operadora",
+    asn: 65110,
+  });
+  const idUpstream = await criarOuAchar("/upstreams", "e2e-upstream-tier1", {
+    name: "e2e-upstream-tier1",
+    tipo: "transito",
+    priority: 1,
+    organization_id: idOperadora,
+    expected_prefixes_v4: 50000,
+    expected_prefixes_v6: 2000,
+  });
+
+  // Circuito da operadora — SEM vínculo com o upstream (BR-1 §7): o fumo
+  // liga os próprios circuitos por rodada e usa este como fixture estável.
+  interface CircuitoSeed {
+    id: number;
+    code: string;
+  }
+  const circOperadora = await api<CircuitoSeed>("/circuits", {
+    method: "POST",
+    body: JSON.stringify({
+      code: "e2e-circ-operadora-01",
+      organization_id: idOperadora,
+      site_id: idSite,
+      access_device_id: idEquip,
+      access_port: "GE0/0/13",
+      edge_device_id: idEquip,
+      stack: "ipv4",
+      vlan_mode: "unica",
+      p2p_v4_len: 31,
+    }),
+  });
+  let idCircOperadora: number;
+  if (circOperadora.status === 201 && circOperadora.data !== null) {
+    idCircOperadora = circOperadora.data.id;
+  } else if (circOperadora.status === 409) {
+    const listaCircs = await api<CircuitoSeed[]>("/circuits");
+    if (listaCircs.status !== 200) {
+      throw new Error(`GET /circuits inesperado: ${listaCircs.status} ${listaCircs.detail}`);
+    }
+    const circ = listaCircs.data?.find((c) => c.code === "e2e-circ-operadora-01");
+    if (!circ) {
+      throw new Error("GET /circuits não devolveu o registro 'e2e-circ-operadora-01'.");
+    }
+    idCircOperadora = circ.id;
+  } else {
+    throw new Error(
+      `POST /circuits (operadora) inesperado: ${circOperadora.status} ${circOperadora.detail}`,
+    );
+  }
+
+  // Sessão BGP do circuito da operadora — checa antes de POSTar (o par
+  // local/remoto é fixo; 409 não cobre reexecução, máquina de estados).
+  const listaSessoes = await api<{ local_address: string }[]>(
+    `/bgp-sessions?circuit_id=${idCircOperadora}`,
+  );
+  if (listaSessoes.status !== 200 || listaSessoes.data === null) {
+    throw new Error(
+      `GET /bgp-sessions inesperado: ${listaSessoes.status} ${listaSessoes.detail}`,
+    );
+  }
+  if (!listaSessoes.data.some((s) => s.local_address === "10.99.128.1")) {
+    const sess = await api("/bgp-sessions", {
+      method: "POST",
+      body: JSON.stringify({
+        circuit_id: idCircOperadora,
+        device_id: idEquip,
+        afi: "ipv4",
+        local_address: "10.99.128.1",
+        remote_address: "10.99.128.2",
+        asn_local: 64601,
+        asn_remote: 65110,
+        description: "sessão e2e — upstream tier1",
+      }),
+    });
+    if (sess.status !== 201 && sess.status !== 409) {
+      throw new Error(`POST /bgp-sessions (operadora) inesperado: ${sess.status} ${sess.detail}`);
+    }
+  }
+
+  // Community de upstream (prepend, Região Sul) — checa pelo detalhe do
+  // upstream (a UNIQUE (upstream_id, purpose, value, regiao) não é amigável
+  // no 409; o padrão do prefix-authorization é mais claro).
+  const detUpstream = await api<{
+    comunidades: { purpose: string; value: string; regiao: string | null }[];
+  }>(`/upstreams/${idUpstream}`);
+  if (detUpstream.status !== 200 || detUpstream.data === null) {
+    throw new Error(`GET /upstreams/${idUpstream} inesperado: ${detUpstream.status} ${detUpstream.detail}`);
+  }
+  if (!detUpstream.data.comunidades.some((c) => c.purpose === "prepend" && c.value === "65530:65400" && c.regiao === "sul")) {
+    const comm = await api(`/upstreams/${idUpstream}/communities`, {
+      method: "POST",
+      body: JSON.stringify({
+        purpose: "prepend",
+        value: "65530:65400",
+        direcao: "ambos",
+        regiao: "sul",
+        notes: "Community de teste e2e (prepend — Região Sul).",
+      }),
+    });
+    if (comm.status !== 201 && comm.status !== 409) {
+      throw new Error(
+        `POST /upstreams/${idUpstream}/communities inesperado: ${comm.status} ${comm.detail}`,
+      );
+    }
+  }
 }
 
 // --- globalSetup ---------------------------------------------------------------

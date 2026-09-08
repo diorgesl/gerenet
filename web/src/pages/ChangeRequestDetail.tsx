@@ -24,9 +24,10 @@ const ACAO_LABELS: Record<ChangeRequestOut["acao"], string> = {
 };
 
 // Rótulo do objeto da CR sem vínculo com circuito: circuitos usam #N;
-// CRs de escopo l2vc exibem o nome do serviço (ou "—" quando ausente).
+// CRs de escopo l2vc exibem o nome do serviço e as de escopo upstream o nome
+// do upstream (ou "—" quando ausente).
 function rotuloObjeto(cr: ChangeRequestOut): string {
-  return cr.circuit_id !== null ? `#${cr.circuit_id}` : (cr.l2vc_name ?? "—");
+  return cr.circuit_id !== null ? `#${cr.circuit_id}` : (cr.l2vc_name ?? cr.upstream_name ?? "—");
 }
 
 const CONFIRMACOES: Record<string, { titulo: string; mensagem: string }> = {
