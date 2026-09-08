@@ -17,6 +17,7 @@ from gerenet.cli import (
     reconcile,
     sites,
     snapshot,
+    upstreams,
     vault,
 )
 from gerenet.cli import users as cli_users
@@ -41,3 +42,5 @@ app.add_typer(communities.app, name="communities", help="Communities BGP.")
 app.command(name="render-config")(reconcile.render_config)
 app.command(name="reconcile")(reconcile.reconcile)
 app.add_typer(cli_users.app, name="users", help="Usuários e perfis.")
+app.add_typer(upstreams.app, name="upstreams", help="Upstreams de trânsito/IX/PNI (§7).")
+app.add_typer(upstreams.communities, name="upstream-communities", help="Communities de operadora por upstream (§7.1).")
