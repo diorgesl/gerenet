@@ -43,7 +43,8 @@ ipv4-family unicast (ou ipv6-family unicast)
   peer <remoto> export route-policy RP-<ASN>-EXPORT-<AFI>
   peer <remoto> maximum-prefix <esperado×(1+margem)> [<limiar %>]
 
-ip ip-prefix IP-PFX-INTERNAS-<AFI> index N permit <prefixo>    # rotas internas + autorizações de clientes
+ip ip-prefix IP-PFX-<ASN>-IN-<AFI> index N permit <prefixo>     # proteção do up-full: deny node 10 (internas + autorizações)
+ip ip-prefix IP-PFX-INTERNAS-<AFI> index N permit <prefixo>     # export: rotas internas + autorizações de clientes
 route-policy RP-<ASN>-IMPORT-<AFI> ...                          # up-full: nós deny + permit 100
 route-policy RP-<ASN>-EXPORT-<AFI> ...                          # apply community <valores da operadora>
 ip community-filter CF-<ASN>-BLK-<n> permit <valor>             # communities info+bloquear (deny no import)
@@ -236,7 +237,8 @@ Na execução o worker, por step (device) e automaticamente:
 
 1. **Backup pré-mudança**: coleta fresca salva em `data/backups/change-<cr>/<ts>/pre/`
    (snapshot `backup_snapshot_id` no step; `data/` é gitignored);
-2. **Gate de coleta** (§5.3): recursos `interfaces` e `bgp_peers` obrigatórios;
+2. **Gate de coleta** (§5.3): recursos `interfaces`, `bgp_peers` e
+   `config_backup` obrigatórios;
 3. **Pré-check do escopo upstream**: coleta com `bgp_peers`, peer sem ASN
    conflitante (a rota *já* cadastrada com ASN diferente é config
    conflitante — falha antes de tocar), ao menos uma sessão do upstream

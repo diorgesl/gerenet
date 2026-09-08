@@ -205,8 +205,10 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   `bloquear`: info+bloquear = deny no import via community-filter; info sem
   bloquear = community de "parcial" do `up-parcial`; prepend/lp/blackhole =
   aplicações no export via `apply community`), `roas` (lote do rpki-client)
-  e `irr_cache` (consultas IRR com TTL) — migração única
-  `alembic/versions/767551f719ba_upstreams_f5.py`. Produtos de import por
+  e `irr_cache` (consultas IRR com TTL) — migrações
+  `alembic/versions/767551f719ba_upstreams_f5.py` (tabelas) e
+  `alembic/versions/7dd3d6db4796_upstream_circuits_circuito_unico.py`
+  (fix R-07: UNIQUE em `circuit_id`). Produtos de import por
   tipo (transito/ix → `up-full`, pni → `up-parcial`, contingencia →
   `up-default`; sessão sem perfil ⇒ deny-all fail-safe) e export agregado
   `IP-PFX-INTERNAS-<AFI>` + communities de ação; `maximum_prefix` das sessões
