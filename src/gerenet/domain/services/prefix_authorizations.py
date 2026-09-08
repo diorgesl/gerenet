@@ -135,6 +135,7 @@ def revalidar_autorizacoes(session: Session) -> int:
     - Origem `irr`: `consultar("radb", asn)` — prefixo no payload ⇒ `ok`,
       ausente ⇒ `diverge`; falha de rede sem cache vivo (`IrrError`) ⇒
       fail-soft: mantém a `validacao` atual e não conta como revalidada.
+      O payload é memoizado por ASN no lote (uma consulta por organização).
 
     Organização sem ASN ⇒ `log.warning` e `validacao` mantida (não conta).
     Autorizações desativadas e de origem `manual` são ignoradas.
@@ -149,6 +150,11 @@ def revalidar_autorizacoes(session: Session) -> int:
         )
     ).all()
     revalidadas = 0
+    # m-1 (revisão T23): autorizações da MESMA organização (mesmo ASN) custavam
+    # uma consulta IRR cada — memoiza o payload por ASN (um whois por
+    # organização no lote; irr_cache continua como segunda camada entre
+    # execuções). Falha não é memoizada: IrrError refaz o fail-soft por auth.
+    payloads_irr: dict[int, dict] = {}
     try:
         for auth in autorizacoes:
             org = session.get(models.Organization, auth.organization_id)
@@ -163,7 +169,10 @@ def revalidar_autorizacoes(session: Session) -> int:
                 auth.validacao = validar_origem(session, auth.prefix, org.asn)
             else:  # irr
                 try:
-                    payload = consultar("radb", str(org.asn))
+                    payload = payloads_irr.get(org.asn)
+                    if payload is None:
+                        payload = consultar("radb", str(org.asn))
+                        payloads_irr[org.asn] = payload
                 except IrrError as exc:
                     logger.warning(
                         "Autorização %d não revalidada: consulta IRR falhou (%s); "

@@ -93,7 +93,9 @@ def test_revalida_rpki_sem_roa_desconhecida(db_session: Session) -> None:
 
 def test_revalida_irr_ok_e_diverge(db_session: Session, monkeypatch) -> None:
     """IRR: prefixo no payload ⇒ `ok`; ausente ⇒ `diverge` (um lote, dois
-    resultados; o ASN chega ao consultar como string de dígitos)."""
+    resultados; o ASN chega ao consultar como string de dígitos). m-1
+    (revisão T23): as duas autorizações são da MESMA org — uma só consulta
+    IRR por ASN no lote (memo), não uma por autorização."""
     org_id = _org(db_session, "Cliente IRR", 64512)
     _auth(db_session, org_id, "200.160.0.0/22", origin="irr")
     _auth(db_session, org_id, "200.170.0.0/22", origin="irr")
@@ -108,7 +110,7 @@ def test_revalida_irr_ok_e_diverge(db_session: Session, monkeypatch) -> None:
         "gerenet.domain.services.prefix_authorizations.consultar", fake_consultar
     )
     assert revalidar_autorizacoes(db_session) == 2
-    assert chamadas == [("radb", "64512"), ("radb", "64512")]
+    assert chamadas == [("radb", "64512")]
 
     por_prefixo = _por_prefixo(db_session)
     assert por_prefixo["200.160.0.0/22"].validacao == "ok"
