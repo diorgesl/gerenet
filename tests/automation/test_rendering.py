@@ -80,6 +80,16 @@ def _sessao(db_session: Session, env: dict, circ_id: int, *, afi: str, **extra) 
     ).id
 
 
+def test_tipo_ordem_contem_community_filter() -> None:
+    from gerenet.automation.render import TIPO_ORDEM
+
+    # B3 define os community-filters antes das RPs de import/export no mesmo render
+    nomes = [t for t, _ in sorted(TIPO_ORDEM.items(), key=lambda item: item[1])]
+    assert "community_filter" in nomes
+    assert nomes.index("community_filter") < nomes.index("route_policy_import")
+    assert nomes.index("community_filter") < nomes.index("route_policy_export")
+
+
 def test_render_dual_completo_ordenado(db_session: Session) -> None:
     from gerenet.automation.render import render_desejado
 

@@ -79,7 +79,7 @@ def test_route_policy_import_up_full() -> None:
         lista="IP-PFX-64512-IN-V4", local_preference=120, produto="up-full",
         deny_communities=["CF-64512-BLK-1"], fail_safe=False,
     ) == (
-        "# up-full: accept-all do provedor, exceto as proteções — deny em nós separados (if-match no mesmo nó é E, não OU)\n"
+        "# up-full: accept-all do provedor, exceto as proteções — nós deny separados (if-match de tipos diferentes no mesmo nó é E; a negação de bogons e de communities de bloqueio exige OU)\n"
         "route-policy RP-64512-IMPORT-V4 deny node 10\n"
         "if-match ip-prefix IP-PFX-64512-IN-V4\n"
         "route-policy RP-64512-IMPORT-V4 deny node 20\n"
@@ -95,7 +95,7 @@ def test_route_policy_import_up_full_v6_sem_lp() -> None:
         lista="IP-PFX-64512-IN-V6", local_preference=None, produto="up-full",
         deny_communities=["CF-64512-BLK-1"], fail_safe=False,
     ) == (
-        "# up-full: accept-all do provedor, exceto as proteções — deny em nós separados (if-match no mesmo nó é E, não OU)\n"
+        "# up-full: accept-all do provedor, exceto as proteções — nós deny separados (if-match de tipos diferentes no mesmo nó é E; a negação de bogons e de communities de bloqueio exige OU)\n"
         "route-policy RP-64512-IMPORT-V6 deny node 10\n"
         "if-match ipv6 address prefix-list IP-PFX-64512-IN-V6\n"
         "route-policy RP-64512-IMPORT-V6 deny node 20\n"
@@ -158,11 +158,30 @@ def test_route_policy_export_upstream_aplicacoes() -> None:
     ) == (
         "route-policy RP-64512-EXPORT-V4 permit node 10\n"
         "if-match ip-prefix IP-PFX-INTERNAS-V4\n"
-        "# aplicação prepend por região (SP): if-match regional fica na camada de render (fase 5)\n"
-        "apply community 65530:20:2\n"
-        "apply community 65530:666:0\n"
+        "# TE: prepend (SP - if-match na camada de render)\n"
+        "# TE: blackhole\n"
+        "# TE: lp\n"
+        "apply community 65530:20:2 65530:666:0 65530:70:150"
+    )
+
+
+def test_route_policy_export_upstream_uma_aplicacao() -> None:
+    assert _render(
+        "route_policy_export", nome="RP-64512-EXPORT-V4", afi="ipv4",
+        lista=None, med=None, prepend=0, asn_local=61785,
+        aplicacoes=[{"tipo": "lp", "valor": "65530:70:150", "regiao": None}],
+    ) == (
+        "route-policy RP-64512-EXPORT-V4 permit node 10\n"
+        "# TE: lp\n"
         "apply community 65530:70:150"
     )
+
+
+def test_route_policy_export_sem_aplicacoes() -> None:
+    assert _render(
+        "route_policy_export", nome="RP-64512-EXPORT-V4", afi="ipv4",
+        lista=None, med=None, prepend=0, asn_local=61785, aplicacoes=[],
+    ) == "route-policy RP-64512-EXPORT-V4 permit node 10"
 
 
 def test_route_policy_export_full_sem_condicoes() -> None:

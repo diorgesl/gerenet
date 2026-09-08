@@ -3,7 +3,7 @@
 route-policy {{ nome }} deny node 10
 {% else %}
 {% if produto == 'up-full' %}
-# up-full: accept-all do provedor, exceto as proteções — deny em nós separados (if-match no mesmo nó é E, não OU)
+# up-full: accept-all do provedor, exceto as proteções — nós deny separados (if-match de tipos diferentes no mesmo nó é E; a negação de bogons e de communities de bloqueio exige OU)
 {% if lista %}
 route-policy {{ nome }} deny node 10
 {% if afi == 'ipv6' %}

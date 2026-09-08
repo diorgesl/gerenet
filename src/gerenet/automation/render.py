@@ -32,6 +32,7 @@ _env = Environment(
 TIPO_ORDEM = {
     "subinterface": 10,
     "prefix_list": 20,
+    "community_filter": 25,
     "route_policy_import": 30,
     "route_policy_export": 40,
     "bgp_peer": 50,

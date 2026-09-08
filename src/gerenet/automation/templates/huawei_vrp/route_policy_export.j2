@@ -14,7 +14,11 @@ apply as-path{% for _ in range(prepend) %} {{ asn_local }}{% endfor %} additive
 {% endif %}
 {% for a in aplicacoes|default([]) %}
 {% if a.regiao %}
-# aplicação {{ a.tipo }} por região ({{ a.regiao }}): if-match regional fica na camada de render (fase 5)
+# TE: {{ a.tipo }} ({{ a.regiao }} - if-match na camada de render)
+{% else %}
+# TE: {{ a.tipo }}
 {% endif %}
-apply community {{ a.valor }}
 {% endfor %}
+{% if aplicacoes %}
+apply community {{ aplicacoes|map(attribute='valor')|join(' ') }}
+{% endif %}
