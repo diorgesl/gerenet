@@ -98,6 +98,35 @@ def test_coleta_version_atualiza_device_e_snapshot(
     assert job_row.snapshot_id == snap.id
 
 
+def test_run_collection_registra_anomalias_prefixos_no_snapshot(
+    db_session: Session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B5 no coletor (§5): toda coleta grava resources["anomalias_prefixos"]
+    (sem sessões de upstream conectadas ⇒ lista vazia; a conta é do job)."""
+    dev = _dev_com_grupo(db_session, "r-anomalia", "10.0.0.10")
+    settings = Settings(_env_file=None, backups_dir=tmp_path)
+
+    monkeypatch.setattr("gerenet.automation.runner.VaultSecretStore", VaultFake)
+    monkeypatch.setattr(
+        "gerenet.automation.runner._conectar_e_executar",
+        lambda device, username, password, commands, settings: {
+            cmd: SAIDAS[cmd] for cmd in commands
+        },
+    )
+
+    resultado = run_collection(dev.id, settings=settings, session_override=db_session)
+    assert resultado["status"] == "success"
+
+    snap = (
+        db_session.query(DeviceSnapshot)
+        .filter_by(device_id=dev.id)
+        .order_by(DeviceSnapshot.id.desc())
+        .first()
+    )
+    assert snap is not None
+    assert snap.resources["anomalias_prefixos"] == []
+
+
 def test_falha_de_conexao_marca_device_como_fail(
     db_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:

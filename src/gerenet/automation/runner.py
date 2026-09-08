@@ -24,7 +24,7 @@ from gerenet.automation.collectors import COLLECTORS, comandos_verbose
 from gerenet.automation.netmiko_conn import connect_and_apply, connect_and_run
 from gerenet.automation.parsers.huawei_vrp.merge import merge_parsed
 from gerenet.automation.parsers.huawei_vrp.registry import parse_template
-from gerenet.automation.reconcile import reconciliar_device
+from gerenet.automation.reconcile import anomalias_prefixos, reconciliar_device
 from gerenet.config import Settings, get_settings
 from gerenet.db import SessionLocal
 from gerenet.domain.models import AuditEvent, ChangeRequest, ChangeStep, DeviceSnapshot, JobRun
@@ -180,6 +180,18 @@ def run_collection(
             job.finished_at = snapshot.finished_at
             job.duration_ms = snapshot.duration_ms
             job.snapshot_id = snapshot.id
+            session.commit()
+
+            # B5 (§7): a variação anormal de prefixos é conta do COLETOR — o
+            # histórico das coletas só existe aqui. Gravada no próprio snapshot
+            # (resources["anomalias_prefixos"]); a divergência só exibe.
+            snapshot.resources = {
+                **(snapshot.resources or {}),
+                "anomalias_prefixos": anomalias_prefixos(
+                    session, snapshot,
+                    janela=settings.bgp_anomalia_janela, pct=settings.bgp_anomalia_pct,
+                ),
+            }
             session.commit()
 
             if erros:

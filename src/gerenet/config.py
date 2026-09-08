@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     # desabilitada; o CLI `gerenet rpki sync` exige o caminho explícito (E4).
     rpki_roas_file: str | None = None
 
+    # B5 (§7): variação anormal de prefixos de upstream — janela (K coletas) e
+    # threshold % configuráveis (design §5); a conta é feita no coletor.
+    bgp_anomalia_janela: int = 2
+    bgp_anomalia_pct: int = 50
+
     # IPAM p2p (§25.8): bloco privado de enlaces v4 e base v6 por padrão;
     # cada site pode sobrescrever.
     p2p_ipv4_block: str = "100.64.0.0/10"
