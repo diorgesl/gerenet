@@ -82,7 +82,7 @@ class SiteUpdate(BaseModel):
 class OrganizationCreate(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     legal_name: str | None = Field(default=None, max_length=255)
-    kind: Literal["downstream", "parceiro"] = "downstream"
+    kind: Literal["downstream", "parceiro", "operadora"] = "downstream"
     # Sem limites pydantic: a validação de ASN é do serviço (asn_valido), que
     # levanta ValidationError do gerenet também para valores fora da faixa.
     asn: int | None = None
@@ -93,7 +93,7 @@ class OrganizationCreate(BaseModel):
 class OrganizationUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=128)
     legal_name: str | None = Field(default=None, max_length=255)
-    kind: Literal["downstream", "parceiro"] | None = None
+    kind: Literal["downstream", "parceiro", "operadora"] | None = None
     asn: int | None = None
     irr_as_set: str | None = Field(default=None, max_length=64)
     notes: str | None = None
@@ -279,6 +279,7 @@ class CircuitOut(BaseModel):
     notes: str | None
     edge_trunk: str | None
     admin_status: bool
+    organization_kind: str | None = None  # derivado da organização do circuito (router/fase 5)
 
 
 class CircuitDetailOut(CircuitOut):
@@ -322,6 +323,7 @@ class BgpSessionOut(BaseModel):
     allow_default_route: bool
     has_password: bool  # property do modelo — o valor nunca trafega aqui
     admin_status: bool
+    organization_kind: str | None = None  # derivado da organização do circuito da sessão (router/fase 5)
 
 
 class PrefixAuthorizationOut(BaseModel):
@@ -852,6 +854,8 @@ class UpstreamOut(BaseModel):
     contingencia_prepend: int | None
     contingencia_notes: str | None
     admin_status: bool
+    organization_kind: str | None = None  # kind da organização (operadora) — preenchido no router
+    organization_name: str | None = None  # nome da organização — preenchido no router
     created_at: datetime
     updated_at: datetime
 

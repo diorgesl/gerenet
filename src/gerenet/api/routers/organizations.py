@@ -45,7 +45,7 @@ def _atualizar(
 def listar(
     session: SessionDep,
     include_disabled: bool = False,
-    kind: Literal["downstream", "parceiro"] | None = None,
+    kind: Literal["downstream", "parceiro", "operadora"] | None = None,
 ) -> list:
     return svc.list_organizations(session, include_disabled=include_disabled, kind=kind)
 

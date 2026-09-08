@@ -25,7 +25,7 @@ def add(
     name: str = typer.Option(..., help="Nome único da organização."),
     legal_name: str | None = typer.Option(None, "--legal-name", help="Razão social."),
     kind: str = typer.Option(
-        "downstream", help="Tipo: downstream ou parceiro."
+        "downstream", help="Tipo: downstream, parceiro ou operadora."
     ),
     asn: int | None = typer.Option(None, min=1, max=4294967295, help="ASN da organização."),
     irr_as_set: str | None = typer.Option(None, "--irr-as-set", help="IRR AS-SET."),
