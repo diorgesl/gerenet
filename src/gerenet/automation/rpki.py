@@ -17,6 +17,11 @@ prefixo com o ASN de origem correto e comprimento dentro do limite (semântica
 RPKI — `maxLength` autoriza more-specifics até o limite, não o prefixo inteiro
 do ROA); `diverge` quando há cobertura mas ASN ou comprimento estouram;
 `desconhecida` quando nenhuma ROA cobre o prefixo.
+
+Ao final da sincronização, as autorizações ativas de origem IRR/RPKI são
+revalidadas de forma consultiva (§6.4/§10.4) por
+`revalidar_autorizacoes` — o espelho de ROAs e a validação das autorizações
+andam juntos (E2/E3).
 """
 import ipaddress
 import json
@@ -133,6 +138,10 @@ def sincronizar_roas(session: Session, caminho: str) -> int:
     2. remove as linhas `source == "rpki-client"` ausentes do lote novo
        (órfãs); linhas de outras sources são preservadas intactas.
 
+    Depois do commit, revalida as autorizações ativas de origem IRR/RPKI
+    (E3 — consultivo §10.4; import diferido para quebrar o ciclo com
+    `domain.services.prefix_authorizations`, que importa este módulo).
+
     Retorna o número de ROAs do lote (o parse pode ter apontado zero ROAs).
     """
     lote = _le_roas(caminho)
@@ -172,6 +181,13 @@ def sincronizar_roas(session: Session, caminho: str) -> int:
     except Exception:
         session.rollback()
         raise
+    # E3: revalidação consultiva das autorizações ativas (import diferido —
+    # o serviço importa este módulo; o hook emenda o ciclo).
+    from gerenet.domain.services.prefix_authorizations import (
+        revalidar_autorizacoes,
+    )
+
+    revalidar_autorizacoes(session)
     return len(lote)
 
 
@@ -189,6 +205,10 @@ def validar_origem(session: Session, prefixo: str, asn: int | str) -> str:
 
     Sem cobertura ⇒ `desconhecida`. Prefixo que não parseia ⇒ `ValueError`
     com mensagem PT-BR.
+
+    ROAs vencidas ainda contam como cobertura — a frescura dos dados é
+    responsabilidade do sync (`sincronizar_roas`, que renova o lote a cada
+    execução; validação consultiva, §10.4).
     """
     alvo = _rede(prefixo)
     asn_origem = _asn_para_int(asn)

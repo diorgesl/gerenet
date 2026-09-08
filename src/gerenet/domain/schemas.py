@@ -163,6 +163,7 @@ class PrefixAuthorizationCreate(BaseModel):
     organization_id: int
     family: Literal["ipv4", "ipv6"]
     prefix: str = Field(min_length=1, max_length=64)
+    origin: Literal["manual", "irr", "rpki"] = "manual"
     notes: str | None = None
 
 

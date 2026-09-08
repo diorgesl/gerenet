@@ -236,3 +236,36 @@ def test_validar_origem_prefixo_invalido_levanta_valor_error(session):
         validar_origem(session, "não-é-prefixo", 64512)
     with pytest.raises(ValueError, match="ASN inválido"):
         validar_origem(session, "180.10.0.0/16", "AS-errado")
+
+
+def test_sincronizar_roas_revalida_autorizacoes_rpki(session, tmp_path):
+    """E3 (hook): após o commit do lote, as autorizações ativas de origem
+    IRR/RPKI são revalidadas — a autorização rpki saiu de `nao_verificada`
+    para o resultado da validação (consultivo §10.4; import diferido no
+    `sincronizar_roas` quebra o ciclo com o serviço)."""
+    from gerenet.domain.schemas import OrganizationCreate, PrefixAuthorizationCreate
+    from gerenet.domain.services.organizations import create_organization
+    from gerenet.domain.services.prefix_authorizations import create_authorization
+
+    org = create_organization(
+        session, OrganizationCreate(name="Cliente ROA Sync", asn=64512), actor="cli"
+    )
+    auth = create_authorization(
+        session,
+        PrefixAuthorizationCreate(
+            organization_id=org.id,
+            family="ipv4",
+            prefix="180.10.0.0/16",
+            origin="rpki",
+        ),
+        actor="cli",
+    )
+    assert auth.validacao == "nao_verificada"
+
+    arquivo = tmp_path / "roas.json"
+    _escreve(arquivo, [ROA_V4_A])  # AS64512 cobre 180.10.0.0/16 (maxLength /24)
+
+    assert sincronizar_roas(session, str(arquivo)) == 1
+
+    session.refresh(auth)
+    assert auth.validacao == "ok"
