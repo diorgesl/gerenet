@@ -265,7 +265,7 @@ def _bloco_divida(texto: str) -> BlocoRender:
 
 
 def _bloco_export(
-    session: Session, sessao: models.BgpSession,
+    session: Session, circuito: models.Circuit, sessao: models.BgpSession,
     definidas: dict[tuple[str, str], set[str]],
 ) -> tuple[list[BlocoRender], str | None]:
     """RP de exportação pelo produto §6.5/§25.5 (ruling 5); dívidas viram comentário.
@@ -274,8 +274,10 @@ def _bloco_export(
     visto ⇒ 1 bloco; divergente ⇒ convivem, dívida §25.4/§25.5 ciclo C).
     Devolve também o nome da RP (§25.4) quando a definição EXISTE para a
     sessão (produto renderizável: full / default / cdn|personalizado com
-    prefixos) — o peer referencia pelo critério de definição, independente
-    do dedup (ruling R5); dívida (comentário) não gera referência.
+    prefixos / default_internas / parcial com lista) — o peer referencia
+    pelo critério de definição, independente do dedup (ruling R5); dívida
+    (comentário) não gera referência. O produto "parcial" cai em dívida
+    quando a lista combinada (internas + autorizadas da org) é vazia.
     """
     if sessao.export_profile_id is None:
         return [], None
@@ -330,7 +332,44 @@ def _bloco_export(
             ("route_policy_export", nome_rp),
         )
         return blocos, nome_rp
-    # default_internas / parcial — dívida documentada (sem definição de RP)
+    if produto in ("default_internas", "parcial"):
+        # Lista combinada: internas (B1) + autorizadas da org da sessão (mesma
+        # família) — dedup por prefixo preservando ordem (dict.fromkeys) para
+        # não repetir índice. "default_internas" soma a default (index 10);
+        # "parcial" é só internas + autorizadas (produto §6.5).
+        prefixo = "0.0.0.0/0" if afi == "ipv4" else "::/0"
+        combinado = list(dict.fromkeys(
+            internas_prefixos(session).get(afi, [])
+            + [a.prefix for a in list_authorizations(
+                session, organization_id=circuito.organization_id, family=afi)]
+        ))
+        if produto == "default_internas":
+            combinado = list(dict.fromkeys([prefixo] + combinado))
+        if not combinado:
+            return [_bloco_divida(
+                f"produto '{produto}': sem rotas internas nem autorizações "
+                "para montar a lista de anúncio."
+            )], None
+        lista = naming.pfx_produto(produto, afi)
+        entradas = [
+            {"index": 10 * (i + 1), "prefixo": prefixo_lista}
+            for i, prefixo_lista in enumerate(combinado)
+        ]
+        comandos = _render_template(
+            "prefix_list", {"nome": lista, "afi": afi, "entradas": entradas}
+        ).splitlines()
+        blocos = []
+        _apensa_definicao(
+            blocos, definidas,
+            BlocoRender("prefix_list", "session", sessao.id, comandos),
+            ("prefix_list", lista),
+        )
+        _apensa_definicao(
+            blocos, definidas, _bloco_rp_export(sessao, nome_rp, afi, lista),
+            ("route_policy_export", nome_rp),
+        )
+        return blocos, nome_rp
+    # produto desconhecido do catálogo — dívida documentada (sem definição de RP)
     return [_bloco_divida(
         f"produto '{produto}': rotas internas ainda não renderizáveis (ciclo C/F5)."
     )], None
@@ -660,7 +699,7 @@ def render_desejado(session: Session, device_id: int) -> RenderResult:
                 export_blocos, rp_export = _bloco_export_upstream(session, sessao, up, definidas)
             else:
                 import_blocos, rp_import = _bloco_import(session, circuito, sessao, definidas)
-                export_blocos, rp_export = _bloco_export(session, sessao, definidas)
+                export_blocos, rp_export = _bloco_export(session, circuito, sessao, definidas)
             blocos.extend(import_blocos)
             blocos.extend(export_blocos)
             blocos.append(_bloco_peer(sessao, rp_import, rp_export))

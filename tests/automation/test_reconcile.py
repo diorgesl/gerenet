@@ -287,15 +287,16 @@ def test_peer_filtros_critico(db_session: Session) -> None:
 
 
 def test_produto_export_em_divida_nao_gera_filtros(db_session: Session) -> None:
-    """Produto de exportação em dívida (default_internas): o render emite bloco
-    comentário (objeto="session", objeto_id=0) que o parse de filtros ignora —
-    linha verbose divergente não vira item peer.filtros (T5-M4)."""
+    """Produto de exportação em dívida (personalizado sem prefixos): o render
+    emite bloco comentário (objeto="session", objeto_id=0) que o parse de
+    filtros ignora — linha verbose divergente não vira item peer.filtros
+    (T5-M4). default_internas deixou de ser exemplar: o B4 o tornou renderizável."""
     from gerenet.automation.reconcile import reconciliar_device
 
     env = _ambiente(db_session)
     circ_id = _circuito_completo(db_session, env)
     _autoriza(db_session, env)  # import continua renderizável (RP-64512-IMPORT-V4)
-    perfil = _perfil_export(db_session, "default_internas")
+    perfil = _perfil_export(db_session, "personalizado")
     _sessao(db_session, env, circ_id, afi="ipv4", export_profile_id=perfil)
     p = _pontas(db_session, circ_id)
     _snapshot(
