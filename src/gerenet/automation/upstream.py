@@ -98,9 +98,15 @@ def plan_remocao_upstream(session: Session, up: models.Upstream) -> list[changes
 
 
 def valida_pre_upstream(session: Session, up: models.Upstream, device: models.Device,
-                        recursos: dict) -> str | None:
+                        recursos: dict, *, include_disabled: bool = False) -> str | None:
     """§12.2/§7 — recursos coletados, peers sem ASN conflitante e ao menos uma
     sessão do upstream no equipamento (shape do runner: None = ok).
+
+    `include_disabled=True` é usado na execução de CRs de remoção (a ação é o
+    contexto do chamador — o runner passa `include_disabled=(cr.acao ==
+    "remove")`; a superfície não conhece a CR): sessões desativadas ainda
+    cadastradas na SoT e/ou no encontrado contam como sessões. O default
+    False preserva a exigência de sessão ativa para provision.
 
     O runner consome exatamente `pre_erro = valida_pre_upstream(...); if
     pre_erro is not None: raise ValueError(pre_erro)` (espelho de
@@ -110,7 +116,8 @@ def valida_pre_upstream(session: Session, up: models.Upstream, device: models.De
         return "Coleta sem 'bgp_peers' — colete antes de executar (§5.3)."
     sessoes = [
         s for vin in up.circuitos
-        for s in list_sessions(session, circuit_id=vin.circuit_id, device_id=device.id)
+        for s in list_sessions(session, circuit_id=vin.circuit_id, device_id=device.id,
+                               include_disabled=include_disabled)
     ]
     for s in sessoes:
         linha = next(

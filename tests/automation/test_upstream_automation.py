@@ -1,6 +1,7 @@
 """Automação de upstream (spec §7): plano agregado de provision/remoção e
 pré/pós-checks BGP do fluxo de CR (espelho de `tests/automation/test_l2vc.py`)."""
 import pytest
+from sqlalchemy import select
 
 from gerenet.automation.upstream import (
     plan_provision_upstream,
@@ -137,6 +138,57 @@ def test_valida_pre_upstream_coerente_retorna_none(session, up_com_2_circuitos, 
     """Peers encontrados com o ASN cadastrado ⇒ None (pré-check aprovado)."""
     recursos = {"bgp_peers": _peers_up() + _peers_up(peer="100.64.10.6")}
     assert valida_pre_upstream(session, up_com_2_circuitos, edge_device, recursos) is None
+
+
+def _sessoes_vinculos_desativadas(session, up):
+    sessoes = session.scalars(
+        select(models.BgpSession).where(
+            models.BgpSession.circuit_id.in_([vin.circuit_id for vin in up.circuitos])
+        )
+    )
+    for sessao in sessoes:
+        sessao.admin_status = False
+    session.commit()
+
+
+def test_valida_pre_upstream_sessoes_todas_desativadas_reclama_por_default(
+    session, up_com_2_circuitos, edge_device
+):
+    """Regressão: o default (provision) mantém a exigência de sessão ativa —
+    upstream com 100% das sessões desativadas ⇒ "sem sessão BGP" (R-22)."""
+    _sessoes_vinculos_desativadas(session, up_com_2_circuitos)
+    recursos = {"bgp_peers": _peers_up() + _peers_up(peer="100.64.10.6")}
+    erro = valida_pre_upstream(session, up_com_2_circuitos, edge_device, recursos)
+    assert erro == "Upstream transito-f5 sem sessão BGP neste equipamento — revalide o upstream."
+
+
+def test_valida_pre_upstream_include_disabled_aceita_sessoes_desativadas(
+    session, up_com_2_circuitos, edge_device
+):
+    """Com include_disabled=True (execução de CR de remoção, R-22) as sessões
+    desativadas contam — pré-check aprovado (None)."""
+    _sessoes_vinculos_desativadas(session, up_com_2_circuitos)
+    recursos = {"bgp_peers": _peers_up() + _peers_up(peer="100.64.10.6")}
+    assert (
+        valida_pre_upstream(
+            session, up_com_2_circuitos, edge_device, recursos, include_disabled=True
+        )
+        is None
+    )
+
+
+def test_valida_pre_upstream_include_disabled_mantem_check_de_asn(
+    session, up_com_2_circuitos, edge_device
+):
+    """A flag não desliga o check de conflito: peer desativado ainda no
+    equipamento com ASN divergente do cadastrado ⇒ conflito (R-22)."""
+    _sessoes_vinculos_desativadas(session, up_com_2_circuitos)
+    recursos = {"bgp_peers": _peers_up(asn=64599)}
+    erro = valida_pre_upstream(
+        session, up_com_2_circuitos, edge_device, recursos, include_disabled=True
+    )
+    assert "Peer 100.64.10.2 (ipv4)" in erro
+    assert "ASN 64599 (esperado 64501)" in erro
 
 
 # ---- valida_pos_upstream (R-17/R-19) ----
