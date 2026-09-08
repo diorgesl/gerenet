@@ -21,12 +21,14 @@ def test_lista_catalogo_so_leitura(client: TestClient) -> None:
     lista = client.get("/api/v1/policy-profiles", headers=_auth()).json()
     assert [p["name"] for p in lista] == [
         "cdn", "default", "default_internas", "full", "parcial", "personalizado",
-        "somente-autorizadas",
+        "somente-autorizadas", "up-default", "up-full", "up-parcial",
     ]
     so_export = client.get("/api/v1/policy-profiles?direction=export", headers=_auth()).json()
     assert len(so_export) == 6 and all(p["direction"] == "export" for p in so_export)
     so_import = client.get("/api/v1/policy-profiles?direction=import", headers=_auth()).json()
-    assert [p["name"] for p in so_import] == ["somente-autorizadas"]
+    assert [p["name"] for p in so_import] == [
+        "somente-autorizadas", "up-default", "up-full", "up-parcial",
+    ]
     assert client.post("/api/v1/policy-profiles", json={}, headers=_auth()).status_code == 405
 
 

@@ -340,7 +340,7 @@ def test_cli_policy_profiles_lista(db_session: Session) -> None:
     lista = runner.invoke(app, ["policy-profiles", "list"])
     assert lista.exit_code == 0
     linhas = lista.output.strip().splitlines()
-    assert len(linhas) == 7  # 6 export + somente-autorizadas (import, ciclo B)
+    assert len(linhas) == 10  # 6 export + 4 import (somente-autorizadas + up-* da fase 5)
     assert any("somente-autorizadas" in linha for linha in linhas)
 
     so_export = runner.invoke(app, ["policy-profiles", "list", "--direction", "export"])

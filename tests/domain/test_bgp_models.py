@@ -72,7 +72,7 @@ def test_seeds_dos_catalogos_presentes(db_session: Session) -> None:
     nomes = set(db_session.scalars(select(models.PolicyProfile.name)).all())
     assert nomes == {
         "default", "default_internas", "parcial", "full", "cdn", "personalizado",
-        "somente-autorizadas",
+        "somente-autorizadas", "up-default", "up-full", "up-parcial",
     }
     rotulos = dict(
         db_session.execute(

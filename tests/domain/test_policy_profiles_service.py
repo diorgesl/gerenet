@@ -10,7 +10,7 @@ from gerenet.domain.services.errors import NotFoundError, ValidationError
 def test_catalogo_export_tem_os_seis_produtos(db_session: Session) -> None:
     assert [p.name for p in svc.list_policy_profiles(db_session)] == [
         "cdn", "default", "default_internas", "full", "parcial", "personalizado",
-        "somente-autorizadas",
+        "somente-autorizadas", "up-default", "up-full", "up-parcial",
     ]
     assert [p.name for p in svc.list_policy_profiles(db_session, direction="export")] == [
         "cdn", "default", "default_internas", "full", "parcial", "personalizado",
@@ -19,7 +19,7 @@ def test_catalogo_export_tem_os_seis_produtos(db_session: Session) -> None:
 
 def test_lista_filtra_direction(db_session: Session) -> None:
     assert [p.name for p in svc.list_policy_profiles(db_session, direction="import")] == [
-        "somente-autorizadas",
+        "somente-autorizadas", "up-default", "up-full", "up-parcial",
     ]
     assert [p.name for p in svc.list_policy_profiles(db_session, direction="export")] == [
         "cdn", "default", "default_internas", "full", "parcial", "personalizado",
