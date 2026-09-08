@@ -90,6 +90,7 @@ export const HELP = {
 
   // Communities
   "community.name": "Nome/valor da community no catálogo (1–64 caracteres; ex.: no-export ou 64500:100) — a aplicação do valor concreto na configuração é fase futura.",
+  "community.tipo": "Categoria da community (§7/§25.6): padrao (valor direto), acao_blackhole/acao_prepend/acao_lp (ação de tráfego), informacao (marcação informativa) ou tag_produto (tag de produto/serviço).",
   "community.notes": "Observações livres.",
 
   // Prefix authorizations

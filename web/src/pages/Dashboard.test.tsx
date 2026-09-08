@@ -58,6 +58,15 @@ describe("Dashboard", () => {
         if (url === "/api/v1/mpls/vsi") {
           return new Response(JSON.stringify([]), { status: 200, headers: { "Content-Type": "application/json" } });
         }
+        if (url === "/api/v1/upstreams") {
+          return new Response(
+            JSON.stringify([
+              { id: 1, name: "tr-01", tipo: "transito", admin_status: true },
+              { id: 2, name: "con-01", tipo: "contingencia", admin_status: false },
+            ]),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
         return new Response(null, { status: 404 });
       }),
     );
@@ -79,5 +88,8 @@ describe("Dashboard", () => {
     expect(screen.getByRole("link", { name: "Reconciliar" })).toBeTruthy();
     expect(screen.getByText(/mudanças/)).toBeTruthy();
     expect(screen.getByText("2")).toBeTruthy();
+    // Card de upstreams (R-28): 1 ativo de 2 cadastrados — a contagem usa useUpstreams().
+    expect(screen.getByText(/upstreams/)).toBeTruthy();
+    expect(vi.mocked(fetch).mock.calls.some((c) => String(c[0]) === "/api/v1/upstreams")).toBe(true);
   });
 });

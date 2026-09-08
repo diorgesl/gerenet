@@ -8,7 +8,9 @@ import { PageHeader } from "@/components/PageHeader";
 import { SeverityBadge } from "@/components/SeverityBadge";
 import type { ReconcileItemOut } from "@/api/types";
 
-const SEVERIDADES = ["todas", "critica", "atencao", "aviso"] as const;
+// Severidades do backend (reconcile.py:27) — "alerta" é a dos itens de
+// anomalia de prefixos (bgp.anomalia_prefixos, reconcile.py:253).
+const SEVERIDADES = ["todas", "critica", "atencao", "aviso", "alerta"] as const;
 
 export default function Reconcile() {
   const [params, setParams] = useSearchParams();

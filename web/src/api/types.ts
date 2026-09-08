@@ -73,6 +73,7 @@ export interface CircuitOut {
   notes: string | null;
   edge_trunk: string | null;
   admin_status: boolean;
+  organization_kind: string | null; // kind da organização do circuito — preenchido no router (fase 5)
 }
 export interface CircuitDetailOut extends CircuitOut {
   ipv4_local: string | null;
@@ -132,11 +133,13 @@ export interface PolicyProfileOut {
 export interface CommunityOut {
   id: number;
   name: string;
+  tipo: string; // categoria §7/§25.6 — espelha models.COMMUNITY_TIPO (models.py:53)
   notes: string | null;
   admin_status: boolean;
 }
 
-export type CommunityUpdateIn = { name?: string; notes?: string | null; admin_status?: boolean };
+export type CommunityCreateIn = { name: string; tipo?: string; notes?: string | null };
+export type CommunityUpdateIn = { name?: string; tipo?: string; notes?: string | null; admin_status?: boolean };
 
 export type PolicyProfileUpdateIn = {
   name?: string;

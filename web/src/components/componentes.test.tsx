@@ -48,6 +48,11 @@ describe("kit", () => {
     expect(container.querySelector(".badge-danger")).toBeInTheDocument();
   });
 
+  it("SeverityBadge alerta → danger (anomalias de prefixos, pointer Task 11)", () => {
+    const { container } = render(<SeverityBadge severidade="alerta" />);
+    expect(container.querySelector(".badge-danger")).toBeInTheDocument();
+  });
+
   it("DataTable vazio mostra 'Nenhum registro.'", () => {
     render(<DataTable colunas={[{ key: "a", title: "A" }]} linhas={[]} />);
     expect(screen.getByText("Nenhum registro.")).toBeInTheDocument();

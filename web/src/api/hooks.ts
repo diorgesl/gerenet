@@ -8,6 +8,7 @@ import type {
   CircuitDetailOut,
   CircuitOut,
   CollectResposta,
+  CommunityCreateIn,
   CommunityOut,
   CommunityUpdateIn,
   ContactOut,
@@ -542,6 +543,7 @@ export const usePolicyProfiles = (filtros?: { direction?: string; include_disabl
     },
   });
 export const useCommunities = (opts?: { includeDisabled?: boolean }) => useLista<CommunityOut>("communities", "/api/v1/communities", opts);
+export const useCommunityCriar = () => useCriar<CommunityCreateIn, CommunityOut>("communities", "/api/v1/communities");
 export const useCommunityAtualizar = () =>
   useAtualizar<CommunityUpdateIn, CommunityOut>("communities", "/api/v1/communities");
 export const usePolicyProfileAtualizar = () =>

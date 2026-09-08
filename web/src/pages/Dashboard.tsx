@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { ApiError } from "@/api/client";
-import { useChangeRequests, useDashboard, useL2vc, useVsi } from "@/api/hooks";
+import { useChangeRequests, useDashboard, useL2vc, useUpstreams, useVsi } from "@/api/hooks";
 import { StatusBadge } from "@/components/StatusBadge";
 import { TimeAgo } from "@/components/TimeAgo";
 import { PageHeader } from "@/components/PageHeader";
@@ -26,6 +26,10 @@ export default function Dashboard() {
   const { data: pendentes } = useChangeRequests({ status: "aguardando_aprovacao" });
   const { data: l2vc } = useL2vc();
   const { data: vsi } = useVsi();
+  // R-28: o detalhe das divergências/anomalias vive na página de Reconciliação;
+  // o dashboard fica com a contagem de upstreams ativos (mesmo shape dos cards).
+  const { data: upstreams } = useUpstreams();
+  const upstreamsAtivos = (upstreams ?? []).filter((u) => u.admin_status).length;
 
   const idades = (data?.per_device ?? [])
     .map((d) => d.snapshot_age_seconds)
@@ -86,6 +90,11 @@ export default function Dashboard() {
               <span className={`led ${((l2vc?.length ?? 0) + (vsi?.length ?? 0)) > 0 ? "green" : "gray"}`} aria-hidden="true" />
               <span className="val">{(l2vc?.length ?? 0) + (vsi?.length ?? 0)}</span>
               <span className="label">serviços<br />MPLS</span>
+            </div>
+            <div className="metric">
+              <span className={`led ${upstreamsAtivos > 0 ? "green" : "gray"}`} aria-hidden="true" />
+              <span className="val">{upstreamsAtivos}</span>
+              <span className="label">upstreams<br />ativos</span>
             </div>
           </section>
           <p className="estados-equipamentos">

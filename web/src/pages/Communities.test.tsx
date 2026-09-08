@@ -6,13 +6,20 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import Communities from "./Communities";
 import { AuthProvider } from "@/auth/auth-context";
 
-const ativa = { id: 1, name: "CUSTOMER1", notes: null, admin_status: true };
-const inativa = { id: 2, name: "PEER2", notes: "legado", admin_status: false };
+const ativa = { id: 1, name: "CUSTOMER1", tipo: "padrao", notes: null, admin_status: true };
+const inativa = { id: 2, name: "PEER2", tipo: "informacao", notes: "legado", admin_status: false };
 
 beforeAll(() => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        const body = JSON.parse(String(init.body));
+        return new Response(JSON.stringify({ id: 3, ...body, admin_status: true }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
       if (init?.method === "PATCH") {
         const body = JSON.parse(String(init.body));
         return new Response(JSON.stringify({ ...(url.includes("1") ? ativa : inativa), ...body }), {
@@ -75,6 +82,36 @@ describe("Communities", () => {
     await waitFor(() => {
       const chamadas = vi.mocked(fetch).mock.calls;
       expect(chamadas.some((c) => String(c[0]).includes("include_disabled=true"))).toBe(true);
+    });
+  });
+
+  it("mostra a coluna Tipo na tabela", async () => {
+    renderCommunities();
+    await screen.findByText("CUSTOMER1");
+    expect(screen.getByRole("columnheader", { name: "Tipo" })).toBeInTheDocument();
+    expect(screen.getByText("padrao")).toBeInTheDocument();
+  });
+
+  it("cria nova community pelo dialog com name, tipo e notes", async () => {
+    renderCommunities();
+    await screen.findByText("CUSTOMER1");
+    await userEvent.click(screen.getByRole("button", { name: "Nova community" }));
+    // textbox por role: getByLabelText colidiria com o aria-label do tooltip de ajuda.
+    await userEvent.type(screen.getByRole("textbox", { name: /^Nome \*/ }), "NEWCOM");
+    await userEvent.selectOptions(screen.getByLabelText(/^Tipo/), "informacao");
+    await userEvent.type(screen.getByRole("textbox", { name: /^Observações/ }), "nota nova");
+    await userEvent.click(screen.getByRole("button", { name: "Criar" }));
+    await waitFor(() => {
+      const chamadas = vi.mocked(fetch).mock.calls;
+      expect(
+        chamadas.some(
+          (c) =>
+            c[1]?.method === "POST" &&
+            String(c[1].body).includes('"name":"NEWCOM"') &&
+            String(c[1].body).includes('"tipo":"informacao"') &&
+            String(c[1].body).includes('"notes":"nota nova"'),
+        ),
+      ).toBe(true);
     });
   });
 });
