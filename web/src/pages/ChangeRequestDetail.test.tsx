@@ -146,4 +146,23 @@ describe("ChangeRequestDetail", () => {
     expect(screen.getByRole("button", { name: "Gerar rollback" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reconciliar" })).toBeInTheDocument();
   });
+
+  it("mostra rollback/reconciliar para CR de escopo upstream (fluxo existe)", async () => {
+    // I-2 (revisão final T26 C3): o gate `escopo === "circuito"` escondia
+    // fluxos já implementados no serviço/API/CLI — o operador web não alcança
+    // Reconciliar/Rollback de upstream. parcial é o estado com os dois botões.
+    crAtual = {
+      ...crDe(2, "parcial"),
+      circuit_id: null,
+      escopo: "upstream",
+      l2vc_id: null,
+      l2vc_name: null,
+      upstream_id: 7,
+      upstream_name: "upstream-tier1",
+    };
+    renderDetail();
+    expect(await screen.findByText("Change request #1")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Gerar rollback" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reconciliar" })).toBeInTheDocument();
+  });
 });

@@ -14,9 +14,14 @@ const API_KEY = process.env.GERENET_API_KEY ?? "dev-key-change-me";
 
 const RODADA = Date.now();
 // Dois octetos derivados do timestamp (~40 mil combos, no espaço 10.x): o
-// par colidente é global às sessões ativas do banco e2e acumulado — mesmo
-// padrão do change.spec.ts/mpls.spec.ts.
-const REDE = `10.${(Math.floor(RODADA / 256) % 200) + 10}.${(RODADA % 200) + 10}`; // 10.10.10..209.10..209
+// par colidente é global às sessões ativas do banco e2e acumulado.
+// m-1 (revisão final T26): upstream usava a MESMA fórmula de
+// change.spec.ts/mpls.spec.ts — na mesma rodada (mesmo ms) as duas derivavam
+// o par 10.x.y.1/2 e o POST da sessão esbarrava em 409 `_colidente_par` (o
+// produto rejeitava corretamente; o fumo quebrava no 201). O terceiro octeto
+// ganha base deslocada (+110) e módulo menor (o teto do octeto é 254: com
+// %200 chegaria a 309): para a MESMA RODADA os pares nunca coincidem.
+const REDE = `10.${(Math.floor(RODADA / 256) % 200) + 10}.${(RODADA % 140) + 110}`; // 10.10.110..209.10..249
 const NOME_ORG = `e2e-operadora-${RODADA}`;
 const NOME_UPSTREAM = `e2e-upstream-${RODADA}`;
 const NOME_DEVICE = `e2e-ne-upstream-${RODADA}`;

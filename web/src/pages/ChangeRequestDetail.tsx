@@ -30,6 +30,13 @@ function rotuloObjeto(cr: ChangeRequestOut): string {
   return cr.circuit_id !== null ? `#${cr.circuit_id}` : (cr.l2vc_name ?? cr.upstream_name ?? "—");
 }
 
+// Escopos com Reconciliar/Rollback: o fluxo existe no serviço/API/CLI para
+// circuito e upstream — o l2vc/vsi ainda não (rollback/reconciliação
+// circuitocêntricos; truncamento deliberado, risco S2-1 da fase 4).
+function escopoComFluxo(cr: ChangeRequestOut): boolean {
+  return cr.escopo === "circuito" || cr.escopo === "upstream";
+}
+
 const CONFIRMACOES: Record<string, { titulo: string; mensagem: string }> = {
   cancelar: {
     titulo: "Cancelar a change request?",
@@ -132,10 +139,10 @@ export default function ChangeRequestDetail() {
             {status === "aprovado" && ehExecutor && (
               <button className="primary" type="button" onClick={() => setDialogo("executar")}>Executar</button>
             )}
-            {(status === "erro" || status === "parcial") && podeEscrever && cr.escopo === "circuito" && (
+            {(status === "erro" || status === "parcial") && podeEscrever && escopoComFluxo(cr) && (
               <button type="button" onClick={() => setDialogo("reconciliar")}>Reconciliar</button>
             )}
-            {(status === "aplicado" || status === "com_divergencia" || status === "parcial") && podeEscrever && cr.escopo === "circuito" && (
+            {(status === "aplicado" || status === "com_divergencia" || status === "parcial") && podeEscrever && escopoComFluxo(cr) && (
               <button type="button" onClick={() => setDialogo("rollback")}>Gerar rollback</button>
             )}
           </>
