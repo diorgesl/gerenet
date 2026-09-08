@@ -548,10 +548,8 @@ def create_upstream(session: Session, data: UpstreamCreate, *, actor: str) -> mo
         session.flush()
         registrar(session, tipo="upstream.create", ator=actor, objeto="upstream",
                   objeto_id=up.id, antes=None, depois=dump)
-        # produto de import "escondido" por tipo: o perfil é escolhido no upstream
-        _aplica_perfil_import(session, up)
-        propagar_defaults(session, up)
-        session.commit()
+        session.commit()  # propagação às sessões ocorre no vínculo de circuitos
+        # (vincular_circuito/update_upstream chamam propagar_defaults — §3.1)
     except IntegrityError:  # noqa: F821 — import no topo do módulo
         session.rollback()
         raise ConflictError(f"Já existe um upstream com o nome {data.name}.") from None
@@ -559,7 +557,7 @@ def create_upstream(session: Session, data: UpstreamCreate, *, actor: str) -> mo
     return up
 ```
 
-(Seção do `_aplica_perfil_import` e o restante: `update_upstream` (mesmo padrão de `update_circuit`: `model_dump(exclude_unset=True)`, valida org operadora se mudar, `_valida_nomes`, registrar, commit), `disable_upstream`, `vincular_circuito` (checa circuito existe; circuito ativo; já não vinculado a outro upstream ⇒ `ConflictError("Circuito já vinculado a um upstream.")`; `flush` + registrar), `desvincular_circuito` (remove a linha — trilha na auditoria), `upstream_do_circuito` (join por `UpstreamCircuit`), `propagar_defaults`:
+(Restante do módulo: `update_upstream` (mesmo padrão de `update_circuit`: `model_dump(exclude_unset=True)`, valida org operadora se mudar, `_valida_nomes`, registrar, commit — e re-propaga defaults via `propagar_defaults` quando o dataset mudou), `disable_upstream`, `vincular_circuito` (checa circuito existe; circuito ativo; já não vinculado a outro upstream ⇒ `ConflictError("Circuito já vinculado a um upstream.")`; `flush` + registrar + **`propagar_defaults(session, up)`** — é aqui que os defaults caem nas sessões), `desvincular_circuito` (remove a linha — trilha na auditoria), `upstream_do_circuito` (join por `UpstreamCircuit`), `propagar_defaults`:
 
 ```python
 def propagar_defaults(session: Session, up: models.Upstream) -> list[int]:
@@ -960,8 +958,8 @@ def _bloco_import_upstream(session, circuito, sessao, definidas, up) -> tuple[li
 def test_reconcile_acusa_variacao_anormal_acima_da_margem(session, up_com_sessao, edge_device, snapshot_bgp_ok, monkeypatch):
     # snapshot com peer contagem 1000; sessão com maximum_prefix 1100 e esperado 1000->margem 10%
     ...
-    items = reconciliar_device(session, edge_device.id, snapshot.id)
-    assert any(i.tipo == "bgp.anomalia_prefixos" and i.severidade == "alerta" for i in items)
+    res = reconciliar_device(session, edge_device.id, snapshot_id=snapshot_bgp_ok.id)
+    assert any(i.tipo == "bgp.anomalia_prefixos" and i.severidade == "alerta" for i in res.items)
 ```
 
 - [ ] **Step 2: FAIL; Step 3: implementar** (leia `reconcile.py` L73+ e siga o shape `_item(...)`: para cada peer de sessão de upstream, `esperado = maximum_prefix` (ou expected×margem via upstream) e `encontrado = contagem coletada`; diferença > margem ⇒ item alerta. Sem esperado: histórico (últimas coberturas com contagem) e variação > 50% default ⇒ também alerta.)
