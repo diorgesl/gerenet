@@ -46,6 +46,11 @@ def pfx_produto(produto: str, afi: str) -> str:
     return f"IP-PFX-{base}-{_afi_valida(afi)}"
 
 
+def pfx_internas(afi: str) -> str:
+    """Prefix-list de rotas internas (loopbacks + p2p): IP-PFX-INTERNAS-<AFI>."""
+    return f"IP-PFX-INTERNAS-{_afi_valida(afi)}"
+
+
 def vsi_nome(name_logico: str, vsi_id: int) -> str:
     """Nome VRP do VSI: VSI-<SIGLA>-<ID> (≤63, maiúsculas, separador '-').
 

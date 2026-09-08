@@ -353,6 +353,32 @@ def _bloco_peer(sessao: models.BgpSession, rp_import: str | None, rp_export: str
     return BlocoRender("bgp_peer", "session", sessao.id, comandos)
 
 
+def internas_prefixos(session: Session) -> dict[str, list[str]]:
+    """Prefixos próprios (rotas internas): loopbacks + enlaces p2p alocados ativos.
+
+    Loopback de device ADMIN ATIVO vira /32 (v4) ou /128 (v6); p2p alocados
+    (kind p2p, status reservada) entram pela rede CIDR como armazenada.
+    Devolve {"ipv4": [...], "ipv6": [...]} ordenado e sem duplicatas.
+    """
+    saida: dict[str, list[str]] = {"ipv4": [], "ipv6": []}
+    for dev in session.scalars(select(models.Device).where(models.Device.admin_status.is_(True))):
+        if not dev.loopback:
+            continue
+        ip = ipaddress.ip_address(dev.loopback)
+        afi = "ipv4" if ip.version == 4 else "ipv6"
+        prefixo = f"{dev.loopback}/{'32' if ip.version == 4 else '128'}"
+        saida[afi].append(str(ipaddress.ip_network(prefixo, strict=False)))
+    for ip in session.scalars(
+        select(models.IpPrefix).where(
+            models.IpPrefix.kind == "p2p", models.IpPrefix.status == "reservada")
+    ):
+        rede = ipaddress.ip_network(ip.network)
+        saida["ipv4" if rede.version == 4 else "ipv6"].append(str(rede))
+    for afi, prefixos in saida.items():  # ordena e normaliza (sem dups)
+        saida[afi] = sorted(set(prefixos))
+    return saida
+
+
 def render_desejado(session: Session, device_id: int) -> RenderResult:
     """Blocos VRP desejados do device (sessões ativas; §5.2). Idempotente."""
     device = get_device(session, device_id)
