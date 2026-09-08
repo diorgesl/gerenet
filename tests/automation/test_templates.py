@@ -89,6 +89,48 @@ def test_route_policy_import_up_full() -> None:
     )
 
 
+def test_as_path_filter() -> None:
+    assert _render(
+        "as_path_filter", nome="AS-PATH-65001-OWN", regex="_65001_",
+    ) == "ip as-path-filter AS-PATH-65001-OWN permit _65001_"
+
+
+def test_route_policy_import_up_full_com_aspath_proprias() -> None:
+    # item 1 da revisão: rotas próprias via AS-PATH — nó 20 entre a prefix-list
+    # (10) e as communities (30+); sem deny_as_paths a numeração é a antiga
+    # (communities 20+, ver test_route_policy_import_up_full).
+    assert _render(
+        "route_policy_import", nome="RP-64512-IMPORT-V4", afi="ipv4",
+        lista="IP-PFX-64512-IN-V4", local_preference=120, produto="up-full",
+        deny_communities=["CF-64512-BLK-1"], deny_as_paths=["AS-PATH-65001-OWN"],
+        fail_safe=False,
+    ) == (
+        "# up-full: accept-all do provedor, exceto as proteções — nós deny separados (if-match de tipos diferentes no mesmo nó é E; a negação de bogons e de communities de bloqueio exige OU)\n"
+        "route-policy RP-64512-IMPORT-V4 deny node 10\n"
+        "if-match ip-prefix IP-PFX-64512-IN-V4\n"
+        "route-policy RP-64512-IMPORT-V4 deny node 20\n"
+        "if-match as-path-filter AS-PATH-65001-OWN\n"
+        "route-policy RP-64512-IMPORT-V4 deny node 30\n"
+        "if-match community-filter CF-64512-BLK-1\n"
+        "route-policy RP-64512-IMPORT-V4 permit node 100\n"
+        "apply local-preference 120"
+    )
+
+
+def test_route_policy_import_up_full_aspath_sem_protecoes() -> None:
+    # sem lista e sem communities: o deny de AS-PATH é a única proteção (nó 20)
+    assert _render(
+        "route_policy_import", nome="RP-64512-IMPORT-V4", afi="ipv4",
+        lista=None, local_preference=None, produto="up-full",
+        deny_communities=[], deny_as_paths=["AS-PATH-65001-OWN"], fail_safe=False,
+    ) == (
+        "# up-full: accept-all do provedor, exceto as proteções — nós deny separados (if-match de tipos diferentes no mesmo nó é E; a negação de bogons e de communities de bloqueio exige OU)\n"
+        "route-policy RP-64512-IMPORT-V4 deny node 20\n"
+        "if-match as-path-filter AS-PATH-65001-OWN\n"
+        "route-policy RP-64512-IMPORT-V4 permit node 100"
+    )
+
+
 def test_route_policy_import_up_full_v6_sem_lp() -> None:
     assert _render(
         "route_policy_import", nome="RP-64512-IMPORT-V6", afi="ipv6",

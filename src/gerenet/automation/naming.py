@@ -50,6 +50,15 @@ def pfx_produto(produto: str, afi: str) -> str:
     return f"IP-PFX-{base}-{_afi_valida(afi)}"
 
 
+def as_path_own(asn: int) -> str:
+    """As-path-filter de rotas próprias (import up-full): AS-PATH-<ASN>-OWN.
+
+    O nome deriva do ASN local do DEVICE (não do par); a regex do filtro é
+    _<ASN>_ — ASN próprio em qualquer posição do AS-PATH (design §4.1).
+    """
+    return f"AS-PATH-{_asn_valido(asn)}-OWN"
+
+
 def pfx_export(asn: int, afi: str) -> str:
     """Prefix-list de exportação de upstream: IP-PFX-<ASN>-EXPORT-<AFI>.
 

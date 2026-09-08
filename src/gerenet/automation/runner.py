@@ -448,6 +448,12 @@ def _estado_do_bloco(bloco: dict, recursos: dict, texto: str) -> str:
                 return "consta"
             return "ausente"
         return "ausente"
+    if tipo == "as_path_filter":
+        partes = comandos[0].split()
+        if len(partes) >= 4 and partes[0] == "ip" and partes[1] == "as-path-filter":
+            nome = partes[2]
+            return "consta" if f"ip as-path-filter {nome} permit" in texto else "ausente"
+        return "ausente"
     if tipo in ("route_policy_import", "route_policy_export"):
         partes = comandos[0].split()
         if len(partes) >= 2 and partes[0] == "route-policy":

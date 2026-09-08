@@ -12,8 +12,13 @@ if-match ipv6 address prefix-list {{ lista }}
 if-match ip-prefix {{ lista }}
 {% endif %}
 {% endif %}
+{% for f in deny_as_paths|default([]) %}
+route-policy {{ nome }} deny node {{ 20 + 10 * (loop.index - 1) }}
+if-match as-path-filter {{ f }}
+{% endfor %}
+{% set base_comunidades = 30 if deny_as_paths|default([]) else 20 %}
 {% for c in deny_communities|default([]) %}
-route-policy {{ nome }} deny node {{ 10 + 10 * loop.index }}
+route-policy {{ nome }} deny node {{ base_comunidades + 10 * (loop.index - 1) }}
 if-match community-filter {{ c }}
 {% endfor %}
 route-policy {{ nome }} permit node 100

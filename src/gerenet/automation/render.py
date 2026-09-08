@@ -34,6 +34,7 @@ _env = Environment(
 TIPO_ORDEM = {
     "subinterface": 10,
     "prefix_list": 20,
+    "as_path_filter": 22,
     "community_filter": 25,
     "route_policy_import": 30,
     "route_policy_export": 40,
@@ -441,14 +442,16 @@ def _autorizadas_clientes(
 
 def _bloco_import_upstream(
     session: Session, sessao: models.BgpSession, up: models.Upstream,
-    definidas: dict[tuple[str, str], set[str]],
+    definidas: dict[tuple[str, str], set[str]], asn_local: int | None,
 ) -> tuple[list[BlocoRender], str | None]:
     """Importação da sessão de upstream (§4.1) — nunca accept-all implícito.
 
     up-full: accept-all do provedor EXCETO as proteções — default negada
     quando allow_default_route=false (index 5), prefix-list de proteção
     (internas + autorizações ativas de clientes, kind != operadora, na mesma
-    AFI, via naming.pfx_in) em deny node 10, info-communities marcadas
+    AFI, via naming.pfx_in) em deny node 10, as-path-filter das rotas próprias
+    (ASN local do device — naming.as_path_own; sem device.asn ⇒ sem filtro)
+    em deny node 20, info-communities marcadas
     bloquear (direcao import/ambos) como nós deny separados (um por filter —
     o VRP faz E de if-match de tipos diferentes no mesmo nó), permit node 100
     com local-preference.
@@ -488,6 +491,7 @@ def _bloco_import_upstream(
         uc for uc in list_upstream_communities(session, up.id)
         if uc.purpose == "info" and uc.direcao in ("import", "ambos")
     ]
+    deny_as_paths: list[str] = []
     if produto == "up-full":
         entradas: list[dict] = []
         if sessao.allow_default_route is False:
@@ -504,6 +508,10 @@ def _bloco_import_upstream(
         nome_pfx = naming.pfx_in(asn_par, afi)
         cfs = [uc for uc in info_import if uc.bloquear]
         sufixo_cf = "BLK"
+        # item 1 da revisão: rotas próprias (AS-PATH com o ASN do device);
+        # sem device.asn a proteção ficaria derivada de um ASN inexistente
+        if asn_local is not None:
+            deny_as_paths = [naming.as_path_own(asn_local)]
     elif produto == "up-parcial":
         cfs = [uc for uc in info_import if not uc.bloquear]
         if not cfs:
@@ -535,6 +543,18 @@ def _bloco_import_upstream(
     # entradas, o template pula o nó de deny da proteção (o accept-all do
     # up-full permanece só com os nós de community, permit node 100).
     lista_protecao = nome_pfx if entradas else None
+    for nome_aspath in deny_as_paths:
+        _apensa_definicao(
+            blocos, definidas,
+            BlocoRender(
+                "as_path_filter", "session", sessao.id,
+                _render_template(
+                    "as_path_filter",
+                    {"nome": nome_aspath, "regex": f"_{asn_local}_"},
+                ).splitlines(),
+            ),
+            ("as_path_filter", nome_aspath),
+        )
     if entradas:
         _apensa_definicao(
             blocos, definidas,
@@ -556,6 +576,7 @@ def _bloco_import_upstream(
                 "produto": produto, "deny_communities": [
                     f"CF-{asn_par}-{sufixo_cf}-{i + 1}" for i, _ in enumerate(cfs)
                 ],
+                "deny_as_paths": deny_as_paths,
                 "fail_safe": False,
             }).splitlines(),
         ),
@@ -697,7 +718,7 @@ def render_desejado(session: Session, device_id: int) -> RenderResult:
             # definição não apensa bloco, mas a referência continua (Ruling R5).
             up = _eh_upstream(session, sessao)
             if up is not None:
-                import_blocos, rp_import = _bloco_import_upstream(session, sessao, up, definidas)
+                import_blocos, rp_import = _bloco_import_upstream(session, sessao, up, definidas, device.asn)
                 export_blocos, rp_export = _bloco_export_upstream(session, sessao, up, definidas)
             else:
                 import_blocos, rp_import = _bloco_import(session, circuito, sessao, definidas)
