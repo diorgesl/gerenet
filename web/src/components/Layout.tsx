@@ -17,6 +17,7 @@ const GRUPOS_NAV: { rotulo: string; itens: { para: string; rotulo: string; admin
   {
     rotulo: "Roteamento",
     itens: [
+      { para: "/upstreams", rotulo: "Upstreams" },
       { para: "/bgp-sessions", rotulo: "Sessões BGP" },
       { para: "/prefix-authorizations", rotulo: "Prefixos autorizados" },
       { para: "/policy-profiles", rotulo: "Perfis de política" },
@@ -26,7 +27,6 @@ const GRUPOS_NAV: { rotulo: string; itens: { para: string; rotulo: string; admin
   {
     rotulo: "MPLS",
     itens: [
-      { para: "/upstreams", rotulo: "Upstreams" },
       { para: "/mpls/domains", rotulo: "Domínios" },
       { para: "/mpls/l2vc", rotulo: "Serviços L2VC" },
       { para: "/mpls/vsi", rotulo: "VSIs" },
