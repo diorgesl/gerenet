@@ -49,6 +49,29 @@ class DeviceOut(BaseModel):
     tags: list[str]
 
 
+class CredentialGroupCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    vault_path: str = Field(min_length=1, max_length=255)
+    kind: str = Field(default="tacacs_password", max_length=32)
+
+
+class CredentialGroupUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+    vault_path: str | None = Field(default=None, min_length=1, max_length=255)
+    kind: str | None = Field(default=None, max_length=32)
+    admin_status: bool | None = None
+
+
+class CredentialGroupOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    kind: str
+    vault_path: str
+    admin_status: bool
+
+
 class SnapshotOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
