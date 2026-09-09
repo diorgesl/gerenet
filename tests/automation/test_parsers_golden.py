@@ -10,8 +10,35 @@ def test_parse_version_contra_captura_real() -> None:
     saida = FIXTURE.read_text(encoding="utf-8")
     linhas = parse_template("version", saida)
     assert len(linhas) == 1
-    assert linhas[0]["version"]  # versão VRP identificada
-    assert linhas[0]["uptime"]
+    assert linhas[0] == {
+        "version": "8.240",
+        "firmware": "NetEngine 8000 V800R024C00SPC500",
+        "uptime": "33 days, 4 hours, 8 minutes",
+    }
+
+
+def test_parse_version_s6730_contra_captura_real() -> None:
+    saida = (FIXTURES / "s6730_display_version.txt").read_text(encoding="utf-8")
+    linhas = parse_template("version", saida)
+    assert len(linhas) == 1
+    assert linhas[0] == {
+        "version": "5.170",
+        "firmware": "S6730 V200R019C10SPC500",
+        "uptime": "84 weeks, 5 days, 8 hours, 41 minutes",
+    }
+
+
+def test_parse_version_s6750_yunshan_contra_captura_real() -> None:
+    # CloudEngine S6750 (YunShan OS): não emite a linha "VRP (R) software" —
+    # a versão vem de "Version X.Y.Z.W (plataforma Vyyyyy...)".
+    saida = (FIXTURES / "s6750_display_version.txt").read_text(encoding="utf-8")
+    linhas = parse_template("version", saida)
+    assert len(linhas) == 1
+    assert linhas[0] == {
+        "version": "1.24.0.1",
+        "firmware": "S6700 V600R024C00SPC500",
+        "uptime": "592 days, 8 hours, 48 minutes",
+    }
 
 
 def test_parse_interface_brief_contra_captura_real() -> None:

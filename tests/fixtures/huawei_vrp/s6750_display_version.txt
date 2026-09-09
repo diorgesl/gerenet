@@ -1,0 +1,18 @@
+Huawei YunShan OS
+Version 1.24.0.1 (S6700 V600R024C00SPC500)
+Copyright (C) 2021-2024 Huawei Technologies Co., Ltd.
+HUAWEI CloudEngine S6750-H uptime is 592 days, 8 hours, 48 minutes
+Patch Version: V600R024SPH120
+
+S6750-H36C(Master) 1 : uptime is  592 days, 8 hours, 47 minutes
+        StartupTime 2025/01/25   04:05:17
+Memory      Size    : 8192 M bytes
+Flash       Size    : 4096 M bytes
+S6750-H36C version information:
+1.PCB       Version : CEM32CQ4BQP01 VER A
+2.MAB       Version : 1
+3.Board     Type    : S6750-H36C
+4.BIOS      Version : 1324
+5.CPLD1     Version : 258
+  CPLD2     Version : 258
+  CPLD3     Version : 258

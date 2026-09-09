@@ -1,6 +1,10 @@
 Value Required version (\S+)
 Value uptime (.+)
+Value firmware ([^()]+)
 
 Start
-  ^VRP \(R\) software, Version ${version}
+  ^VRP \(R\) software, Version ${version} \(${firmware}\)
+  # CloudEngine (YunShan OS): sem a linha "VRP (R) software"; versão em
+  # "Version X.Y.Z.W (plataforma Vyyyyy...)" — ex.: S6750-H.
+  ^Version ${version} \(${firmware}\)
   ^.* uptime is ${uptime} -> Record

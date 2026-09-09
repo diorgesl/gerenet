@@ -1,14 +1,14 @@
 Huawei Versatile Routing Platform Software
 VRP (R) software, Version 8.240 (NetEngine 8000 V800R024C00SPC500)
 Copyright (C) 2012-2024 Huawei Technologies Co., Ltd.
-HUAWEI NetEngine 8000 F1A-8H20Q uptime is 26 days, 3 hours, 39 minutes
+HUAWEI NetEngine 8000 F1A-8H20Q uptime is 33 days, 4 hours, 8 minutes
 Patch Version: V800R024SPH150
 
 NetEngine 8000 F1A-8H20Q version information:
-- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 IPU version information:
 
-IPU (Master) 1 : uptime is 26 days, 3 hours, 39 minutes
+IPU (Master) 1 : uptime is 33 days, 4 hours, 7 minutes
   StartupTime 2026/08/07   08:52:34
   SDRAM Memory Size   : 16384 M bytes
   FLASH Memory Size   : 128 M bytes
@@ -27,17 +27,17 @@ IPU (Master) 1 : uptime is 26 days, 3 hours, 39 minutes
   TM          Version : 100
   NSE         Version : NSE REV A
   BootROM     Version : 08.25
-- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
-Power version information: 
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+Power version information:
 
 POWER 3's version information:
   PCB     Version : PDC1000S12-DB REV B
   DCDC    Version : 1.2
   PFC     Version : 0.0
-- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 CLK version information:
 
-CLK 9 : uptime is 26 days, 3 hours, 39 minutes
+CLK 9 : uptime is 33 days, 4 hours, 7 minutes
   StartupTime 2026/08/07   08:52:34
   FPGA     Version : 256
   DSP      Version : 30502015
