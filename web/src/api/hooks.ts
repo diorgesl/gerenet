@@ -12,6 +12,7 @@ import type {
   CommunityOut,
   CommunityUpdateIn,
   ContactOut,
+  CredentialGroupOut,
   DashboardOut,
   DesiredConfigOut,
   DeviceOut,
@@ -134,6 +135,18 @@ export const useSites = (opts?: { includeDisabled?: boolean }) => useLista<SiteO
 export const useOrganizations = (opts?: { includeDisabled?: boolean }) => useLista<OrganizationOut>("organizations", "/api/v1/organizations", opts);
 export const useContacts = (opts?: { includeDisabled?: boolean }) => useLista<ContactOut>("contacts", "/api/v1/contacts", opts);
 
+export const useCredentialGroups = (opts?: { includeDisabled?: boolean }) =>
+  useLista<CredentialGroupOut>("credential-groups", "/api/v1/credential-groups", opts);
+export type CredentialGroupCreateIn = { name: string; vault_path: string; kind?: string };
+export type CredentialGroupUpdateIn = Partial<CredentialGroupCreateIn>;
+export const useCredentialGroupCriar = () =>
+  useCriar<CredentialGroupCreateIn, CredentialGroupOut>("credential-groups", "/api/v1/credential-groups");
+export const useCredentialGroupAtualizar = () =>
+  useAtualizar<CredentialGroupUpdateIn & { admin_status?: boolean }, CredentialGroupOut>(
+    "credential-groups",
+    "/api/v1/credential-groups",
+  );
+
 export type DeviceCreateIn = {
   name: string;
   management_address: string;
@@ -143,6 +156,7 @@ export type DeviceCreateIn = {
   role?: string | null;
   site_id?: number | null;
   asn?: number | null;
+  credential_group_id?: number | null;
   tags?: string[];
 };
 export const useDeviceCriar = () => useCriar<DeviceCreateIn, DeviceOut>("devices", "/api/v1/devices");

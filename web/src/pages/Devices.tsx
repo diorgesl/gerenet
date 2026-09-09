@@ -4,6 +4,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "@/auth/auth-context";
 import { ApiError } from "@/api/client";
 import {
+  useCredentialGroups,
   useDeviceAtualizar,
   useDeviceColetar,
   useDeviceCriar,
@@ -30,9 +31,10 @@ const FORM_VAZIO = {
   asn: "",
   tags: "",
   site_id: "",
+  credential_group_id: "",
 };
 
-const FORM_EDIT_VAZIO = { ssh_port: "", model: "", family: "", role: "", site_id: "", asn: "", tags: "" };
+const FORM_EDIT_VAZIO = { ssh_port: "", model: "", family: "", role: "", site_id: "", asn: "", tags: "", credential_group_id: "" };
 
 export default function Devices() {
   const { podeEscrever } = useAuth();
@@ -40,6 +42,7 @@ export default function Devices() {
   const [incluirInativos, setIncluirInativos] = useState(false);
   const { data, isLoading, error } = useDevices({ includeDisabled: incluirInativos });
   const { data: sites } = useSites();
+  const { data: grupos } = useCredentialGroups();
   const criar = useDeviceCriar();
   const atualizar = useDeviceAtualizar();
   const coletar = useDeviceColetar();
@@ -66,6 +69,7 @@ export default function Devices() {
         asn: form.asn === "" ? null : Number(form.asn),
         tags: form.tags.split(",").map((t) => t.trim()).filter(Boolean),
         site_id: form.site_id === "" ? null : Number(form.site_id),
+        credential_group_id: form.credential_group_id === "" ? null : Number(form.credential_group_id),
       });
       setForm(FORM_VAZIO);
     } catch (err) {
@@ -82,6 +86,7 @@ export default function Devices() {
       site_id: d.site_id === null ? "" : String(d.site_id),
       asn: d.asn === null ? "" : String(d.asn),
       tags: d.tags.join(", "),
+      credential_group_id: d.credential_group_id === null ? "" : String(d.credential_group_id),
     });
     setErroEdit(null);
     setEditando(d);
@@ -101,6 +106,7 @@ export default function Devices() {
         site_id: formEdit.site_id === "" ? null : Number(formEdit.site_id),
         asn: formEdit.asn === "" ? null : Number(formEdit.asn),
         tags: formEdit.tags.split(",").map((t) => t.trim()).filter(Boolean),
+        credential_group_id: formEdit.credential_group_id === "" ? null : Number(formEdit.credential_group_id),
       });
       setEditando(null);
     } catch (err) {
@@ -160,6 +166,16 @@ export default function Devices() {
               ))}
             </select>
           </FormField>
+          <FormField label="Grupo de credencial" help={help("device.credential_group")}>
+            <select value={form.credential_group_id} onChange={(e) => setForm({ ...form, credential_group_id: e.target.value })}>
+              <option value="">—</option>
+              {(grupos ?? []).map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name}
+                </option>
+              ))}
+            </select>
+          </FormField>
           <FormField label="Tags (separadas por vírgula)" help={help("device.tags")}>
             <input value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })} />
           </FormField>
@@ -174,6 +190,11 @@ export default function Devices() {
           { key: "name", title: "Nome", render: (d) => <Link to={`/devices/${d.id}`}>{d.name}</Link> },
           { key: "management_address", title: "IP" },
           { key: "site", title: "Site", render: (d) => sites?.find((s) => s.id === d.site_id)?.name ?? "—" },
+          {
+            key: "credential",
+            title: "Credencial",
+            render: (d) => grupos?.find((g) => g.id === d.credential_group_id)?.name ?? "—",
+          },
           { key: "role", title: "Função", render: (d) => d.role ?? "—" },
           { key: "comm_status", title: "Comunicação", render: (d) => <StatusBadge estado={d.comm_status} /> },
           { key: "last_collected_at", title: "Última coleta", render: (d) => <TimeAgo iso={d.last_collected_at} /> },
@@ -260,6 +281,22 @@ export default function Devices() {
                     {s.name}
                   </option>
                 ))}
+              </select>
+            </FormField>
+            <FormField label="Grupo de credencial" help={help("device.credential_group")}>
+              <select value={formEdit.credential_group_id} onChange={(e) => setFormEdit({ ...formEdit, credential_group_id: e.target.value })}>
+                <option value="">—</option>
+                {(grupos ?? []).map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.name}
+                  </option>
+                ))}
+                {formEdit.credential_group_id !== "" &&
+                  !(grupos ?? []).some((g) => g.id === Number(formEdit.credential_group_id)) && (
+                    <option value={formEdit.credential_group_id}>
+                      {`(desativado) #${formEdit.credential_group_id}`}
+                    </option>
+                  )}
               </select>
             </FormField>
             <FormField label="ASN" help={help("device.asn")}>

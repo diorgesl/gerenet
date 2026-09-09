@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -12,6 +12,9 @@ const equipamentos = [
     name: "ne8000-01",
     management_address: "10.99.0.1",
     site_id: 1,
+    credential_group_id: null,
+    ssh_port: null,
+    tags: [],
     role: "core",
     comm_status: "ok",
     last_collected_at: null,
@@ -38,10 +41,19 @@ beforeAll(() => {
         );
       }
       if (url === "/api/v1/devices/1" && init?.method === "PATCH") {
-        return new Response(JSON.stringify({ ...equipamentos[0], admin_status: false }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
+        const body = JSON.parse(String(init.body));
+        return new Response(
+          JSON.stringify({ ...equipamentos[0], admin_status: true, credential_group_id: body?.credential_group_id ?? null }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url === "/api/v1/credential-groups") {
+        return new Response(
+          JSON.stringify([
+            { id: 1, name: "automacao", kind: "tacacs_password", vault_path: "gerenet/credential-groups/automacao", admin_status: true },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
       }
       if (url === "/api/v1/devices") {
         return new Response(JSON.stringify(equipamentos), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -111,6 +123,24 @@ describe("Devices", () => {
       const patch = chamadas.find((c) => c[0] === "/api/v1/devices/1" && c[1]?.method === "PATCH");
       expect(patch).toBeTruthy();
       expect(JSON.parse(String(patch![1].body))).toEqual({ admin_status: false });
+    });
+  });
+
+  it("vincula grupo de credencial ao editar um equipamento", async () => {
+    renderDevices();
+    await waitFor(() => expect(screen.getByText("ne8000-01")).toBeInTheDocument());
+
+    await userEvent.click(screen.getAllByRole("button", { name: "Editar" })[0]);
+    const dialog = await screen.findByRole("dialog");
+    // combobox por role + nome: getByLabelText("Grupo de credencial") colidiria com o aria-label do tooltip de ajuda.
+    await userEvent.selectOptions(within(dialog).getByRole("combobox", { name: /^Grupo de credencial/ }), "1");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Salvar" }));
+    await waitFor(() => {
+      const chamadas = vi.mocked(fetch).mock.calls as unknown as [string, RequestInit][];
+      const chamadasPATCH = chamadas.filter((c) => c[0] === "/api/v1/devices/1" && c[1]?.method === "PATCH");
+      const ultimoPatch = chamadasPATCH.at(-1);
+      expect(ultimoPatch).toBeTruthy();
+      expect(JSON.parse(String(ultimoPatch![1].body))).toMatchObject({ credential_group_id: 1 });
     });
   });
 });

@@ -27,8 +27,9 @@ def enqueue_collect(device_id: int, *, actor: str, origin: str) -> dict:
             return {
                 "queued": False,
                 "message": (
-                    f"Equipamento {dev.name} não possui grupo de credencial — registre com "
-                    "`gerenet credential-groups create` e vincule o grupo ao equipamento."
+                    f"Equipamento {dev.name} não possui grupo de credencial — crie-o na "
+                    "página Credenciais (ou com `gerenet credential-groups create`) e "
+                    "vincule-o ao equipamento em Equipamentos > Editar."
                 ),
             }
 

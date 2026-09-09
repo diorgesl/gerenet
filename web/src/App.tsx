@@ -6,6 +6,7 @@ import Dashboard from "@/pages/Dashboard";
 import Users from "@/pages/Users";
 import Devices from "@/pages/Devices";
 import DeviceDetail from "@/pages/DeviceDetail";
+import CredentialGroups from "@/pages/CredentialGroups";
 import Sites from "@/pages/Sites";
 import Organizations from "@/pages/Organizations";
 import Contacts from "@/pages/Contacts";
@@ -47,6 +48,7 @@ export default function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/devices" element={<Devices />} />
         <Route path="/devices/:id" element={<DeviceDetail />} />
+        <Route path="/credential-groups" element={<CredentialGroups />} />
         <Route path="/sites" element={<Sites />} />
         <Route path="/organizations" element={<Organizations />} />
         <Route path="/contacts" element={<Contacts />} />

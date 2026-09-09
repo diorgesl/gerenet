@@ -19,6 +19,12 @@ export const HELP = {
   "device.asn": "ASN local (1–4294967295, reservados barrados) — vira o asn_local default das sessões BGP do equipamento.",
   "device.site": "Site/POP onde o equipamento está instalado.",
   "device.tags": "Etiquetas livres, separadas por vírgula (ex.: BGP, MPLS, contingência).",
+  "device.credential_group": "Grupo de credencial usado para acessar o equipamento — o segredo fica no Vault; aqui fica só o vínculo.",
+
+  // Credential groups
+  "credential_group.name": "Nome único do grupo (1–64); identificador referenciado pelo equipamento.",
+  "credential_group.vault_path": "Caminho lógico no Vault onde o segredo do grupo é armazenado (ex.: gerenet/credential-groups/automacao).",
+  "credential_group.kind": "Tipo de credencial do grupo (default: tacacs_password).",
 
   // Organizations
   "organization.name": "Nome de exibição da organização (1–128 caracteres).",

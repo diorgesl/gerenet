@@ -9,6 +9,7 @@ from gerenet.db import get_db
 from gerenet.domain import models
 from gerenet.domain.audit import registrar
 from gerenet.domain.schemas import DeviceCreate, DeviceOut, DeviceUpdate, SnapshotOut
+from gerenet.domain.services import credential_groups as groups_svc
 from gerenet.domain.services import devices as svc
 from gerenet.domain.services.errors import ConflictError, NotFoundError, ValidationError
 from gerenet.domain.validators import asn_valido
@@ -36,6 +37,8 @@ def criar(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/{device_id}", response_model=DeviceOut)
@@ -61,6 +64,8 @@ def atualizar(
     try:
         if mudancas.get("asn") is not None and not asn_valido(mudancas["asn"]):
             raise ValidationError(f"ASN inválido ou reservado: {mudancas['asn']}.")
+        if mudancas.get("credential_group_id") is not None:
+            groups_svc.get_credential_group(session, mudancas["credential_group_id"])
         antes = {campo: getattr(dev, campo) for campo in mudancas}
         desativando = (
             mudancas.get("admin_status") is False
@@ -96,6 +101,9 @@ def atualizar(
     except ValidationError as exc:
         session.rollback()
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except NotFoundError as exc:
+        session.rollback()
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     return dev
 
 

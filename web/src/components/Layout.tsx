@@ -17,6 +17,7 @@ const GRUPOS_NAV: GrupoNav[] = [
     rotulo: "Infraestrutura",
     itens: [
       { para: "/devices", rotulo: "Equipamentos" },
+      { para: "/credential-groups", rotulo: "Credenciais" },
       { para: "/sites", rotulo: "Sites" },
       { para: "/circuits", rotulo: "Circuitos" },
     ],

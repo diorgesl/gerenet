@@ -48,6 +48,13 @@ export const ICONES_NAV: Record<string, ReactNode> = {
       {L(6, 18, 6.01, 18)}
     </Svg>
   ),
+  "/credential-groups": (
+    <Svg>
+      {C(7.5, 15.5, 5.5)}
+      {R("m21 2-9.6 9.6")}
+      {R("m15.5 7.5 3 3L22 7l-3-3")}
+    </Svg>
+  ),
   "/sites": (
     <Svg>
       {R("M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z")}
