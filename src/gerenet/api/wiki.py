@@ -54,6 +54,13 @@ def _order(meta: dict[str, str]) -> int:
         return 999
 
 
+def _secao_order(meta: dict[str, str]) -> int:
+    try:
+        return int(meta.get("secao_order", "999"))
+    except (TypeError, ValueError):
+        return 999
+
+
 def _renderizar(texto_md: str) -> str:
     html = markdown.markdown(texto_md, extensions=["tables", "fenced_code"])
     return nh3.clean(html, tags=_TAGS, attributes=_ATRIBUTOS, url_schemes={"http", "https", "mailto"})
@@ -61,21 +68,27 @@ def _renderizar(texto_md: str) -> str:
 
 def listar_wiki(wiki_dir: Path) -> list[dict]:
     paginas = []
+    # Ordem da seção = menor `secao_order` declarado entre suas páginas; seção
+    # sem declaração vai para o fim (999). Sem isso, a posição de uma seção
+    # dependia do título da primeira página de order 1, que era puro acaso.
+    ordem_secao: dict[str, int] = {}
     for arquivo in sorted(wiki_dir.rglob("*.md")):
         if arquivo.name.startswith("_"):
             continue
         texto = arquivo.read_text(encoding="utf-8")
         meta, corpo = _frontmatter(texto)
+        secao = meta.get("secao", "Geral")
+        ordem_secao[secao] = min(ordem_secao.get(secao, 999), _secao_order(meta))
         paginas.append(
             {
                 "slug": _slug(arquivo),
                 "titulo": _titulo(meta, corpo),
-                "secao": meta.get("secao", "Geral"),
+                "secao": secao,
                 "order": _order(meta),
                 "em_breve": meta.get("em_breve", "").lower() in ("true", "1", "sim"),
             }
         )
-    paginas.sort(key=lambda p: (p["order"], p["titulo"]))
+    paginas.sort(key=lambda p: (ordem_secao[p["secao"]], p["order"], p["titulo"]))
     return paginas
 
 

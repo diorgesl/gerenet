@@ -16,6 +16,7 @@ import type {
   DashboardOut,
   DesiredConfigOut,
   DeviceOut,
+  HostkeyScanOut,
   JobRunOut,
   L2vcCreateIn,
   L2vcOut,
@@ -171,6 +172,27 @@ export function useDeviceColetar() {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["devices"] });
       void qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+}
+
+export function useDeviceHostkeyScan() {
+  return useMutation({
+    mutationFn: (deviceId: number) =>
+      apiFetch<HostkeyScanOut>(`/api/v1/devices/${deviceId}/hostkey/scan`, { method: "POST" }),
+  });
+}
+
+export function useDeviceHostkeyRegistrar() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ deviceId, fingerprint }: { deviceId: number; fingerprint: string }) =>
+      apiFetch<DeviceOut>(`/api/v1/devices/${deviceId}/hostkey`, {
+        method: "POST",
+        body: { fingerprint },
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["devices"] });
     },
   });
 }

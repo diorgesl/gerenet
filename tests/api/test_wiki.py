@@ -69,6 +69,19 @@ def test_docs_wiki_ausente_lista_vazia(client: TestClient, tmp_path) -> None:
     assert client.get("/api/v1/wiki", headers=_auth()).json() == []
 
 
+def test_indice_ordena_secoes_por_secao_order(client: TestClient, tmp_path) -> None:
+    (tmp_path / "aaa.md").write_text(
+        "---\ntitle: Zeta\nsecao: Zeta\norder: 1\nsecao_order: 2\n---\n# Zeta\n\ncorpo.\n"
+    )
+    (tmp_path / "bbb.md").write_text(
+        "---\ntitle: Alfa\nsecao: Alfa\norder: 1\nsecao_order: 1\n---\n# Alfa\n\ncorpo.\n"
+    )
+    resp = client.get("/api/v1/wiki", headers=_auth())
+    # Seções explícitas primeiro (na ordem do secao_order); as demais ficam no
+    # fim, ordenadas como antes por order/titulo (index depois mpls).
+    assert [p["slug"] for p in resp.json()] == ["bbb", "aaa", "index", "mpls"]
+
+
 def test_order_nao_numerico_nao_derruba_indice(client: TestClient, tmp_path) -> None:
     (tmp_path / "index.md").write_text(
         "---\ntitle: Ordem inválida\norder: abc\n---\n# Ordem inválida\n\ncorpo.\n"

@@ -1,6 +1,7 @@
 ---
 title: Organizações e contatos
 secao: Cadastro
+secao_order: 2
 order: 1
 ---
 

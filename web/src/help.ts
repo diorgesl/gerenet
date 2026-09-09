@@ -20,6 +20,7 @@ export const HELP = {
   "device.site": "Site/POP onde o equipamento está instalado.",
   "device.tags": "Etiquetas livres, separadas por vírgula (ex.: BGP, MPLS, contingência).",
   "device.credential_group": "Grupo de credencial usado para acessar o equipamento — o segredo fica no Vault; aqui fica só o vínculo.",
+  "device.host_key_fingerprint": "Fingerprint SHA-256 da host key SSH do equipamento. \"Gerar fingerprint\" lê da rede de gerência (sem credencial); conferir o valor antes de salvar — sem a host key a coleta se recusa a conectar.",
 
   // Credential groups
   "credential_group.name": "Nome único do grupo (1–64); identificador referenciado pelo equipamento.",

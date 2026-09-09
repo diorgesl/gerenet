@@ -628,6 +628,8 @@ input[type="checkbox"], input[type="radio"], .field input[type="checkbox"], .fie
 .grid-form > button { align-self: end; justify-self: start; min-height: 44px; margin: 0; }
 .form-inline { gap: 0.85rem; }
 .form-inline .field { flex: 1 1 180px; }
+.hostkey-linha { display: flex; gap: 0.5rem; }
+.hostkey-linha > input { flex: 1 1 auto; min-width: 0; }
 .inline-check { min-height: 44px; gap: 0.65rem; margin: 0 0 1rem; }
 /* O controle acompanha o centro do texto na linha clicável de 44 px. */
 .inline-check > input[type="checkbox"], .inline-check > input[type="radio"] {

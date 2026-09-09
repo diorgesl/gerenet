@@ -1,6 +1,7 @@
 ---
 title: Visão geral e conceitos
 secao: Começando
+secao_order: 1
 order: 1
 ---
 
@@ -29,6 +30,7 @@ coletado dos roteadores e switches.
 |---|---|
 | Primeiro acesso, perfis e primeiro equipamento | [Primeiros passos](/wiki/comecar) |
 | Cadastrar equipamento e entender coleta/snapshots | [Equipamentos, coleta e snapshots](/wiki/equipamentos) |
+| Preparar credencial (Vault) e host key antes da primeira coleta | [Preparação para a coleta: Vault e host keys](/wiki/coleta-preparacao) |
 | Cadastrar organização e contatos | [Organizações e contatos](/wiki/organizacao) |
 | Cadastrar circuito e reservar VLAN/endereços p2p | [Circuitos, VLANs e IPAM](/wiki/circuitos) |
 | Cadastrar sessão BGP, autorizações, perfis e communities | [Sessões BGP, autorizações, perfis e communities](/wiki/roteamento) |

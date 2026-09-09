@@ -34,6 +34,19 @@ beforeAll(() => {
             headers: { "Content-Type": "application/json" },
           });
         }
+        if (url === "/api/v1/devices/1/hostkey/scan") {
+          return new Response(JSON.stringify({ fingerprint: "sha256:abc123" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (url === "/api/v1/devices/1/hostkey") {
+          const body = JSON.parse(String(init.body));
+          return new Response(
+            JSON.stringify({ ...equipamentos[0], host_key_fingerprint: body.fingerprint }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
         const body = JSON.parse(String(init.body));
         return new Response(
           JSON.stringify({ id: 2, ...body, site_id: null, comm_status: "unknown", last_collected_at: null, admin_status: true }),
@@ -123,6 +136,24 @@ describe("Devices", () => {
       const patch = chamadas.find((c) => c[0] === "/api/v1/devices/1" && c[1]?.method === "PATCH");
       expect(patch).toBeTruthy();
       expect(JSON.parse(String(patch![1].body))).toEqual({ admin_status: false });
+    });
+  });
+
+  it("Gerar fingerprint preenche o campo e Salvar registra a host key", async () => {
+    renderDevices();
+    await waitFor(() => expect(screen.getByText("ne8000-01")).toBeInTheDocument());
+
+    await userEvent.click(screen.getAllByRole("button", { name: "Editar" })[0]);
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Gerar fingerprint" }));
+    const campo = within(dialog).getByRole("textbox", { name: /^Host key/ });
+    await waitFor(() => expect(campo).toHaveValue("sha256:abc123"));
+    await userEvent.click(within(dialog).getByRole("button", { name: "Salvar" }));
+    await waitFor(() => {
+      const chamadas = vi.mocked(fetch).mock.calls as unknown as [string, RequestInit][];
+      const reg = chamadas.find((c) => c[0] === "/api/v1/devices/1/hostkey" && c[1]?.method === "POST");
+      expect(reg).toBeTruthy();
+      expect(JSON.parse(String(reg![1].body))).toEqual({ fingerprint: "sha256:abc123" });
     });
   });
 

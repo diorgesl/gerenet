@@ -24,6 +24,11 @@ export interface DeviceOut {
   last_collected_at: string | null;
   tags: string[];
   credential_group_id: number | null;
+  host_key_fingerprint: string | null;
+}
+
+export interface HostkeyScanOut {
+  fingerprint: string;
 }
 export interface CredentialGroupOut {
   id: number;

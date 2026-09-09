@@ -1,6 +1,7 @@
 ---
 title: Equipamentos, coleta e snapshots
 secao: Começando
+secao_order: 1
 order: 3
 ---
 
@@ -27,7 +28,8 @@ gerência. Os campos principais:
 Há ainda: status administrativo (`admin_status`), status de comunicação
 (`comm_status`), data da última coleta, versão VRP/uptime (preenchidos pela
 coleta) e fingerprint da host key SSH (registrada por
-`gerenet hostkey register <equipamento> <fingerprint>`).
+`gerenet hostkey register <equipamento> <fingerprint>`; passo a passo em
+[Preparação para a coleta: Vault e host keys](/wiki/coleta-preparacao)).
 
 ## Status de comunicação
 

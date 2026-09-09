@@ -1,6 +1,7 @@
 ---
 title: Mudanças controladas nos equipamentos
 secao: Em breve
+secao_order: 6
 order: 1
 em_breve: true
 ---

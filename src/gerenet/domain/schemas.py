@@ -30,6 +30,10 @@ class DeviceUpdate(BaseModel):
     credential_group_id: int | None = None
 
 
+class HostkeyIn(BaseModel):
+    fingerprint: str = Field(min_length=1, max_length=256)
+
+
 class DeviceOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -49,6 +53,7 @@ class DeviceOut(BaseModel):
     last_collected_at: datetime | None
     tags: list[str]
     credential_group_id: int | None
+    host_key_fingerprint: str | None
 
 
 class CredentialGroupCreate(BaseModel):

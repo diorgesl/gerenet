@@ -5,10 +5,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from gerenet.api.deps import Actor, require_actor
+from gerenet.automation.hostkeys import HostKeyScanError, fingerprint_ssh, normalize_fingerprint
+from gerenet.config import get_settings
 from gerenet.db import get_db
 from gerenet.domain import models
 from gerenet.domain.audit import registrar
-from gerenet.domain.schemas import DeviceCreate, DeviceOut, DeviceUpdate, SnapshotOut
+from gerenet.domain.schemas import DeviceCreate, DeviceOut, DeviceUpdate, HostkeyIn, SnapshotOut
 from gerenet.domain.services import credential_groups as groups_svc
 from gerenet.domain.services import devices as svc
 from gerenet.domain.services.errors import ConflictError, NotFoundError, ValidationError
@@ -104,6 +106,61 @@ def atualizar(
     except NotFoundError as exc:
         session.rollback()
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return dev
+
+
+@router.post("/{device_id}/hostkey/scan")
+def escanear_hostkey(device_id: int, session: SessionDep) -> dict:
+    """Lê a host key do equipamento sem autenticar e devolve o fingerprint.
+
+    Só usa a rede de gerência; a gravação continua dependendo da confirmação do
+    operador (POST /hostkey), pois o fingerprint é a defesa contra MITM.
+    """
+    try:
+        dev = svc.get_device(session, device_id)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    s = get_settings()
+    try:
+        fp = fingerprint_ssh(dev.management_address, dev.ssh_port or 22, s.connect_timeout)
+    except HostKeyScanError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Não foi possível obter a host key de {dev.name}: {exc}",
+        ) from exc
+    return {"fingerprint": fp}
+
+
+@router.post("/{device_id}/hostkey", response_model=DeviceOut)
+def registrar_hostkey(
+    device_id: int,
+    data: HostkeyIn,
+    session: SessionDep,
+    actor: Annotated[Actor, Depends(require_actor)],
+) -> object:
+    """Registra a fingerprint recebida (o operador o confere antes de chamar)."""
+    try:
+        dev = svc.get_device(session, device_id)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    fp = normalize_fingerprint(data.fingerprint)
+    if not fp.startswith("sha256:"):
+        raise HTTPException(
+            status_code=400,
+            detail="Fingerprint deve usar o esquema SHA-256 (ex.: sha256:AbCdEf).",
+        )
+    dev.host_key_fingerprint = fp
+    registrar(
+        session,
+        tipo="hostkey.register",
+        ator=actor.nome,
+        objeto="device",
+        objeto_id=dev.id,
+        antes=None,
+        depois={"fingerprint": fp},
+    )
+    session.commit()
+    session.refresh(dev)
     return dev
 
 

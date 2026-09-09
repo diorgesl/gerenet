@@ -8,6 +8,8 @@ import {
   useDeviceAtualizar,
   useDeviceColetar,
   useDeviceCriar,
+  useDeviceHostkeyRegistrar,
+  useDeviceHostkeyScan,
   useDevices,
   useSites,
 } from "@/api/hooks";
@@ -34,7 +36,7 @@ const FORM_VAZIO = {
   credential_group_id: "",
 };
 
-const FORM_EDIT_VAZIO = { ssh_port: "", model: "", family: "", role: "", site_id: "", asn: "", tags: "", credential_group_id: "" };
+const FORM_EDIT_VAZIO = { ssh_port: "", model: "", family: "", role: "", site_id: "", asn: "", tags: "", credential_group_id: "", host_key_fingerprint: "" };
 
 export default function Devices() {
   const { podeEscrever } = useAuth();
@@ -46,6 +48,8 @@ export default function Devices() {
   const criar = useDeviceCriar();
   const atualizar = useDeviceAtualizar();
   const coletar = useDeviceColetar();
+  const escanearHostkey = useDeviceHostkeyScan();
+  const registrarHostkey = useDeviceHostkeyRegistrar();
 
   const [form, setForm] = useState(FORM_VAZIO);
   const [desativando, setDesativando] = useState<DeviceOut | null>(null);
@@ -87,9 +91,21 @@ export default function Devices() {
       asn: d.asn === null ? "" : String(d.asn),
       tags: d.tags.join(", "),
       credential_group_id: d.credential_group_id === null ? "" : String(d.credential_group_id),
+      host_key_fingerprint: d.host_key_fingerprint ?? "",
     });
     setErroEdit(null);
     setEditando(d);
+  }
+
+  async function gerarFingerprint() {
+    if (!editando) return;
+    setErroEdit(null);
+    try {
+      const r = await escanearHostkey.mutateAsync(editando.id);
+      setFormEdit((f) => ({ ...f, host_key_fingerprint: r.fingerprint }));
+    } catch (err) {
+      setErroEdit(err instanceof ApiError ? err.message : "Falha ao ler o fingerprint do equipamento.");
+    }
   }
 
   async function salvarEdicao(e: FormEvent) {
@@ -108,6 +124,10 @@ export default function Devices() {
         tags: formEdit.tags.split(",").map((t) => t.trim()).filter(Boolean),
         credential_group_id: formEdit.credential_group_id === "" ? null : Number(formEdit.credential_group_id),
       });
+      const fpNova = formEdit.host_key_fingerprint.trim();
+      if (fpNova && fpNova !== (editando.host_key_fingerprint ?? "")) {
+        await registrarHostkey.mutateAsync({ deviceId: editando.id, fingerprint: fpNova });
+      }
       setEditando(null);
     } catch (err) {
       setErroEdit(err instanceof ApiError ? err.message : "Falha ao salvar o equipamento.");
@@ -298,6 +318,18 @@ export default function Devices() {
                     </option>
                   )}
               </select>
+            </FormField>
+            <FormField label="Host key (fingerprint)" help={help("device.host_key_fingerprint")}>
+              <div className="hostkey-linha">
+                <input
+                  value={formEdit.host_key_fingerprint}
+                  placeholder="sha256:…"
+                  onChange={(e) => setFormEdit({ ...formEdit, host_key_fingerprint: e.target.value })}
+                />
+                <button type="button" onClick={gerarFingerprint} disabled={escanearHostkey.isPending}>
+                  {escanearHostkey.isPending ? "Gerando…" : "Gerar fingerprint"}
+                </button>
+              </div>
             </FormField>
             <FormField label="ASN" help={help("device.asn")}>
               <input type="number" value={formEdit.asn} onChange={(e) => setFormEdit({ ...formEdit, asn: e.target.value })} />

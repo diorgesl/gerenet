@@ -1,6 +1,7 @@
 ---
 title: Primeiros passos: login, perfis e primeiro equipamento
 secao: Começando
+secao_order: 1
 order: 2
 ---
 
@@ -46,13 +47,13 @@ autorizações. A aprovação e a execução de mudanças fazem parte do fluxo d
 
 1. **Crie um Site (POP)** — nome, cidade/UF, bloco de enlaces p2p IPv4
    (padrão `100.64.0.0/10`) e base IPv6 do POP (ex.: `2804:194C:1000::/48`).
-2. **Crie o grupo de credenciais no Vault** (somente CLI):
-   `gerenet credential-groups create` — o grupo referencia o segredo; a senha
-   nunca é digitada no formulário do equipamento.
+2. **Prepare a credencial e a host key** (somente CLI): `gerenet vault seed`
+   grava a conta de automação no Vault e garante o grupo `automacao`;
+   `gerenet hostkey register <equipamento> <fingerprint>` registra a chave SSH
+   do host. Sem essas duas, a coleta não conecta. Veja
+   [Preparação para a coleta: Vault e host keys](/wiki/coleta-preparacao).
 3. **Cadastre o equipamento** — nome único, endereço de gerência, porta SSH,
-   modelo/família, função, site, ASN local e o grupo de credenciais. Se quiser
-   validar a chave SSH do host, registre a fingerprint com
-   `gerenet hostkey register <equipamento> <fingerprint>`.
+   modelo/família, função, site, ASN local e o grupo de credenciais.
 4. **Rode a primeira coleta** — na lista de [Equipamentos](/wiki/equipamentos),
    botão "Coletar agora", ou pela CLI:
    `gerenet collect run --device <id|nome>` (ou `--all`). A coleta vai para a

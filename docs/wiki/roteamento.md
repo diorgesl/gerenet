@@ -1,6 +1,7 @@
 ---
 title: Sessões BGP, autorizações, perfis e communities
 secao: Roteamento
+secao_order: 3
 order: 1
 ---
 
