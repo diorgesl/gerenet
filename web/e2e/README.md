@@ -1,9 +1,8 @@
 # Fumos e2e da interface web (Playwright)
 
-Os 9 fumos (3 de login + 3 de smoke + 1 de mudança + 1 de MPLS + 1 de
-upstream) exercitam a SPA real
-contra o backend real (FastAPI + PostgreSQL) — sem mocks. Rodam tudo por um
-único comando:
+Os 10 fumos (3 de login + 3 de smoke + 1 de mudança + 1 de MPLS + 1 de
+upstream + 1 de credencial) exercitam a SPA real contra o backend real
+(FastAPI + PostgreSQL) — sem mocks. Rodam tudo por um único comando:
 
 ```bash
 # 0. Infra local (postgres, redis, vault) — uma vez

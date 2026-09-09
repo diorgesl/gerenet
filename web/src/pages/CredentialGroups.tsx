@@ -134,7 +134,7 @@ export default function CredentialGroups() {
       <ConfirmDialog
         aberto={desativando !== null}
         titulo={`Desativar ${desativando?.name ?? ""}?`}
-        mensagem="O grupo fica indisponível para novos vínculos; equipamentos já vínculados mantêm o grupo."
+        mensagem="O grupo fica indisponível para novos vínculos; equipamentos já vinculados mantêm o grupo."
         onConfirmar={() => {
           if (desativando)
             void atualizar

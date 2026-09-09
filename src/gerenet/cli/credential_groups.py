@@ -30,8 +30,8 @@ def create(
 
 
 @app.command("list")
-def listar() -> None:
+def listar(include_disabled: bool = typer.Option(False, "--all", help="Inclui desativados.")) -> None:
     """Lista grupos de credencial registrados."""
     with get_session() as session:
-        for grupo in svc.list_credential_groups(session):
+        for grupo in svc.list_credential_groups(session, include_disabled=include_disabled):
             typer.echo(f"#{grupo.id:<3} {grupo.name:<24} {grupo.kind:<20} {grupo.vault_path}")
