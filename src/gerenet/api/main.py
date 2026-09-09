@@ -10,6 +10,7 @@ from gerenet.api.routers import (
     circuits,
     communities,
     contacts,
+    credential_groups,
     devices,
     mpls,
     organizations,
@@ -42,6 +43,7 @@ def create_app() -> FastAPI:
     app.include_router(organizations.router)
     app.include_router(organizations.downstreams_router)
     app.include_router(contacts.router)
+    app.include_router(credential_groups.router)
     app.include_router(circuits.router)
     app.include_router(change_requests.router)
     app.include_router(bgp_sessions.router)
