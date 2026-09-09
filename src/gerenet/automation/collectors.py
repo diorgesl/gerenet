@@ -46,13 +46,13 @@ COLLECTORS = {
         "merge": "mpls_ldp_peer",
     },
     "l2vc": {
-        "commands": ["display l2vc"],
-        "parsers": {"display l2vc": "l2vc"},
+        "commands": ["display mpls l2vc"],
+        "parsers": {"display mpls l2vc": "l2vc"},
         "merge": "l2vc",
     },
     "vsi": {
-        "commands": ["display vsi"],
-        "parsers": {"display vsi": "vsi"},
+        "commands": ["display vsi verbose"],
+        "parsers": {"display vsi verbose": "vsi"},
         "merge": "vsi",
     },
 }

@@ -1,6 +1,6 @@
-Value Required peer_id (\S+)
-Value estado (\S+)
+Value Required peer_id (\d+\.\d+\.\d+\.\d+:\d+)
+Value transport (\d+\.\d+\.\d+\.\d+)
+Value discovery (.+)
 
 Start
-  ^\s*Peer LDP ID\s*:\s*${peer_id}\s*$$ -> Continue
-  ^\s*State\s*:\s*${estado}\s*$$ -> Record
+  ^\s+${peer_id}\s+${transport}\s+${discovery}\s*$$ -> Record

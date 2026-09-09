@@ -102,18 +102,22 @@ def _primeiras_linhas(por_comando: dict[str, list[dict]]) -> list[dict]:
 
 
 def normaliza_ldp(por_comando: dict[str, list[dict]]) -> list[dict]:
-    """`display mpls ldp peer` -> peers sem o sufixo `:0` do LDP ID e estado up/down.
+    """`display mpls ldp peer` -> peers sem o sufixo `:0` do LDP ID.
 
-    Keys: {peer_id, estado}; linhas sem peer_id são descartadas.
+    A tabela da família S não imprime estado do peer; `estado` é `None`
+    (desconhecido) quando a linha não o traz — nunca "down" por omissão, uma
+    coleta sem estado não pode afirmar que o peer está down. Keys:
+    {peer_id, estado}; linhas sem peer_id são descartadas.
     """
     saida: list[dict] = []
     for linha in _primeiras_linhas(por_comando):
         peer = str(linha.get("peer_id", "")).split(":")[0].strip()
         if not peer:
             continue
+        estado = {"up": "up", "down": "down"}.get(str(linha.get("estado") or "").lower())
         saida.append({
             "peer_id": peer,
-            "estado": "up" if str(linha.get("estado", "")).lower() == "up" else "down",
+            "estado": estado,
         })
     return saida
 

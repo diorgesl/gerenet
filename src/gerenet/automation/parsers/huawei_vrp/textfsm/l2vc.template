@@ -3,4 +3,6 @@ Value interface (\S+)
 Value estado (\S+)
 
 Start
-  ^\s*(?:\s*\d+\s*:\s*)?VC-ID\s*:\s*${vc_id},\s*Interface\s*:\s*${interface},\s*State\s*:\s*${estado}\s*$$ -> Record
+  ^\s*\*?\s*client interface\s*:\s*${interface}\s+is\s+\S+\s*$$ -> Continue
+  ^\s*VC state\s*:\s*${estado}\s*$$ -> Continue
+  ^\s*VC ID\s*:\s*${vc_id}\s*$$ -> Record

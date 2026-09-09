@@ -3,5 +3,6 @@ Value vsi_id (\d+)
 Value estado (\S+)
 
 Start
-  ^\s*VSI Name\s*:\s*${name}\s+VSI ID\s*:\s*${vsi_id}\s*$$ -> Continue
-  ^\s*State\s*:\s*${estado}\s*$$ -> Record
+  ^\s*\*+\s*VSI Name\s*:\s*${name}\s*$$ -> Continue
+  ^\s*VSI State\s*:\s*${estado}\s*$$ -> Continue
+  ^\s*VSI ID\s*:\s*${vsi_id}\s*$$ -> Record

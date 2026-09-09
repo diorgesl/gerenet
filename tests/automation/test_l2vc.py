@@ -180,6 +180,18 @@ def test_pre_checks_ldp_e_binding(servico, db_session):
         "mpls_ldp_peer": [{"peer_id": "10.255.9.2", "estado": "up"}],
     })
     assert conflito is not None and "conflit" in conflito.lower()
+    # família S: `display mpls ldp peer` não imprime estado — desconhecido é bloqueio,
+    # não "down" (mensagem própria, sem afirmar que o peer está down)
+    desconhecido = l2vc.valida_pre_checks_l2vc(db_session, svc, svc.endpoints[0].device, {
+        **_recursos_vazios("10GE0/0/1"),
+        "mpls_ldp_peer": [{"peer_id": "10.255.9.2", "estado": None}],
+    })
+    assert desconhecido is not None and "desconhecido" in desconhecido
+    down = l2vc.valida_pre_checks_l2vc(db_session, svc, svc.endpoints[0].device, {
+        **_recursos_vazios("10GE0/0/1"),
+        "mpls_ldp_peer": [{"peer_id": "10.255.9.2", "estado": "down"}],
+    })
+    assert down is not None and "não está UP" in down
 
 
 def test_pos_check_up_e_down(servico, db_session):

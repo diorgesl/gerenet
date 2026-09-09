@@ -1,0 +1,467 @@
+ ***VSI Name               : IntechCDN
+    Administrator VSI      : no
+    Isolate Spoken         : disable
+    VSI Index              : 0
+    PW Signaling           : ldp
+    Member Discovery Style : static
+    PW MAC Learn Style     : unqualify
+    Encapsulation Type     : vlan
+    MTU                    : 1500
+    Diffserv Mode          : uniform
+    Mpls Exp               : --
+    DomainId               : 255
+    Domain Name            : 
+    Tunnel Policy Name     : LOAD_BALANCE_CDN
+    Ignore AcState         : disable
+    P2P VSI                : disable
+    Create Time            : 592 days, 15 hours, 37 minutes, 41 seconds
+    VSI State              : up
+ 
+    VSI ID                 : 2827
+   *Peer Router ID         : 100.127.90.255
+    Negotiation-vc-id      : 2827
+    primary or secondary   : primary
+    ignore-standby-state   : no
+    VC Label               : 1024
+    Peer Type              : dynamic
+    Session                : up
+    Tunnel ID              : 0x48003ad4 
+    Broadcast Tunnel ID    : 0x48003ad4 
+    Broad BackupTunnel ID  : 0x48004194 
+    CKey                   : 35
+    NKey                   : 34
+    Stp Enable             : 0
+    PwIndex                : 0
+    Control Word           : disable
+    BFD for PW             : unavailable
+
+    Interface Name         : Vlanif2827
+    State                  : up
+    Access Port            : false
+    Last Up Time           : 2025/01/25 04:09:32
+    Total Up Time          : 592 days, 15 hours, 30 minutes, 4 seconds
+
+  **PW Information:
+
+   *Peer Ip Address        : 100.127.90.255
+    PW State               : up
+    Local VC Label         : 1024
+    Remote VC Label        : 1024
+    Remote Control Word    : disable
+    PW Type                : label 
+    Local  VCCV            : alert lsp-ping bfd 
+    Remote VCCV            : alert lsp-ping bfd 
+    Tunnel ID              : 0x48003ad4 
+    Broadcast Tunnel ID    : 0x48003ad4 
+    Broad BackupTunnel ID  : 0x48004194 
+    Ckey                   : 0x23
+    Nkey                   : 0x22
+    Main PW Token          : 0x48003ad4 
+    Slave PW Token         : 0x0 
+    Tnl Type               : LSP 
+    OutInterface           : Vlanif4025 
+    Backup OutInterface    : Vlanif4022 
+    Stp Enable             : 0 
+    PW Last Up Time        : 2026/09/04 13:37:41
+    PW Total Up Time       : 591 days, 15 hours, 37 minutes, 46 seconds
+    Configured Flowlabel   : send , receive
+    Received Flowlabel     : send , receive
+    Negotiated Flowlabel   : send , receive
+ 
+ ***VSI Name               : JefersonAral
+    Administrator VSI      : no
+    Isolate Spoken         : disable
+    VSI Index              : 1
+    PW Signaling           : ldp
+    Member Discovery Style : static
+    PW MAC Learn Style     : unqualify
+    Encapsulation Type     : vlan
+    MTU                    : 1500
+    Diffserv Mode          : uniform
+    Mpls Exp               : --
+    DomainId               : 255
+    Domain Name            : 
+    Ignore AcState         : disable
+    P2P VSI                : disable
+    Create Time            : 592 days, 15 hours, 37 minutes, 45 seconds
+    VSI State              : down
+ 
+    VSI ID                 : 643
+   *Peer Router ID         : 100.127.90.254
+    Negotiation-vc-id      : 643
+    primary or secondary   : primary
+    ignore-standby-state   : no
+    VC Label               : 2648
+    Peer Type              : dynamic
+    Session                : up
+    Tunnel ID              : 0x4800044f 
+    Broadcast Tunnel ID    : 0x4800044f 
+    Broad BackupTunnel ID  : 0x4800065c 
+    CKey                   : 26
+    NKey                   : 14
+    Stp Enable             : 0
+    PwIndex                : 0
+    Control Word           : disable
+    BFD for PW             : unavailable
+ 
+ ***VSI Name               : VLAN644
+    Administrator VSI      : no
+    Isolate Spoken         : disable
+    VSI Index              : 2
+    VSI Description        : VLAN 644 GIS CVALE TACURU
+    PW Signaling           : ldp
+    Member Discovery Style : static
+    PW MAC Learn Style     : unqualify
+    Encapsulation Type     : vlan
+    MTU                    : 9100
+    Diffserv Mode          : uniform
+    Mpls Exp               : --
+    DomainId               : 255
+    Domain Name            : 
+    Ignore AcState         : disable
+    P2P VSI                : disable
+    Create Time            : 65 days, 4 hours, 53 minutes, 5 seconds
+    VSI State              : down
+ 
+    VSI ID                 : 644
+   *Peer Router ID         : 100.127.90.3
+    Negotiation-vc-id      : 644
+    primary or secondary   : primary
+    ignore-standby-state   : no
+    VC Label               : 1711
+    Peer Type              : dynamic
+    Session                : up
+    Tunnel ID              : 0x48001c23 
+    Broadcast Tunnel ID    : 0x48001c23 
+    Broad BackupTunnel ID  : 0x0 
+    CKey                   : 66
+    NKey                   : 63
+    Stp Enable             : 0
+    PwIndex                : 0
+    Control Word           : disable
+    BFD for PW             : unavailable
+
+    Interface Name         : Vlanif644
+    State                  : down
+    Access Port            : false
+    Last Up Time           : 2026/07/05 15:55:36
+    Total Up Time          : 0 days, 0 hours, 50 minutes, 40 seconds
+ 
+ ***VSI Name               : VLAN_4061_CVALE_LAGUNA
+    Administrator VSI      : no
+    Isolate Spoken         : disable
+    VSI Index              : 3            
+    PW Signaling           : ldp
+    Member Discovery Style : static
+    PW MAC Learn Style     : unqualify
+    Encapsulation Type     : vlan
+    MTU                    : 1500
+    Diffserv Mode          : uniform
+    Mpls Exp               : --
+    DomainId               : 255
+    Domain Name            : 
+    Ignore AcState         : disable
+    P2P VSI                : disable
+    Create Time            : 564 days, 6 hours, 29 minutes, 24 seconds
+    VSI State              : down
+ 
+    VSI ID                 : 4061
+   *Peer Router ID         : 100.127.90.253
+    Negotiation-vc-id      : 4061
+    primary or secondary   : primary
+    ignore-standby-state   : no
+    VC Label               : 2811
+    Peer Type              : dynamic
+    Session                : up
+    Tunnel ID              : 0x48001cfb 
+    Broadcast Tunnel ID    : 0x48001cfb 
+    Broad BackupTunnel ID  : 0x48002851 
+    CKey                   : 21
+    NKey                   : 20
+    Stp Enable             : 0
+    PwIndex                : 0
+    Control Word           : disable
+    BFD for PW             : unavailable
+
+    Interface Name         : Vlanif4061
+    State                  : up
+    Access Port            : false
+    Last Up Time           : 2025/02/21 13:49:54
+    Total Up Time          : 564 days, 6 hours, 21 minutes, 16 seconds
+ 
+ ***VSI Name               : CValeAral
+    Administrator VSI      : no
+    Isolate Spoken         : disable
+    VSI Index              : 4            
+    PW Signaling           : ldp
+    Member Discovery Style : static
+    PW MAC Learn Style     : unqualify
+    Encapsulation Type     : vlan
+    MTU                    : 9100
+    Diffserv Mode          : uniform
+    Mpls Exp               : --
+    DomainId               : 255
+    Domain Name            : 
+    Ignore AcState         : disable
+    P2P VSI                : disable
+    Create Time            : 376 days, 7 hours, 57 minutes, 6 seconds
+    VSI State              : down
+ 
+    VSI ID                 : 1081
+   *Peer Router ID         : 100.127.90.254
+    Negotiation-vc-id      : 1081
+    primary or secondary   : primary
+    ignore-standby-state   : no
+    VC Label               : 1047
+    Peer Type              : dynamic
+    Session                : up
+    Tunnel ID              : 0x4800044f 
+    Broadcast Tunnel ID    : 0x4800044f 
+    Broad BackupTunnel ID  : 0x4800065c 
+    CKey                   : 29
+    NKey                   : 14
+    Stp Enable             : 0
+    PwIndex                : 0
+    Control Word           : disable
+    BFD for PW             : unavailable
+
+    Interface Name         : Vlanif1081
+    State                  : up
+    Access Port            : false
+    Last Up Time           : 2026/08/07 06:28:08
+    Total Up Time          : 376 days, 2 hours, 45 minutes, 27 seconds
+ 
+ ***VSI Name               : VLAN97-GERENCIA-GIS
+    Administrator VSI      : no
+    Isolate Spoken         : disable
+    VSI Index              : 5            
+    PW Signaling           : ldp
+    Member Discovery Style : --
+    PW MAC Learn Style     : unqualify
+    Encapsulation Type     : vlan
+    MTU                    : 1500
+    Diffserv Mode          : uniform
+    Mpls Exp               : --
+    DomainId               : 255
+    Domain Name            : 
+    Ignore AcState         : disable
+    P2P VSI                : disable
+    Create Time            : 17 days, 5 hours, 30 minutes, 31 seconds
+    VSI State              : down
+ 
+    VSI ID                 : 97
+   *Peer Router ID         : 100.127.90.3
+    Negotiation-vc-id      : 97
+    primary or secondary   : primary
+    ignore-standby-state   : no
+    VC Label               : 2079
+    Peer Type              : dynamic
+    Session                : up
+    Tunnel ID              : 0x48001c23 
+    Broadcast Tunnel ID    : 0x48001c23 
+    Broad BackupTunnel ID  : 0x0 
+    CKey                   : 42
+    NKey                   : 63
+    Stp Enable             : 0
+    PwIndex                : 0
+    Control Word           : disable
+    BFD for PW             : unavailable
+ 
+ ***VSI Name               : VLAN4004
+    Administrator VSI      : no
+    Isolate Spoken         : disable
+    VSI Index              : 6
+    VSI Description        : ASSIM
+    PW Signaling           : ldp
+    Member Discovery Style : --
+    PW MAC Learn Style     : unqualify
+    Encapsulation Type     : vlan
+    MTU                    : 9216         
+    Diffserv Mode          : uniform
+    Mpls Exp               : --
+    DomainId               : 255
+    Domain Name            : 
+    Ignore AcState         : disable
+    P2P VSI                : disable
+    Create Time            : 7 days, 21 hours, 41 minutes, 31 seconds
+    VSI State              : up
+ 
+    VSI ID                 : 4004
+   *Peer Router ID         : 100.127.90.10
+    Negotiation-vc-id      : 4004
+    primary or secondary   : primary
+    ignore-standby-state   : no
+    VC Label               : 2467
+    Peer Type              : dynamic
+    Session                : up
+    Tunnel ID              : 0x48002aff 
+    Broadcast Tunnel ID    : 0x48002aff 
+    Broad BackupTunnel ID  : 0x480071b2 
+    CKey                   : 50
+    NKey                   : 4
+    Stp Enable             : 0
+    PwIndex                : 0
+    Control Word           : disable
+    BFD for PW             : unavailable
+
+    Interface Name         : Vlanif4004
+    State                  : up
+    Access Port            : false
+    Last Up Time           : 2026/08/31 22:31:05
+    Total Up Time          : 7 days, 21 hours, 40 minutes, 6 seconds
+
+  **PW Information:
+
+   *Peer Ip Address        : 100.127.90.10
+    PW State               : up
+    Local VC Label         : 2467
+    Remote VC Label        : 3331
+    Remote Control Word    : disable
+    PW Type                : label 
+    Local  VCCV            : alert lsp-ping bfd 
+    Remote VCCV            : alert lsp-ping bfd 
+    Tunnel ID              : 0x48002aff 
+    Broadcast Tunnel ID    : 0x48002aff 
+    Broad BackupTunnel ID  : 0x480071b2 
+    Ckey                   : 0x32
+    Nkey                   : 0x4
+    Main PW Token          : 0x48002aff 
+    Slave PW Token         : 0x0 
+    Tnl Type               : LSP 
+    OutInterface           : Vlanif4022 
+    Backup OutInterface    : Vlanif4025 
+    Stp Enable             : 0 
+    PW Last Up Time        : 2026/09/04 13:37:41
+    PW Total Up Time       : 7 days, 21 hours, 31 minutes, 55 seconds
+    Configured Flowlabel   : send , receive
+    Received Flowlabel     : send , receive
+    Negotiated Flowlabel   : send , receive
+ 
+ ***VSI Name               : VLAN653_INTECH
+    Administrator VSI      : no
+    Isolate Spoken         : disable
+    VSI Index              : 7
+    PW Signaling           : ldp
+    Member Discovery Style : --
+    PW MAC Learn Style     : unqualify
+    Encapsulation Type     : vlan
+    MTU                    : 9100         
+    Diffserv Mode          : uniform
+    Mpls Exp               : --
+    DomainId               : 255
+    Domain Name            : 
+    Ignore AcState         : disable
+    P2P VSI                : disable
+    Create Time            : 80 days, 1 hours, 48 minutes, 50 seconds
+    VSI State              : up
+ 
+    VSI ID                 : 653
+   *Peer Router ID         : 100.127.90.255
+    Negotiation-vc-id      : 653
+    primary or secondary   : primary
+    ignore-standby-state   : no
+    VC Label               : 2514
+    Peer Type              : dynamic
+    Session                : up
+    Tunnel ID              : 0x48003ad4 
+    Broadcast Tunnel ID    : 0x48003ad4 
+    Broad BackupTunnel ID  : 0x48004194 
+    CKey                   : 44
+    NKey                   : 43
+    Stp Enable             : 0
+    PwIndex                : 0
+    Control Word           : disable
+    BFD for PW             : unavailable
+
+    Interface Name         : Vlanif653
+    State                  : up
+    Access Port            : false
+    Last Up Time           : 2026/06/20 18:39:21
+    Total Up Time          : 80 days, 1 hours, 31 minutes, 50 seconds
+
+  **PW Information:
+
+   *Peer Ip Address        : 100.127.90.255
+    PW State               : up
+    Local VC Label         : 2514
+    Remote VC Label        : 2224
+    Remote Control Word    : disable
+    PW Type                : label 
+    Local  VCCV            : alert lsp-ping bfd 
+    Remote VCCV            : alert lsp-ping bfd 
+    Tunnel ID              : 0x48003ad4 
+    Broadcast Tunnel ID    : 0x48003ad4 
+    Broad BackupTunnel ID  : 0x48004194 
+    Ckey                   : 0x2c
+    Nkey                   : 0x2b
+    Main PW Token          : 0x48003ad4 
+    Slave PW Token         : 0x0 
+    Tnl Type               : LSP 
+    OutInterface           : Vlanif4025 
+    Backup OutInterface    : Vlanif4022 
+    Stp Enable             : 0 
+    PW Last Up Time        : 2026/09/04 13:37:41
+    PW Total Up Time       : 80 days, 0 hours, 17 minutes, 41 seconds
+    Configured Flowlabel   : send , receive
+    Received Flowlabel     : send , receive
+    Negotiated Flowlabel   : send , receive
+ 
+ ***VSI Name               : VLAN653_INTECH]
+    Administrator VSI      : no
+    Isolate Spoken         : disable
+    VSI Index              : 8
+    PW Signaling           : --
+    Member Discovery Style : --
+    PW MAC Learn Style     : unqualify
+    Encapsulation Type     : vlan
+    MTU                    : 1500         
+    Diffserv Mode          : uniform
+    Mpls Exp               : --
+    DomainId               : 255
+    Domain Name            : 
+    Ignore AcState         : disable
+    P2P VSI                : disable
+    Create Time            : 80 days, 1 hours, 30 minutes, 42 seconds
+    VSI State              : down
+ 
+ ***VSI Name               : VLAN4030
+    Administrator VSI      : no
+    Isolate Spoken         : disable
+    VSI Index              : 9
+    PW Signaling           : ldp
+    Member Discovery Style : --
+    PW MAC Learn Style     : unqualify
+    Encapsulation Type     : vlan
+    MTU                    : 1500
+    Diffserv Mode          : uniform
+    Mpls Exp               : --
+    DomainId               : 255
+    Domain Name            : 
+    Ignore AcState         : disable
+    P2P VSI                : disable      
+    Create Time            : 59 days, 4 hours, 5 minutes, 34 seconds
+    VSI State              : down
+ 
+    VSI ID                 : 4030
+   *Peer Router ID         : 100.127.90.247
+    Negotiation-vc-id      : 4030
+    primary or secondary   : primary
+    ignore-standby-state   : no
+    VC Label               : 1944
+    Peer Type              : dynamic
+    Session                : down
+    Tunnel ID              : 0x480052af 
+    Broadcast Tunnel ID    : 0x480052af 
+    Broad BackupTunnel ID  : 0x480030d9 
+    CKey                   : 74
+    NKey                   : 73
+    Stp Enable             : 0
+    PwIndex                : 0
+    Control Word           : disable
+    BFD for PW             : unavailable
+
+    Interface Name         : Vlanif4030
+    State                  : up
+    Access Port            : false
+    Last Up Time           : 2026/07/11 16:06:03
+    Total Up Time          : 59 days, 4 hours, 5 minutes, 9 seconds

@@ -162,7 +162,12 @@ def valida_pre_checks_l2vc(session: Session, service: models.L2vcService, device
     if ldp is None:
         return ("Coleta sem 'mpls_ldp_peer' — colete antes de executar (§5.3).")
     achado = next((l for l in ldp if l.get("peer_id") == par_loopback), None)
-    if achado is None or str(achado.get("estado", "")).lower() != "up":
+    if achado is None:
+        return f"Par LDP {par_loopback} não listado na coleta do {device.name} — confira o peer (§9.2)."
+    if achado.get("estado") is None:
+        return (f"Estado do par LDP {par_loopback} desconhecido na coleta do "
+                f"{device.name} — colete a sessão LDP (§9.2).")
+    if achado.get("estado") != "up":
         return f"Par LDP {par_loopback} não está UP na coleta do {device.name} (§9.2)."
     ep = next((e for e in service.endpoints if e.device_id == device.id), None)
     if ep is None:
