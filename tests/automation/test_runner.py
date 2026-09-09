@@ -37,8 +37,8 @@ SAIDAS = {
     # MPLS (fase 4 T9): saída vazia nos fakes — parse de vazio tolerado ([]),
     # sem quebrar a coleta fake (KeyError em SAIDAS derruba o recurso).
     "display mpls ldp peer": "",
-    "display l2vc": "",
-    "display vsi": "",
+    "display mpls l2vc": "",
+    "display vsi verbose": "",
 }
 
 

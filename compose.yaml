@@ -44,6 +44,9 @@ services:
       VAULT_DEV_ROOT_TOKEN_ID: gerenet-dev-root
       GERENET_VAULT_USERNAME: ${GERENET_VAULT_USERNAME:-gerenet-auto}
       GERENET_VAULT_PASSWORD: ${GERENET_VAULT_PASSWORD:-}
+      # sem isso o dev server escuta em 127.0.0.1 dentro do container e o
+      # publish 8200:8200 fica inalcançável do host (tests/test_secrets.py).
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
     command:
       - /bin/sh
       - -c

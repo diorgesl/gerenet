@@ -51,24 +51,39 @@ Em cada switch alvo (ou via plataforma, se já coletado):
 
 ```
 display mpls ldp peer
-display l2vc
-display vsi
+display mpls l2vc
+display vsi verbose
+display alarm active
 ```
 
 Salve a saída exata (sanitizada: nenhum IP de gerência/hostname sensível) em fixtures, por
 exemplo `tests/fixtures/huawei_vrp/<sw>_display_mpls_ldp_peer.txt`,
-`<sw>_display_l2vc.txt` e `<sw>_display_vsi.txt` — é a única saída de equipamento que entra no
-git, e revisada antes de versionar.
+`<sw>_display_mpls_l2vc.txt` e `<sw>_display_vsi_verbose.txt` — é a única saída de equipamento
+que entra no git, e revisada antes de versionar.
 
 ### 1.2 Conferir o formato contra os TextFSM
 
-Formato esperado (espelho dos testes em `tests/automation/test_parsers_mpls.py`):
+Formato esperado (espelho dos testes em `tests/automation/test_parsers_mpls.py`; validado em
+S6730 real em 2026-09-08 — a família S imprime em formatos diferentes dos assumidos na fase 4):
 
-| Comando | Formato esperado pelo parser | Normalizado no merge |
+| Comando | Formato real da família S (validado) | Normalizado no merge |
 |---|---|---|
-| `display mpls ldp peer` | pares `Peer LDP ID : 10.255.9.2:0` + `  State       : Up` | `peer_id` sem `:0`; estado `up`/`down` |
-| `display l2vc` | linhas `N : VC-ID : 1000, Interface : 10GE0/0/1, State : Up` (o `N :` é opcional) | `vc_id` int; estado `up`/`down` |
-| `display vsi` | `VSI Name : VSI-CLIENTE-ACME-550   VSI ID : 550` + `State : up` | `vsi_id` int |
+| `display mpls ldp peer` | tabela `PeerID  TransportAddress  DiscoverySource` — **sem coluna de estado** | `peer_id` sem `:0`; `estado` `None` (desconhecido, nunca `down` por omissão) |
+| `display mpls l2vc` | um bloco por VC: `client interface : Vlanif21 is up`, `VC state : up`, `VC ID : 21` | `vc_id` int; `interface`; `estado` `up`/`down` |
+| `display vsi verbose` | um bloco por VSI: `***VSI Name : X` → `VSI State : up` → `VSI ID : 2827` | `name`; `vsi_id` int (`None` se o VSI não tem ID); `estado` `up`/`down` |
+
+Notas da validação real:
+- O L2VC é **obrigatoriamente** `display mpls l2vc` — `display l2vc` sem `mpls` é um comando
+  diferente (não confirmado no switch alvo); o coletor usa o primeiro.
+- A VSI é **obrigatoriamente** `display vsi verbose` — a tabela do `display vsi` não imprime
+  o `VSI ID`, necessário para casar com a SoT na sincronização (`vsi_id`).
+- O estado do par LDP **não existe** no `display mpls ldp peer` da família S (nem no verbose
+  até então coletado): o pré-check §9.2 fica "desconhecido" até coletar `display mpls ldp
+  session` (ou `display mpls ldp peer verbose`) — nunca afirma `down` sem evidência.
+- `display alarm` sem argumento emite um comando inválido na família S (`display alarm ?`;
+  `display alarm ac` vazio); o correto é `display alarm active`.
+- VSI órfão sem VSI ID (ex.: `VLAN653_INTECH]` no switch real, sem ID nem peer) é **descartado**
+  pelo parser (não casa com `vsi_id` da SoT) e deve ser tratado como higiene de rede.
 
 **Se o output real divergir**, ajuste o `.template` correspondente em
 `src/gerenet/automation/parsers/huawei_vrp/textfsm/` (`mpls_ldp_peer`, `l2vc` ou `vsi`) e o
@@ -97,9 +112,9 @@ aceite; a capability `mpls_flow_label` é o gate do template, mas o gate vale na
 
 **Checklist Etapa 1** — critérios de "ok":
 
-- [ ] `display mpls ldp peer`: pares `Peer LDP ID`/`State` visíveis e agrupáveis (sem linhas fora do shape).
-- [ ] `display l2vc`: VC por linha com VC-ID, Interface e State (com ou sem índice).
-- [ ] `display vsi`: VSI Name/VSI ID/State imprimíveis (vazio é ok — VSI só consulta neste ciclo).
+- [ ] `display mpls ldp peer`: tabela `PeerID/TransportAddress/DiscoverySource` parseável (sem coluna de estado — estado fica `None` até haver `display mpls ldp session`).
+- [ ] `display mpls l2vc`: um bloco por VC com `client interface`/`VC state`/`VC ID`.
+- [ ] `display vsi verbose`: um bloco por VSI com `VSI Name`/`VSI State`/`VSI ID` (vazio é ok — VSI só consulta neste ciclo; VSI sem ID é descartado).
 - [ ] Templates TextFSM e fixtures atualizados e `test_parsers_mpls.py` verde.
 - [ ] Sintaxe do AC confirmada no `display this` da interface de teste (não conectada).
 - [ ] Suporte a flow-label/control-word confirmado (ou flags desligadas na SoT).
@@ -191,14 +206,14 @@ enviado.
 ### 3.2 Verificação manual pós-execução (no switch)
 
 ```
-display l2vc
+display mpls l2vc
 display mpls ldp peer
-display alarm          # nada de alarmes novos
+display alarm active   # nada de alarmes novos
 ```
 
-Critérios de "ok": `State : Up` no VC nas duas pontas; peer LDP `Up`; MTU fim a fim
-consistente; sem alarmes novos no `display alarm`; tráfego de teste passando (validação
-funcional do serviço).
+Critérios de "ok": `VC state : up` no VC das duas pontas; peer LDP `Up` (ou sessão LDP
+`display mpls ldp session`); MTU fim a fim consistente; sem alarmes novos no
+`display alarm active`; tráfego de teste passando (validação funcional do serviço).
 
 ### 3.3 Rollback nesta fase (limite conhecido — TRABALHO FUTURO)
 
@@ -224,7 +239,7 @@ rollback manual documentado é aceitável neste ciclo):
 
 2. **Manual no switch** (documentado, para emergência): no contexto da interface apenas o
    `undo` do VC — `system-view` → `interface <if>` → `undo mpls l2vc <peer-loopback> <vc-id>`
-   → conferir `display l2vc`. Nunca `undo interface`, `undo portswitch` nem
+   → conferir `display mpls l2vc`. Nunca `undo interface`, `undo portswitch` nem
    `undo mpls l2vpn flow-label` (outros VCs podem usar a mesma interface). Se o switch
    apresentar erro do VRP, parar e abrir CR/plano de remoção em vez de insistir.
 
@@ -236,10 +251,10 @@ Depois da reversão, desative o serviço de teste na SoT (`uv run gerenet mpls l
 - [ ] Serviço com nome/finalidade `teste-...`; switch não crítico e janela acordados com o setor.
 - [ ] Aprovador ≠ solicitante; aprovação registrada; CR executando com worker ativo.
 - [ ] Backup pré-mudança salvo em `data/backups/change-<cr>/` (gitignored).
-- [ ] Pós-check: `display l2vc` ⇒ `Up` nas duas pontas; LDP `Up`; sem alarmes novos.
+- [ ] Pós-check: `display mpls l2vc` ⇒ `VC state : up` nas duas pontas; LDP `Up`; sem alarmes novos.
 - [ ] Resultado registrado no **ledger**: `data`, `equipamento`, `motivo`, `janela`, `resultado`
       (ledger SDD do plano — `.superpowers/sdd/2026-09-07-gerenet-fase4-mpls/progress.md`).
-- [ ] Reversão documentada (plataforma ou manual) e, se executada, conferida no `display l2vc`.
+- [ ] Reversão documentada (plataforma ou manual) e, se executada, conferida no `display mpls l2vc`.
 
 ---
 
@@ -257,6 +272,6 @@ Depois da reversão, desative o serviço de teste na SoT (`uv run gerenet mpls l
 - [ ] Parsers LDP/L2VC/VSI criam dados úteis contra o output real (ou foram ajustados).
 - [ ] `l2vc_ac.j2` validado no switch real (comentário de versão no template se ajustado).
 - [ ] CR de escopo `l2vc`: criação → aprovação → execução (`aplicado`) e remoção, com pós-check.
-- [ ] `display mpls ldp peer`/`display l2vc` coletados pelo worker e sincronizados na SoT
-      (estado operacional do serviço/pontas atualizado).
+- [ ] `display mpls ldp peer`/`display mpls l2vc`/`display vsi verbose` coletados pelo worker e
+      sincronizados na SoT (estado operacional do serviço/pontas atualizado).
 - [ ] Nenhuma credencial vazada; nenhum backup versionado; nenhum comando sem aprovação.

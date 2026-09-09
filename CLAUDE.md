@@ -182,7 +182,10 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   `undo mpls l2vc ...` no contexto da interface, nunca `undo interface`/`undo
   portswitch`/`undo mpls l2vpn flow-label`) e runner escopo-aware (gate de
   re-diff, setup e pré-check LDP por `escopo`). Coletores/parsers
-  TextFSM de `display mpls ldp peer`/`display l2vc`/`display vsi` + sincronização
+  TextFSM de `display mpls ldp peer`/`display mpls l2vc`/`display vsi verbose`
+  (formatos validados em S6730 real — família S: peers em tabela SEM estado,
+  L2VC em blocos por VC, VSI só com ID no verbose; o estado do par LDP vem de
+  `display mpls ldp session`, ainda não coletado) + sincronização
   na SoT pós-coleta (`sincronizar_mpls`); web `/mpls/domains`,
   `/mpls/l2vc`, `/mpls/vsi` (lista/detalhe com "Solicitar mudança") e fumo
   `web/e2e/mpls.spec.ts`. Comandos de teste: `uv run pytest -q`,
@@ -190,7 +193,12 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   (e2e idem ciclo D, banco `gerenet_e2e`). A validação em equipamento real segue
   `docs/runbook-validacao-switch-mpls.md` (somente leitura → geração sem
   execução → teste em switch não crítico; **sem lab** — decisão do usuário
-  2026-09-07); atenção: rollback e reconciliação de CR de escopo `l2vc` ainda
+  2026-09-07). Etapa 1 validada em S6730 real em 2026-09-08: parsers ajustados
+  aos formatos reais (fixtures `tests/fixtures/huawei_vrp/s6730_*`), coletor
+  passou a usar `display mpls l2vc` e `display vsi verbose`, estado do par LDP
+  fica `None` ("desconhecido") sem `display mpls ldp session` — evidência ainda
+  pendente: sessão LDP (estado do par) e confirmação do `display l2vc` sem
+  `mpls`. Atenção: rollback e reconciliação de CR de escopo `l2vc` ainda
   não são automatizados (`gerar_rollback`/`reconciliar` são circuitocêntricos
   — 400 guardado na API) — reversão/recomposição via CR de remoção aprovada
   (`--acao remove`) ou CR de provision nova (o re-diff aplica só a ponta
