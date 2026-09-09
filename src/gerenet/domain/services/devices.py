@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from gerenet.domain import models
 from gerenet.domain.audit import registrar
 from gerenet.domain.schemas import DeviceCreate
+from gerenet.domain.services.credential_groups import get_credential_group
 from gerenet.domain.services.errors import ConflictError, NotFoundError, ValidationError
 from gerenet.domain.validators import asn_valido
 
@@ -14,6 +15,8 @@ from gerenet.domain.validators import asn_valido
 def create_device(session: Session, data: DeviceCreate, *, actor: str) -> models.Device:
     if data.asn is not None and not asn_valido(data.asn):
         raise ValidationError(f"ASN inválido ou reservado: {data.asn}.")
+    if data.credential_group_id is not None:
+        get_credential_group(session, data.credential_group_id)  # NotFoundError PT
     dev = models.Device(**data.model_dump())
     session.add(dev)
     try:

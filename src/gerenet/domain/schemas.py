@@ -27,6 +27,7 @@ class DeviceUpdate(BaseModel):
     site_id: int | None = None
     asn: int | None = Field(default=None, ge=1, le=4294967295)
     tags: list[str] | None = None
+    credential_group_id: int | None = None
 
 
 class DeviceOut(BaseModel):
@@ -47,6 +48,7 @@ class DeviceOut(BaseModel):
     admin_status: bool
     last_collected_at: datetime | None
     tags: list[str]
+    credential_group_id: int | None
 
 
 class CredentialGroupCreate(BaseModel):

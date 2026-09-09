@@ -182,3 +182,59 @@ def test_patch_reativar_misto_continua_update(db_session: Session, client: TestC
         for e in db_session.scalars(select(models.AuditEvent).order_by(models.AuditEvent.id))
     ]
     assert tipos == ["device.create", "device.disable", "device.update"]
+
+
+def _grupo(client: TestClient, nome: str = "automacao") -> dict:
+    resp = client.post(
+        "/api/v1/credential-groups",
+        json={"name": nome, "vault_path": f"gerenet/credential-groups/{nome}"},
+        headers=_auth(),
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+def test_device_aceita_credential_group_id_no_create(client: TestClient) -> None:
+    grupo = _grupo(client)
+    resp = client.post(
+        "/api/v1/devices",
+        json={"name": "sw-core", "management_address": "10.99.0.10", "credential_group_id": grupo["id"]},
+        headers=_auth(),
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["credential_group_id"] == grupo["id"]
+
+
+def test_device_create_com_grupo_inexistente_da_404(client: TestClient) -> None:
+    resp = client.post(
+        "/api/v1/devices",
+        json={"name": "sw-core", "management_address": "10.99.0.10", "credential_group_id": 9999},
+        headers=_auth(),
+    )
+    assert resp.status_code == 404
+    assert "Grupo de credencial" in resp.json()["detail"]
+
+
+def test_device_patch_vincula_e_desvincula_grupo(client: TestClient) -> None:
+    grupo = _grupo(client)
+    criado = client.post(
+        "/api/v1/devices", json={"name": "sw-core", "management_address": "10.99.0.10"}, headers=_auth()
+    )
+    dev_id = criado.json()["id"]
+
+    vincula = client.patch(
+        f"/api/v1/devices/{dev_id}", json={"credential_group_id": grupo["id"]}, headers=_auth()
+    )
+    assert vincula.status_code == 200
+    assert vincula.json()["credential_group_id"] == grupo["id"]
+
+    desvincula = client.patch(
+        f"/api/v1/devices/{dev_id}", json={"credential_group_id": None}, headers=_auth()
+    )
+    assert desvincula.status_code == 200
+    assert desvincula.json()["credential_group_id"] is None
+
+    inexistente = client.patch(
+        f"/api/v1/devices/{dev_id}", json={"credential_group_id": 9999}, headers=_auth()
+    )
+    assert inexistente.status_code == 404
