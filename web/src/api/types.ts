@@ -23,6 +23,14 @@ export interface DeviceOut {
   admin_status: boolean;
   last_collected_at: string | null;
   tags: string[];
+  credential_group_id: number | null;
+}
+export interface CredentialGroupOut {
+  id: number;
+  name: string;
+  kind: string;
+  vault_path: string;
+  admin_status: boolean;
 }
 export interface SiteOut {
   id: number;
