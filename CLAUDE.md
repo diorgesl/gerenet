@@ -144,6 +144,19 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   sidebar + aviso na página); **tooltips de campo** — prop `help` no `FormField`
   (`.field-help` + `.field-help-dica` no hover/foco), textos centralizados em
   `web/src/help.ts` (o `npm run build` valida as chaves).
+- Web (nav, 2026-09-09): **menu lateral sanfonado** — os 9 grupos/23 itens
+  viraram 5 grupos sanfonados (Infraestrutura, Roteamento, MPLS, Operação,
+  Gestão) com Dashboard fixo no topo e Wiki fixo no rodapé (fora das
+  sanfonas); o grupo do item atual abre sozinho na navegação, os demais
+  começam recolhidos; o rótulo de grupo é um cabeçalho clicável
+  (`aria-expanded`/`aria-controls`) e a escolha fica em `localStorage`
+  (`gerenet.nav.abertos` — o grupo ativo só reabre ao navegar de novo).
+  Ícones SVG inline por item em `web/src/components/Icons.tsx` (traço 1.8,
+  17px, estilo Lucide, `aria-hidden` — sem dependência nova); breadcrumb
+  "grupo / item"; labels de grupo com peso 700 uppercase e hover; item ativo
+  = fundo âmbar + ícone LED âmbar; sidebar com superfície própria e labels
+  longos com ellipsis. Testes: `Layout.test.tsx` cobre a sanfona e os fumos
+  expandem o grupo antes de clicar o item (`change`/`smoke`/`upstream`).
 - Ciclo D (fluxo de mudança controlada): mudanças em **equipamento** (a SoT
   permanece a intenção — é a configuração real que muda) passam pelo fluxo de
   change requests — máquina de estados (rascunho →

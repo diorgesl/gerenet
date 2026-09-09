@@ -53,6 +53,7 @@ test("upstream: operadora + upstream + vínculo + community + CR aprovada", asyn
   // 0. Admin entra e cria a organização operadora pela página (R-27: a opção
   //    "operadora" existe no select de kind do form de Organizações).
   await entrar(page);
+  await page.getByRole("button", { name: "Gestão" }).click();
   await page.getByRole("link", { name: "Organizações" }).click();
   await expect(page).toHaveURL(/\/organizations/);
   await expect(page.getByRole("heading", { name: "Organizações" })).toBeVisible();
@@ -72,6 +73,7 @@ test("upstream: operadora + upstream + vínculo + community + CR aprovada", asyn
 
   // 1. Upstream criado pelo dialog da lista (o seed `e2e-upstream-tier1`
   //    confirma que o setup rodou; o nosso é único por rodada).
+  await page.getByRole("button", { name: "Roteamento" }).click();
   await page.getByRole("link", { name: "Upstreams" }).click();
   await expect(page).toHaveURL(/\/upstreams/);
   await expect(page.getByRole("heading", { name: "Upstreams" })).toBeVisible();

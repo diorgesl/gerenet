@@ -17,6 +17,7 @@ async function entrar(page: Page): Promise<void> {
 
 test("criar e desativar site", async ({ page }) => {
   await entrar(page);
+  await page.getByRole("button", { name: "Infraestrutura" }).click();
   await page.getByRole("link", { name: "Sites" }).click();
   await expect(page).toHaveURL(/\/sites/);
 

@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Layout } from "./Layout";
 import { AuthProvider } from "@/auth/auth-context";
 
@@ -49,6 +49,10 @@ function renderLayout() {
 }
 
 describe("Layout", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
   });
@@ -57,6 +61,7 @@ describe("Layout", () => {
     mockFetch();
     renderLayout();
     expect(await screen.findByText("Equipamentos")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Gestão" }));
     expect(screen.getByText("Usuários")).toBeInTheDocument();
     expect(screen.getByText("devices-page")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Sair" }));
@@ -65,5 +70,23 @@ describe("Layout", () => {
       (c) => String(c[0]) === "/api/v1/auth/logout" && String(c[1]?.method) === "POST",
     );
     expect(chamada).toBeTruthy();
+  });
+
+  it("sanfona: abre o grupo do item atual e alterna os demais pelo rótulo", async () => {
+    mockFetch();
+    renderLayout();
+    expect(await screen.findByText("Equipamentos")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Infraestrutura" })).toHaveAttribute("aria-expanded", "true");
+
+    // Outros grupos começam fechados e abrem/fecham pelo rótulo clicável.
+    const roteamento = screen.getByRole("button", { name: "Roteamento" });
+    expect(roteamento).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByText("Upstreams")).not.toBeVisible();
+    await userEvent.click(roteamento);
+    expect(roteamento).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("Upstreams")).toBeVisible();
+    await userEvent.click(roteamento);
+    expect(roteamento).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByText("Upstreams")).not.toBeVisible();
   });
 });

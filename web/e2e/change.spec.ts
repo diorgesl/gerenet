@@ -64,6 +64,7 @@ test("fluxo de mudança: criar, solicitar, aprovar e executar", async ({ page })
 
   // 1. Circuito novo pela UI (form de Circuitos)
   const codigo = `e2e-change-${RODADA}`;
+  await page.getByRole("button", { name: "Infraestrutura" }).click();
   await page.getByRole("link", { name: "Circuitos" }).click();
   await expect(page).toHaveURL(/\/circuits/);
   await page.getByLabel("Código *").fill(codigo);
