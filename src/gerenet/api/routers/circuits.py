@@ -11,7 +11,7 @@ from gerenet.domain import models
 from gerenet.domain.schemas import CircuitCreate, CircuitDetailOut, CircuitOut, CircuitUpdate
 from gerenet.domain.services import circuits as svc
 from gerenet.domain.services.errors import ConflictError, NotFoundError, ValidationError
-from gerenet.domain.services.ipam import pontas_v4, pontas_v6, reservar_circuito
+from gerenet.domain.services.ipam import liberar_circuito, pontas_v4, pontas_v6, reservar_circuito
 
 router = APIRouter(prefix="/api/v1/circuits", tags=["circuits"], dependencies=[Depends(require_actor)])
 
@@ -137,4 +137,20 @@ def reservar(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _detalhe(session, circ)
+
+
+@router.post("/{circuit_id}/unreserve", response_model=CircuitDetailOut)
+def liberar(
+    circuit_id: int, session: SessionDep, actor: Annotated[Actor, Depends(require_actor)]
+) -> object:
+    """Libera VLAN/enlaces p2p — idempotente (spec §9); linhas marcam liberada."""
+    try:
+        circ = svc.get_circuit(session, circuit_id)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    try:
+        liberar_circuito(session, circuit_id, actor=actor.nome)
+    except ConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return _detalhe(session, circ)

@@ -188,6 +188,76 @@ def test_reserva_de_circuito_desativado_da_409(client: TestClient, db_session: S
     assert client.post("/api/v1/circuits/9999/reserve", headers=_auth()).status_code == 404
 
 
+def test_unreserve_libera_e_expoe_pontas_vazias(client: TestClient, db_session: Session) -> None:
+    env = _ambiente(db_session)
+    circ_id = client.post(
+        "/api/v1/circuits", json=_corpo(env, "CIRC-FREE"), headers=_auth()
+    ).json()["id"]
+    client.post(f"/api/v1/circuits/{circ_id}/reserve", headers=_auth())
+
+    resp = client.post(f"/api/v1/circuits/{circ_id}/unreserve", headers=_auth())
+    assert resp.status_code == 200, resp.text
+    corpo = resp.json()
+    assert corpo["ipv4_local"] is None and corpo["ipv6_local"] is None
+
+    linhas = list(
+        db_session.scalars(
+            select(models.Vlan).where(models.Vlan.circuit_id == circ_id)
+        )
+    ) + list(
+        db_session.scalars(
+            select(models.IpPrefix).where(models.IpPrefix.circuit_id == circ_id)
+        )
+    )
+    assert linhas and all(l.status == "liberada" for l in linhas)
+    tipos = [
+        e.type
+        for e in db_session.scalars(select(models.AuditEvent).order_by(models.AuditEvent.id))
+        if e.type.startswith("circuit.")
+    ]
+    assert tipos == ["circuit.create", "circuit.reserve", "circuit.unreserve"]
+
+
+def test_unreserve_sem_reservas_audita_noop(client: TestClient, db_session: Session) -> None:
+    env = _ambiente(db_session)
+    circ_id = client.post(
+        "/api/v1/circuits", json=_corpo(env, "CIRC-FREE-NOOP"), headers=_auth()
+    ).json()["id"]
+
+    resp = client.post(f"/api/v1/circuits/{circ_id}/unreserve", headers=_auth())
+    assert resp.status_code == 200
+    evento = db_session.scalar(
+        select(models.AuditEvent).where(models.AuditEvent.type == "circuit.unreserve")
+    )
+    assert evento is not None
+    assert evento.details["depois"] == {"repetida": True}
+
+
+def test_unreserve_bloqueia_com_sessao_bgp_409(client: TestClient, db_session: Session) -> None:
+    env = _ambiente(db_session)
+    circ_id = client.post(
+        "/api/v1/circuits", json=_corpo(env, "CIRC-FREE-409"), headers=_auth()
+    ).json()["id"]
+    client.post(f"/api/v1/circuits/{circ_id}/reserve", headers=_auth())
+    db_session.add(
+        models.BgpSession(
+            circuit_id=circ_id, device_id=env["ne_id"], afi="ipv4",
+            local_address="100.64.0.1", remote_address="100.64.0.2", asn_remote=64512,
+        )
+    )
+    db_session.commit()
+
+    resp = client.post(f"/api/v1/circuits/{circ_id}/unreserve", headers=_auth())
+    assert resp.status_code == 409
+    assert "sess" in resp.json()["detail"]
+    vlans = list(
+        db_session.scalars(select(models.Vlan).where(models.Vlan.circuit_id == circ_id))
+    )
+    assert all(v.status == "reservada" for v in vlans)  # nada foi liberado
+
+    assert client.post("/api/v1/circuits/9999/unreserve", headers=_auth()).status_code == 404
+
+
 def test_edge_trunk_aceito_no_post_e_patch(client: TestClient, db_session: Session) -> None:
     env = _ambiente(db_session)
     corpo = _corpo(env, "CIRC-TRUNK-API")

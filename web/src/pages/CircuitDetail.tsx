@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ApiError } from "@/api/client";
-import { useBgpSessions, useCircuitDetail, useCircuitoReservar, useDevices, useOrganizations, useSites } from "@/api/hooks";
+import { useBgpSessions, useCircuitDetail, useCircuitoLiberar, useCircuitoReservar, useDevices, useOrganizations, useSites } from "@/api/hooks";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { StatusBadge } from "@/components/StatusBadge";
 import { PageHeader } from "@/components/PageHeader";
 import SolicitarMudanca from "@/components/SolicitarMudanca";
@@ -15,7 +16,10 @@ export default function CircuitDetail() {
   const { data: sites } = useSites();
   const { data: organizations } = useOrganizations();
   const reservar = useCircuitoReservar();
+  const liberar = useCircuitoLiberar();
+  const [confirmandoRemocao, setConfirmandoRemocao] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  const temReservas = Boolean(data?.ipv4_local || data?.ipv6_local);
 
   if (isLoading) return <p aria-busy="true">Carregando…</p>;
   if (!data) {
@@ -71,9 +75,38 @@ export default function CircuitDetail() {
         }}
       >
         {reservar.isPending ? "Reservando…" : "Reservar recursos"}
-      </button>
+      </button>{" "}
+      {temReservas && (
+        <button
+          type="button"
+          disabled={liberar.isPending}
+          onClick={() => {
+            setErro(null);
+            setConfirmandoRemocao(true);
+          }}
+        >
+          Remover recursos
+        </button>
+      )}
       {reservar.error && <p role="alert">{String(reservar.error.message ?? "Falha ao reservar recursos.")}</p>}
+      {liberar.error && <p role="alert">{String(liberar.error.message ?? "Falha ao liberar recursos.")}</p>}
       {erro && <p role="alert">{erro}</p>}
+      <ConfirmDialog
+        aberto={confirmandoRemocao}
+        titulo="Remover recursos do circuito?"
+        mensagem="As VLANs e os endereços p2p reservados voltam a ficar disponíveis. As linhas ficam liberadas no histórico; circuitos com sessão BGP não podem ser liberados."
+        confirmando={liberar.isPending}
+        onCancelar={() => setConfirmandoRemocao(false)}
+        onConfirmar={() => {
+          void liberar
+            .mutateAsync(circuitId)
+            .then(() => setConfirmandoRemocao(false))
+            .catch((err) => {
+              setConfirmandoRemocao(false);
+              setErro(err instanceof ApiError ? err.message : "Falha ao liberar recursos.");
+            });
+        }}
+      />
       <h2>Sessões BGP</h2>
       {sessions && sessions.length === 0 && <p>Nenhuma sessão vinculada.</p>}
       {sessions?.map((s) => (

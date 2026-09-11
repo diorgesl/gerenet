@@ -194,6 +194,51 @@ def test_cli_circuits_add_reserve_disable(db_session: Session) -> None:
     assert "não encontrado" in faltante.output
 
 
+def test_cli_circuits_unreserve_libera(db_session: Session) -> None:
+    site = create_site(db_session, SiteCreate(name="POP-CIRC-CLI-FREE"), actor="cli")
+    org = create_organization(
+        db_session, OrganizationCreate(name="Org Circ CLI Free", asn=64515), actor="cli"
+    )
+    sw = create_device(
+        db_session, DeviceCreate(name="sw-circ-cli-free", management_address="10.9.2.2"), actor="cli"
+    )
+    ne = create_device(
+        db_session, DeviceCreate(name="ne-circ-cli-free", management_address="10.9.2.1", asn=64603),
+        actor="cli",
+    )
+    for dev in (sw, ne):
+        link_device(db_session, site.id, dev.id, actor="cli")
+
+    add = runner.invoke(
+        app,
+        [
+            "circuits", "add", "--code", "CIRC-CLI-FREE",
+            "--organization-id", str(org.id), "--site-id", str(site.id),
+            "--access-device-id", str(sw.id), "--access-port", "GE0/0/1",
+            "--edge-device-id", str(ne.id),
+        ],
+    )
+    assert add.exit_code == 0, add.output
+
+    reserva = runner.invoke(app, ["circuits", "reserve", "CIRC-CLI-FREE"])
+    assert reserva.exit_code == 0, reserva.output
+
+    libera = runner.invoke(app, ["circuits", "unreserve", "CIRC-CLI-FREE"])
+    assert libera.exit_code == 0, libera.output
+    circ_db = db_session.scalar(
+        select(models.Circuit).where(models.Circuit.code == "CIRC-CLI-FREE")
+    )
+    vlans = list(db_session.scalars(select(models.Vlan).where(models.Vlan.circuit_id == circ_db.id)))
+    assert vlans and all(v.status == "liberada" for v in vlans)
+
+    repetida = runner.invoke(app, ["circuits", "unreserve", "CIRC-CLI-FREE"])
+    assert repetida.exit_code == 0  # idempotente
+
+    faltante = runner.invoke(app, ["circuits", "unreserve", "nao-existe"])
+    assert faltante.exit_code == 1
+    assert "não encontrado" in faltante.output
+
+
 def _ambiente_bgp(db_session: Session) -> dict:
     site = create_site(db_session, SiteCreate(name="pop-bgp-cli"), actor="cli")
     org = create_organization(

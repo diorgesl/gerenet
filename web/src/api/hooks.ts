@@ -278,6 +278,18 @@ export function useCircuitoReservar() {
   });
 }
 
+export function useCircuitoLiberar() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => apiFetch<CircuitDetailOut>(`/api/v1/circuits/${id}/unreserve`, { method: "POST" }),
+    onSuccess: (_d, id) => {
+      void qc.invalidateQueries({ queryKey: ["circuit", id] });
+      void qc.invalidateQueries({ queryKey: ["circuits"] });
+      void qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+}
+
 export const useBgpSessions = (filtros?: { circuit_id?: number; device_id?: number; include_disabled?: boolean }) =>
   useQuery({
     queryKey: ["bgp-sessions", filtros],

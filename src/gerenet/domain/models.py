@@ -278,8 +278,9 @@ class Vlan(Base):
         # S-VLAN e VLAN partilham o mesmo espaço de VID no switch (spec).
         # Filas de circuito: escopo de site (device_id NULL); filas MPLS:
         # escopo de device (mesmo VID é legítimo em switches diferentes).
+        # Exclusividade só para reservadas: linha liberada pode ser realocada.
         Index("uq_vlans_site_vid", "site_id", "vid", unique=True,
-              postgresql_where=text("device_id IS NULL")),
+              postgresql_where=text("device_id IS NULL AND status = 'reservada'")),
         Index("uq_vlans_device_vid", "device_id", "vid", unique=True,
               postgresql_where=text("device_id IS NOT NULL")),
     )
@@ -309,8 +310,10 @@ class IpPrefix(Base):
     __tablename__ = "ip_prefixes"
 
     __table_args__ = (
-        # Ruling 1: rede de segurança contra duplicidade exata no site
-        UniqueConstraint("site_id", "network"),
+        # Ruling 1: rede de segurança contra duplicidade exata no site, só para
+        # reservadas — linha liberada pode ter o mesmo par realocado.
+        Index("uq_ip_prefixes_site_network", "site_id", "network", unique=True,
+              postgresql_where=text("status = 'reservada'")),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

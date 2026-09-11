@@ -102,10 +102,14 @@ def pontas_v6(network: str) -> tuple[str, str]:
 
 def _primeiro_vid(session: Session, site_id: int, ignorar: set[int] | None = None) -> int:
     """Menor VID 2-4094 livre no site para circuitos (linhas MPLS — device_id NOT
-    NULL — têm escopo de device e não contam; Ruling 6: só linhas existentes)."""
+    NULL — têm escopo de device e não contam; Ruling 6: só linhas existentes).
+
+    Linhas liberadas não contam como ocupadas (reuso após liberação).
+    """
     ocupados = set(session.scalars(
         select(models.Vlan.vid).where(
             models.Vlan.site_id == site_id, models.Vlan.device_id.is_(None),
+            models.Vlan.status == "reservada",
         )
     ))
     if ignorar:
@@ -118,12 +122,17 @@ def _primeiro_vid(session: Session, site_id: int, ignorar: set[int] | None = Non
 
 
 def _primeiro_livre(session: Session, site: models.Site, comprimento: int) -> ipaddress.IPv4Network:
-    """Próximo prefixo v4 livre no bloco do site (first-fit, sem sobreposição)."""
+    """Próximo prefixo v4 livre no bloco do site (first-fit, sem sobreposição).
+
+    Prefixos liberados (status liberada) não contam — reuso após liberação.
+    """
     bloco = bloco_v4(site)
     ocupadas = [
         ipaddress.ip_network(linha, strict=True)
         for linha in session.scalars(
-            select(models.IpPrefix.network).where(models.IpPrefix.site_id == site.id)
+            select(models.IpPrefix.network).where(
+                models.IpPrefix.site_id == site.id, models.IpPrefix.status == "reservada"
+            )
         )
     ]
     for candidata in bloco.subnets(new_prefix=comprimento):
@@ -145,7 +154,9 @@ def reservar_circuito(session: Session, circuit_id: int, *, actor: str) -> model
         raise ConflictError(f"Circuito {circ.code} desativado não recebe reservas.")
     ja_reservado = (
         session.scalars(
-            select(models.Vlan.id).where(models.Vlan.circuit_id == circ.id).limit(1)
+            select(models.Vlan.id).where(
+                models.Vlan.circuit_id == circ.id, models.Vlan.status == "reservada"
+            ).limit(1)
         ).first()
         is not None
     )
@@ -209,6 +220,7 @@ def reservar_circuito(session: Session, circuit_id: int, *, actor: str) -> model
                 select(models.IpPrefix.network).where(
                     models.IpPrefix.site_id == circ.site_id,
                     models.IpPrefix.network == rede_v6,
+                    models.IpPrefix.status == "reservada",
                 )
             ).first()
             is not None
@@ -236,6 +248,62 @@ def reservar_circuito(session: Session, circuit_id: int, *, actor: str) -> model
             "vlans": [{"vid": v.vid, "kind": v.kind, "family": v.family} for v in vlans],
             "ip_prefixes": [{"network": p.network} for p in prefixos],
         },
+    )
+    session.commit()
+    session.refresh(circ)
+    return circ
+
+
+def liberar_circuito(session: Session, circuit_id: int, *, actor: str) -> models.Circuit:
+    """Libera as reservas do circuito (VLANs + enlaces p2p) — idempotente.
+
+    Marca status liberada (§14.1 — linhas não são excluídas fisicamente); as
+    linhas liberadas são ignoradas pelos alocadores (first-fit) e pelo detalhe
+    do circuito. Com sessão BGP vinculada não libera: os endereços estão em
+    uso e a SoT ficaria inconsistente.
+    """
+    circ = get_circuit(session, circuit_id)
+    com_sessao = (
+        session.scalars(
+            select(models.BgpSession.id).where(models.BgpSession.circuit_id == circ.id).limit(1)
+        ).first()
+        is not None
+    )
+    if com_sessao:
+        raise ConflictError(
+            f"Circuito {circ.code} tem sessão(ões) BGP vinculada(s); remova ou desative "
+            "as sessões antes de liberar os recursos."
+        )
+    vlans = list(
+        session.scalars(
+            select(models.Vlan).where(
+                models.Vlan.circuit_id == circ.id, models.Vlan.status == "reservada"
+            )
+        )
+    )
+    prefixos = list(
+        session.scalars(
+            select(models.IpPrefix).where(
+                models.IpPrefix.circuit_id == circ.id, models.IpPrefix.status == "reservada"
+            )
+        )
+    )
+    if not vlans and not prefixos:
+        registrar(
+            session, tipo="circuit.unreserve", ator=actor, objeto="circuit",
+            objeto_id=circ.id, antes=None, depois={"repetida": True},
+        )
+        session.commit()
+        return circ
+    for linha in vlans + prefixos:
+        linha.status = "liberada"
+    registrar(
+        session, tipo="circuit.unreserve", ator=actor, objeto="circuit", objeto_id=circ.id,
+        antes={
+            "vlans": [{"vid": v.vid, "kind": v.kind, "family": v.family} for v in vlans],
+            "ip_prefixes": [{"network": p.network} for p in prefixos],
+        },
+        depois={"status": "liberada"},
     )
     session.commit()
     session.refresh(circ)

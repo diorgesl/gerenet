@@ -5,7 +5,7 @@ from gerenet.db import get_session
 from gerenet.domain.schemas import CircuitCreate
 from gerenet.domain.services import circuits as svc
 from gerenet.domain.services.errors import GerenetError, NotFoundError
-from gerenet.domain.services.ipam import reservar_circuito
+from gerenet.domain.services.ipam import liberar_circuito, reservar_circuito
 
 app = typer.Typer(help="Circuitos de acesso de downstreams.")
 
@@ -114,6 +114,22 @@ def reserve(circuito: str = typer.Argument(..., help="ID ou código do circuito.
             typer.echo(f"Erro: {exc}", err=True)
             raise typer.Exit(1) from exc
     typer.echo(f"Circuito {encontrado.code} reservado (idempotente).")
+
+
+@app.command("unreserve")
+def unreserve(circuito: str = typer.Argument(..., help="ID ou código do circuito.")) -> None:
+    """Libera VLAN e enlaces p2p do circuito (idempotente; linhas ficam liberadas)."""
+    with get_session() as session:
+        encontrado = resolver(session, circuito)
+        if encontrado is None:
+            typer.echo("Circuito não encontrado.", err=True)
+            raise typer.Exit(1)
+        try:
+            liberar_circuito(session, encontrado.id, actor="cli")
+        except GerenetError as exc:
+            typer.echo(f"Erro: {exc}", err=True)
+            raise typer.Exit(1) from exc
+    typer.echo(f"Circuito {encontrado.code} liberado (idempotente).")
 
 
 @app.command("disable")
