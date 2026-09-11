@@ -13,6 +13,7 @@ const dev1 = { id: 1, name: "sw-01", management_address: "10.9.0.1", site_id: 1,
 const dev2 = { id: 2, name: "ne-01", management_address: "10.9.0.2", site_id: 1, family: "NE8000", role: "edge", asn: 64600, ssh_port: 22, vendor: "Huawei", vrp_version: null, comm_status: "ok", admin_status: true, last_collected_at: null };
 
 let reservado = true;
+let bloqueio409 = false;
 const detalhe = () => ({
   id: 1, code: "CIRC-01", organization_id: 1, site_id: 1,
   access_device_id: 1, access_port: "GE0/0/1", edge_device_id: 2,
@@ -31,6 +32,12 @@ beforeAll(() => {
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
       if (init?.method === "POST" && url.endsWith("/unreserve")) {
+        if (bloqueio409) {
+          return new Response(
+            JSON.stringify({ detail: "Circuito CIRC-01 tem sessão(ões) BGP ativa(s); desative as sessões antes de liberar os recursos." }),
+            { status: 409, headers: { "Content-Type": "application/json" } },
+          );
+        }
         reservado = false;
         return new Response(JSON.stringify(detalhe()), { status: 200, headers: { "Content-Type": "application/json" } });
       }
@@ -83,6 +90,19 @@ describe("CircuitDetail", () => {
     await waitFor(() => {
       expect(screen.queryByRole("button", { name: "Remover recursos" })).not.toBeInTheDocument();
     });
+  });
+
+  it("409 mantém as reservas e mostra a mensagem do bloqueio", async () => {
+    reservado = true;
+    bloqueio409 = true;
+    renderDetalhe();
+    await userEvent.click(await screen.findByRole("button", { name: "Remover recursos" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Confirmar" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/sessão\(ões\) BGP ativa/);
+    expect(screen.queryByText(/confirmar/i)).not.toBeInTheDocument(); // dialog fechado
+    expect(screen.getByRole("button", { name: "Remover recursos" })).toBeInTheDocument();
+    bloqueio409 = false;
   });
 
   it("não mostra 'Remover recursos' sem reservas", async () => {

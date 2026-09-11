@@ -101,10 +101,7 @@ export default function CircuitDetail() {
           void liberar
             .mutateAsync(circuitId)
             .then(() => setConfirmandoRemocao(false))
-            .catch((err) => {
-              setConfirmandoRemocao(false);
-              setErro(err instanceof ApiError ? err.message : "Falha ao liberar recursos.");
-            });
+            .catch(() => setConfirmandoRemocao(false)); // a mensagem sai pelo liberar.error
         }}
       />
       <h2>Sessões BGP</h2>

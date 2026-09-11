@@ -79,6 +79,11 @@ retry. Circuito com sessão BGP **ativa** não pode ser liberado (409) — desat
 as sessões antes; sessão desativada já está fora da configuração desejada e não
 bloqueia.
 
+A liberação não mexe nas sessões: desativar não desvincula, então um circuito
+liberado pode continuar com sessões apontando para endereços que voltaram ao
+pool, e criar sessão nova não exige reserva. O render de um circuito nesse
+estado traz só o peer, sem subinterface.
+
 As reservas alimentam o render da [configuração desejada](/wiki/operacao):
 subinterface `<trunk>.<vid>`, prefix-lists e sessões BGP. Para o passo
 seguinte, veja [Sessões BGP, autorizações, perfis e communities](/wiki/roteamento).

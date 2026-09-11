@@ -273,7 +273,12 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   único caminho, não existe remoção de sessão). As UNIQUEs de `vlans`
   (`uq_vlans_site_vid`) e `ip_prefixes` viraram índices únicos **parciais** por
   `status = 'reservada'` (migração `e48a9c6b2d71_liberar_recursos_circuito`),
-  então o alocador first-fit reusa o VID e o par p2p liberados. API
+  então o alocador first-fit reusa o VID e o par p2p liberados. Todo leitor de
+  `vlans`/`ip_prefixes` por `circuit_id` filtra `status == 'reservada'` (render,
+  plano de remoção e reconciliação foram corrigidos na revisão); ficam fora,
+  de propósito, `create_session` (não valida reserva — dívida registrada) e a
+  liberação de VLAN de AC de MPLS (`uq_vlans_device_vid` segue estrito).
+  API
   `POST /api/v1/circuits/{id}/unreserve`, CLI `gerenet circuits unreserve`,
   botão "Remover recursos" com `ConfirmDialog` no detalhe do circuito (wiki
   `/wiki/circuitos`).
