@@ -41,6 +41,13 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """Volta à unicidade estrita (só `reservada` deixa de ser o critério).
+
+    Depois que a liberação foi usada como esperado — um par com uma linha
+    `reservada` e outra `liberada`, que é o que o reuso produz — a
+    `create_unique_constraint`/`create_index` daqui falha com duplicate key.
+    Para descer, apagar ou reescrever as linhas `liberada` antes.
+    """
     op.drop_index("uq_ip_prefixes_site_network", table_name="ip_prefixes")
     op.create_unique_constraint("ip_prefixes_site_id_network_key", "ip_prefixes", ["site_id", "network"])
     op.drop_index("uq_vlans_site_vid", table_name="vlans")

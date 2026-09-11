@@ -84,10 +84,15 @@ def _reserva(session: Session, circuito: models.Circuit) -> dict[str, dict]:
     subinterface IPv6-only receberia um `ip address` do par interno.
     """
     vlans = list(session.scalars(
-        select(models.Vlan).where(models.Vlan.circuit_id == circuito.id).order_by(models.Vlan.vid)
+        select(models.Vlan).where(
+            models.Vlan.circuit_id == circuito.id, models.Vlan.status == "reservada"
+        ).order_by(models.Vlan.vid)
     ))
     prefixos = list(session.scalars(
-        select(models.IpPrefix).where(models.IpPrefix.circuit_id == circuito.id)
+        select(models.IpPrefix).where(
+            models.IpPrefix.circuit_id == circuito.id,
+            models.IpPrefix.status == "reservada",
+        )
     ))
     por_versao: dict[int, str] = {
         ipaddress.ip_network(p.network).version: p.network for p in prefixos

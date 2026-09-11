@@ -588,3 +588,22 @@ def test_reconcile_sem_chave_gravada_nao_alerta(
     snap_id = _snapshot_up(session, edge_device, _peers_up(pref_rcv=1200))
     itens = reconciliar_device(session, edge_device.id, snapshot_id=snap_id).items
     assert itens == []
+
+
+def test_circuito_liberado_nao_vira_sem_trunk(db_session: Session) -> None:
+    """Sem reserva viva não há subinterface a comparar: nada de aviso de edge_trunk."""
+    from gerenet.automation.reconcile import reconciliar_device
+    from gerenet.domain.services.ipam import liberar_circuito
+
+    env = _ambiente(db_session)
+    circ_id = _circuito_sem_trunk(db_session, env)
+    liberar_circuito(db_session, circ_id, actor="cli")
+    _sessao(db_session, env, circ_id, afi="ipv4")
+    p = _pontas(db_session, circ_id)
+    _snapshot(
+        db_session, env,
+        bgp_peers=[{"afi": "ipv4", "peer": p["v4_r"], "asn": 64512, "estado": "Established",
+                "pref_rcv": 1, "up_down": "1d02h"}],
+    )
+    itens = reconciliar_device(db_session, env["ne_id"]).items
+    assert [i.tipo for i in itens] == []

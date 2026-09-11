@@ -449,3 +449,19 @@ def test_render_subinterface_no_backup_edge(db_session: Session) -> None:
     assert [b.tipo for b in resultado.blocos] == ["subinterface", "bgp_peer"]
     assert resultado.blocos[0].objeto == "circuit"
     assert resultado.blocos[0].objeto_id == circ_id
+
+
+def test_circuito_liberado_nao_renderiza_subinterface(db_session: Session) -> None:
+    """Reserva liberada não volta ao render, mesmo com sessão ativa nova no circuito."""
+    from gerenet.automation.render import render_desejado
+    from gerenet.domain.services.ipam import liberar_circuito
+
+    env = _ambiente(db_session)
+    circ_id = _circuito_reservado(db_session, env, code="CIRC-R-LIB")
+    liberar_circuito(db_session, circ_id, actor="cli")
+    # create_session não valida reserva: é por aqui que o circuito liberado alcança
+    # o render (os endereços das linhas liberadas seguem legíveis por circuit_id).
+    _sessao(db_session, env, circ_id, afi="ipv4")
+
+    resultado = render_desejado(db_session, env["ne_id"])
+    assert [b.tipo for b in resultado.blocos] == ["bgp_peer"], resultado.texto

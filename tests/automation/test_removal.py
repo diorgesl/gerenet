@@ -241,3 +241,29 @@ def test_remocao_recursos_incompletos_nao_gera_plano(db_session, tmp_path):
     db_session.add(snap)
     db_session.commit()
     assert removal.blocos_remocao(db_session, circ, amb["dev"].id, snapshot=snap) == []
+
+
+def test_circuito_liberado_nao_derruba_subinterface_realocada(db_session, tmp_path):
+    """Reserva liberada não manda `undo interface` do VID que outro circuito pegou."""
+    from gerenet.domain.services.ipam import liberar_circuito
+
+    amb = _ambiente(db_session)
+    circ_a = _circuito(db_session, amb, code="circ-lib-a")
+    (vlan_a,) = db_session.scalars(
+        select(models.Vlan).where(models.Vlan.circuit_id == circ_a.id)
+    )
+    liberar_circuito(db_session, circ_a.id, actor="cli")
+    circ_b = _circuito(db_session, amb, code="circ-lib-b")  # first-fit devolve o VID liberado
+    (vlan_b,) = db_session.scalars(
+        select(models.Vlan).where(models.Vlan.circuit_id == circ_b.id)
+    )
+    assert vlan_b.vid == vlan_a.vid
+
+    nome = naming.subinterface(circ_a.edge_trunk, vlan_a.vid)
+    snap = _snapshot(db_session, amb["dev"], interfaces=[{"nome": nome}], tmp_path=tmp_path)
+
+    blocos_a = removal.blocos_remocao(db_session, circ_a, amb["dev"].id, snapshot=snap)
+    assert [b["tipo"] for b in blocos_a if b["tipo"] == "subinterface"] == []
+    # o dono atual continua removendo a própria subinterface
+    blocos_b = removal.blocos_remocao(db_session, circ_b, amb["dev"].id, snapshot=snap)
+    assert any(b["tipo"] == "subinterface" for b in blocos_b)

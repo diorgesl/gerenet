@@ -258,8 +258,11 @@ def liberar_circuito(session: Session, circuit_id: int, *, actor: str) -> models
     """Libera as reservas do circuito (VLANs + enlaces p2p) — idempotente.
 
     Marca status liberada (§14.1 — linhas não são excluídas fisicamente); as
-    linhas liberadas são ignoradas pelos alocadores (first-fit) e pelo detalhe
-    do circuito. Com sessão BGP **ativa** não libera: os endereços estão em uso
+    linhas liberadas são ignoradas pelos alocadores (first-fit), pelo detalhe
+    do circuito, pelo render/plano de remoção e pela reconciliação — todo
+    leitor por `circuit_id` precisa filtrar `status == "reservada"`, senão a
+    reserva devolvida volta como configuração desejada. Com sessão BGP
+    **ativa** não libera: os endereços estão em uso
     e a SoT ficaria inconsistente. Sessão desativada não bloqueia — desativar é
     o único caminho (não há remoção de sessão) e ela já está fora da config
     desejada (mesmo filtro de `list_sessions`/coletores).

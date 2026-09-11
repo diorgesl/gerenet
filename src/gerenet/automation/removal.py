@@ -167,7 +167,10 @@ def blocos_remocao(
         nomes = {
             naming.subinterface(circuito.edge_trunk, vlan.vid)
             for vlan in session.scalars(
-                select(models.Vlan).where(models.Vlan.circuit_id == circuito.id)
+                select(models.Vlan).where(
+                    models.Vlan.circuit_id == circuito.id,
+                    models.Vlan.status == "reservada",
+                )
             )
         }
         existentes = {i["nome"] for i in recursos.get("interfaces", [])}

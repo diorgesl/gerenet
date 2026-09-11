@@ -302,7 +302,10 @@ def reconciliar_device(
         if tem_interfaces:
             for circ in circuitos_reservados.values():
                 tem_vlan = session.scalars(
-                    select(models.Vlan.id).where(models.Vlan.circuit_id == circ.id).limit(1)
+                    select(models.Vlan.id).where(
+                        models.Vlan.circuit_id == circ.id,
+                        models.Vlan.status == "reservada",
+                    ).limit(1)
                 ).first() is not None
                 if circ.edge_trunk is None and tem_vlan:
                     items.append(_item(
