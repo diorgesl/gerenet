@@ -258,6 +258,36 @@ def test_unreserve_bloqueia_com_sessao_bgp_409(client: TestClient, db_session: S
     assert client.post("/api/v1/circuits/9999/unreserve", headers=_auth()).status_code == 404
 
 
+def test_unreserve_permite_com_sessao_bgp_desativada(
+    client: TestClient, db_session: Session
+) -> None:
+    """Fluxo do operador: desativar a sessão pela API e então liberar os recursos."""
+    env = _ambiente(db_session)
+    circ_id = client.post(
+        "/api/v1/circuits", json=_corpo(env, "CIRC-FREE-OFF"), headers=_auth()
+    ).json()["id"]
+    client.post(f"/api/v1/circuits/{circ_id}/reserve", headers=_auth())
+    sessao = models.BgpSession(
+        circuit_id=circ_id, device_id=env["ne_id"], afi="ipv4",
+        local_address="100.64.0.1", remote_address="100.64.0.2", asn_remote=64512,
+    )
+    db_session.add(sessao)
+    db_session.commit()
+
+    desativa = client.patch(
+        f"/api/v1/bgp-sessions/{sessao.id}", json={"admin_status": False}, headers=_auth()
+    )
+    assert desativa.status_code == 200, desativa.text
+
+    resp = client.post(f"/api/v1/circuits/{circ_id}/unreserve", headers=_auth())
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["ipv4_local"] is None
+    vlans = list(
+        db_session.scalars(select(models.Vlan).where(models.Vlan.circuit_id == circ_id))
+    )
+    assert vlans and all(v.status == "liberada" for v in vlans)
+
+
 def test_edge_trunk_aceito_no_post_e_patch(client: TestClient, db_session: Session) -> None:
     env = _ambiente(db_session)
     corpo = _corpo(env, "CIRC-TRUNK-API")

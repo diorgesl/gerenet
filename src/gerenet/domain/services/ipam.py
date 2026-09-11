@@ -259,20 +259,27 @@ def liberar_circuito(session: Session, circuit_id: int, *, actor: str) -> models
 
     Marca status liberada (§14.1 — linhas não são excluídas fisicamente); as
     linhas liberadas são ignoradas pelos alocadores (first-fit) e pelo detalhe
-    do circuito. Com sessão BGP vinculada não libera: os endereços estão em
-    uso e a SoT ficaria inconsistente.
+    do circuito. Com sessão BGP **ativa** não libera: os endereços estão em uso
+    e a SoT ficaria inconsistente. Sessão desativada não bloqueia — desativar é
+    o único caminho (não há remoção de sessão) e ela já está fora da config
+    desejada (mesmo filtro de `list_sessions`/coletores).
     """
     circ = get_circuit(session, circuit_id)
     com_sessao = (
         session.scalars(
-            select(models.BgpSession.id).where(models.BgpSession.circuit_id == circ.id).limit(1)
+            select(models.BgpSession.id)
+            .where(
+                models.BgpSession.circuit_id == circ.id,
+                models.BgpSession.admin_status.is_(True),
+            )
+            .limit(1)
         ).first()
         is not None
     )
     if com_sessao:
         raise ConflictError(
-            f"Circuito {circ.code} tem sessão(ões) BGP vinculada(s); remova ou desative "
-            "as sessões antes de liberar os recursos."
+            f"Circuito {circ.code} tem sessão(ões) BGP ativa(s); desative as sessões "
+            "antes de liberar os recursos."
         )
     vlans = list(
         session.scalars(

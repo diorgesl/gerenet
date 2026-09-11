@@ -94,7 +94,7 @@ export default function CircuitDetail() {
       <ConfirmDialog
         aberto={confirmandoRemocao}
         titulo="Remover recursos do circuito?"
-        mensagem="As VLANs e os endereços p2p reservados voltam a ficar disponíveis. As linhas ficam liberadas no histórico; circuitos com sessão BGP não podem ser liberados."
+        mensagem="As VLANs e os endereços p2p reservados voltam a ficar disponíveis. As linhas ficam liberadas no histórico; circuitos com sessão BGP ativa não podem ser liberados (desative a sessão antes)."
         confirmando={liberar.isPending}
         onCancelar={() => setConfirmandoRemocao(false)}
         onConfirmar={() => {

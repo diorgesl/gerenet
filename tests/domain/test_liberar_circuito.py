@@ -111,6 +111,47 @@ def test_liberar_bloqueia_com_sessao_bgp_vinculada(db_session: Session) -> None:
     assert all(p.status == 'reservada' for p in prefixos)
 
 
+def _sessao_bgp(
+    db_session: Session, circ_id: int, *, admin_status: bool = True, remote: str = '100.64.0.2'
+) -> models.BgpSession:
+    circ = db_session.get(models.Circuit, circ_id)
+    sessao = models.BgpSession(
+        circuit_id=circ_id, device_id=circ.edge_device_id, afi='ipv4',
+        local_address='100.64.0.1', remote_address=remote, asn_remote=64512,
+        admin_status=admin_status,
+    )
+    db_session.add(sessao)
+    db_session.commit()
+    return sessao
+
+
+def test_liberar_permitido_com_sessao_bgp_desativada(db_session: Session) -> None:
+    """Desativar é o caminho possível (não há remoção de sessão): não pode bloquear."""
+    _, circ_id = _ambiente(db_session)
+    reservar_circuito(db_session, circ_id, actor='cli')
+    _sessao_bgp(db_session, circ_id, admin_status=False)
+
+    liberar_circuito(db_session, circ_id, actor='cli')
+
+    vlans, prefixos = _reservas(db_session, circ_id)
+    assert vlans and all(v.status == 'liberada' for v in vlans)
+    assert prefixos and all(p.status == 'liberada' for p in prefixos)
+
+
+def test_liberar_bloqueia_com_sessao_ativa_entre_desativadas(db_session: Session) -> None:
+    _, circ_id = _ambiente(db_session)
+    reservar_circuito(db_session, circ_id, actor='cli')
+    _sessao_bgp(db_session, circ_id, admin_status=False, remote='100.64.0.2')
+    _sessao_bgp(db_session, circ_id, admin_status=True, remote='100.64.0.6')
+
+    with pytest.raises(ConflictError, match='ativa'):
+        liberar_circuito(db_session, circ_id, actor='cli')
+
+    vlans, prefixos = _reservas(db_session, circ_id)
+    assert all(v.status == 'reservada' for v in vlans)
+    assert all(p.status == 'reservada' for p in prefixos)
+
+
 def test_liberar_permite_reuso_do_vid_e_do_par_v4(db_session: Session) -> None:
     site_id, circ1_id = _ambiente(db_session)
     reservar_circuito(db_session, circ1_id, actor='cli')
