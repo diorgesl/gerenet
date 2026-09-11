@@ -265,5 +265,17 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   `docs/runbook-validacao-upstream.md` (somente leitura → geração sem
   execução → teste em circuito/edge não crítico → IRR/RPKI consultivo →
   rollback aprovado antes; **sem lab** — decisão registrada).
+- Liberação de recursos do circuito (frente pós-F5, 2026-09-11): o inverso da
+  reserva. `liberar_circuito` (`domain/services/ipam.py`) marca as linhas de
+  `vlans`/`ip_prefixes` do circuito como `liberada` (§14.1 — nada é excluído
+  fisicamente) e audita `circuit.unreserve`; idempotente e bloqueado com 409
+  apenas por sessão BGP **ativa** (desativada não bloqueia — desativar é o
+  único caminho, não existe remoção de sessão). As UNIQUEs de `vlans`
+  (`uq_vlans_site_vid`) e `ip_prefixes` viraram índices únicos **parciais** por
+  `status = 'reservada'` (migração `e48a9c6b2d71_liberar_recursos_circuito`),
+  então o alocador first-fit reusa o VID e o par p2p liberados. API
+  `POST /api/v1/circuits/{id}/unreserve`, CLI `gerenet circuits unreserve`,
+  botão "Remover recursos" com `ConfirmDialog` no detalhe do circuito (wiki
+  `/wiki/circuitos`).
 - Convenções previstas no `.gitignore`: Python com venv e pytest (`.venv/`, `.pytest_cache/`), deploy via Docker Compose (`compose.yaml` na raiz) com `.env` ignorado (o `.gitignore` ainda prevê `deploy/docker/.env`), `config.yaml` local com segredos **fora do repositório**, logs em `logs/` ignorados.
 - `.claude/settings.local.json` contém token e aponta o harness para uma API externa: é arquivo local — não versionar nem alterar.

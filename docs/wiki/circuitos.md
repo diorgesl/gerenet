@@ -67,6 +67,18 @@ A reserva é **idempotente**: repetir a operação devolve o estado atual e grav
 apenas um evento de auditoria de retry. Falhas de validação (VLANs esgotadas,
 bloco esgotado, `/126` derivado já reservado no site) não deixam linhas parciais.
 
+## Liberar recursos
+
+Para devolver os recursos ao site, clique em **Remover recursos** no detalhe do
+circuito (ou `gerenet circuits unreserve <circuito>`). A liberação marca as
+linhas como `liberada` em vez de apagá-las (o histórico fica) e o alocador
+volta a oferecer o VID e o par p2p ao próximo circuito do site.
+
+A operação também é idempotente: repetir grava apenas um evento de auditoria de
+retry. Circuito com sessão BGP **ativa** não pode ser liberado (409) — desative
+as sessões antes; sessão desativada já está fora da configuração desejada e não
+bloqueia.
+
 As reservas alimentam o render da [configuração desejada](/wiki/operacao):
 subinterface `<trunk>.<vid>`, prefix-lists e sessões BGP. Para o passo
 seguinte, veja [Sessões BGP, autorizações, perfis e communities](/wiki/roteamento).
