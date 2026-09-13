@@ -135,10 +135,15 @@ def normaliza_ldp(por_comando: dict[str, list[dict]]) -> list[dict]:
 
 
 def normaliza_l2vc(por_comando: dict[str, list[dict]]) -> list[dict]:
-    """`display l2vc` -> vc_id int, interface (None quando ausente) e estado up/down.
+    """`display l2vc` -> vc_id int, interface, estado e os campos do §13.2.
 
-    Keys: {vc_id, interface, estado}; linhas sem vc_id são descartadas.
+    Keys: {vc_id, interface, estado, ac_status, mtu_local, mtu_remoto}; campo
+    ausente no bloco vira None (não inventa valor) e linha sem vc_id é
+    descartada. O MTU é int quando impresso (o VRP imprime `0` em VC down).
     """
+    def _int(valor: object) -> int | None:
+        return int(valor) if valor not in (None, "") else None
+
     saida: list[dict] = []
     for linha in _primeiras_linhas(por_comando):
         vc = linha.get("vc_id")
@@ -148,6 +153,9 @@ def normaliza_l2vc(por_comando: dict[str, list[dict]]) -> list[dict]:
             "vc_id": int(vc),
             "interface": linha.get("interface"),
             "estado": "up" if str(linha.get("estado", "")).lower() == "up" else "down",
+            "ac_status": linha.get("ac_status") or None,
+            "mtu_local": _int(linha.get("mtu_local")),
+            "mtu_remoto": _int(linha.get("mtu_remoto")),
         })
     return saida
 

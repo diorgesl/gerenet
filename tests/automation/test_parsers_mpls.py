@@ -48,12 +48,29 @@ def test_l2vc_vazio() -> None:
 
 
 def test_l2vc_blocos_reais() -> None:
-    """S6730: `display mpls l2vc` é um bloco por VC (client interface / VC state / VC ID)."""
+    """S6730: bloco por VC com AC status e MTU local/remoto (fixture real)."""
     linhas = parse_template("l2vc", _real("s6730_display_mpls_l2vc.txt"))
     assert len(linhas) == 4
-    assert {"vc_id": "21", "interface": "Vlanif21", "estado": "up"} in linhas
-    assert {"vc_id": "627", "interface": "Vlanif627", "estado": "down"} in linhas
-    assert {"vc_id": "633", "interface": "Vlanif633", "estado": "up"} in linhas
+    assert {"vc_id": "21", "interface": "Vlanif21", "estado": "up", "ac_status": "up",
+            "mtu_local": "9216", "mtu_remoto": "9216"} in linhas
+    assert {"vc_id": "627", "interface": "Vlanif627", "estado": "down", "ac_status": "up",
+            "mtu_local": "9216", "mtu_remoto": "0"} in linhas
+
+
+def test_merge_l2vc_extrai_ac_e_mtu() -> None:
+    assert merge_parsed("l2vc", {"display mpls l2vc": [
+        {"vc_id": "21", "interface": "Vlanif21", "estado": "up", "ac_status": "up",
+         "mtu_local": "9216", "mtu_remoto": "9216"},
+    ]}) == [{"vc_id": 21, "interface": "Vlanif21", "estado": "up",
+             "ac_status": "up", "mtu_local": 9216, "mtu_remoto": 9216}]
+
+
+def test_merge_l2vc_sem_mtu_fica_none() -> None:
+    """Bloco sem as linhas de MTU/AC não inventa valor."""
+    assert merge_parsed("l2vc", {"display mpls l2vc": [
+        {"vc_id": "1000", "interface": None, "estado": "Down"},
+    ]}) == [{"vc_id": 1000, "interface": None, "estado": "down",
+             "ac_status": None, "mtu_local": None, "mtu_remoto": None}]
 
 
 def test_vsi_vazio() -> None:
@@ -96,12 +113,15 @@ def test_merge_l2vc_normaliza_blocos() -> None:
         {"vc_id": "21", "interface": "Vlanif21", "estado": "up"},
         {"vc_id": "627", "interface": "Vlanif627", "estado": "down"},
     ]}) == [
-        {"vc_id": 21, "interface": "Vlanif21", "estado": "up"},
-        {"vc_id": 627, "interface": "Vlanif627", "estado": "down"},
+        {"vc_id": 21, "interface": "Vlanif21", "estado": "up",
+         "ac_status": None, "mtu_local": None, "mtu_remoto": None},
+        {"vc_id": 627, "interface": "Vlanif627", "estado": "down",
+         "ac_status": None, "mtu_local": None, "mtu_remoto": None},
     ]
     assert merge_parsed("l2vc", {"display mpls l2vc": [
         {"vc_id": "1000", "interface": None, "estado": "Down"},
-    ]}) == [{"vc_id": 1000, "interface": None, "estado": "down"}]
+    ]}) == [{"vc_id": 1000, "interface": None, "estado": "down",
+             "ac_status": None, "mtu_local": None, "mtu_remoto": None}]
 
 
 def test_merge_vsi_normaliza_verbose() -> None:
