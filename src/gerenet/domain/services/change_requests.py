@@ -322,7 +322,15 @@ def marcar_executando(session: Session, cr_id: int, *, actor: str = "cli") -> mo
     return cr
 
 
-def _replaneja(session: Session, cr: models.ChangeRequest, device_id: int) -> changes.PlanoDevice:
+def _replaneja(
+    session: Session, cr: models.ChangeRequest, device_id: int, *, acao: str | None = None,
+) -> changes.PlanoDevice:
+    """Plano de um device na ação pedida (`acao=None` = ação da própria CR).
+
+    O `gerar_rollback` passa a ação do filho: planejar o passo com a ação do pai
+    entregava blocos `delete` a uma CR de provisionamento (§12.4).
+    """
+    acao = acao or cr.acao
     if cr.escopo == "upstream":
         from gerenet.automation import upstream as up_auto
         from gerenet.domain.services.upstreams import get_upstream
@@ -330,7 +338,7 @@ def _replaneja(session: Session, cr: models.ChangeRequest, device_id: int) -> ch
         up = get_upstream(session, cr.upstream_id)
         plano = (
             up_auto.plan_provision_upstream(session, up)
-            if cr.acao == "provision"
+            if acao == "provision"
             else up_auto.plan_remocao_upstream(session, up)
         )
         for item in plano:
@@ -338,7 +346,7 @@ def _replaneja(session: Session, cr: models.ChangeRequest, device_id: int) -> ch
                 return item
         return changes.PlanoDevice(device_id=device_id, blocos=[], baseline_snapshot_id=None)
     circ = get_circuit(session, cr.circuit_id)
-    if cr.acao == "provision":
+    if acao == "provision":
         plano = changes.plan_provision(session, circ)
     else:
         plano = changes.plan_remocao(session, circ)
@@ -430,7 +438,7 @@ def gerar_rollback(
                 plano_json=blocos, baseline_snapshot_id=snap.id,
             ))
         else:
-            item = _replaneja(session, cr, step.device_id)
+            item = _replaneja(session, cr, step.device_id, acao=filho.acao)
             session.add(models.ChangeStep(
                 change_request_id=filho.id, device_id=step.device_id, status="pendente",
                 plano_json=item.blocos, baseline_snapshot_id=item.baseline_snapshot_id,
