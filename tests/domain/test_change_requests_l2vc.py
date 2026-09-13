@@ -177,6 +177,42 @@ def test_rollback_l2vc_parcial_so_na_ponta_aplicada(db_session, l2vc):
     assert [s.device_id for s in filho.steps] == [d1.id]
 
 
+def test_rollback_l2vc_remocao_gera_filho_provision(db_session, l2vc):
+    """Remoção aplicada nas duas pontas ⇒ filho provision com blocos `create`.
+
+    O filho replaneja o desejado pela coleta ATUAL (pós-remoção), não pela ação
+    do pai: herdar o `remove` entregaria blocos `delete` a uma CR de provision
+    (o defeito do Task 2).
+    """
+    from gerenet.domain.services.change_requests import gerar_rollback
+    d1, d2, svc = l2vc
+    # coleta em que a CR de remoção nasceu: o VC consta nas duas pontas
+    _snapshot(db_session, d1, _recursos("10GE0/0/1", [
+        {"vc_id": 500, "interface": "10GE0/0/1", "estado": "up"},
+    ]))
+    _snapshot(db_session, d2, _recursos("10GE0/0/2", [
+        {"vc_id": 500, "interface": "10GE0/0/2", "estado": "up"},
+    ]))
+    cr = _cr_aplicada(db_session, svc, "remove", {d1.id, d2.id})
+    # coleta pós-execução: o VC sumiu do encontrado
+    _snapshot(db_session, d1, _recursos("10GE0/0/1", []))
+    _snapshot(db_session, d2, _recursos("10GE0/0/2", []))
+    filho = gerar_rollback(db_session, cr.id, ator_id=None, actor="cli")
+    assert filho.escopo == "l2vc"
+    assert filho.l2vc_id == svc.id
+    assert filho.circuit_id is None
+    assert filho.acao == "provision"
+    assert filho.status == "aguardando_aprovacao"
+    assert filho.rollback_de == cr.id
+    assert {s.device_id for s in filho.steps} == {d1.id, d2.id}
+    blocos = [b for s in filho.steps for b in s.plano_json]
+    assert len(blocos) == 2  # não-vazio explícito: o all() abaixo não passa vazio
+    assert all(b["acao"] == "create" for b in blocos)
+    comandos = [c for b in blocos for c in b["comandos"]]
+    assert comandos.count("mpls l2vc 10.255.8.2 500") == 1
+    assert comandos.count("mpls l2vc 10.255.8.1 500") == 1
+
+
 def test_rollback_l2vc_sem_encontrado_eh_plano_vazio(db_session, l2vc):
     """Nada do serviço consta na coleta: nada persiste (PlanoRollbackVazio)."""
     from gerenet.domain.services.change_requests import gerar_rollback
