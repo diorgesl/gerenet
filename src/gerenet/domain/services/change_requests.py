@@ -35,25 +35,15 @@ TRANSICOES: dict[str, set[str]] = {
 
 _ATUAIS = ("aplicado", "com_divergencia", "parcial", "erro")
 
-# Escopos SEM reconciliação/rollback automáticos (mensagem por escopo real §5):
-# o l2vc é reagendado por CR de remoção/provision nova (o re-diff aplica só a
-# ponta ausente — runbook §3.3); o vsi é multiponto em fase posterior.
+# Escopos SEM reconciliação/rollback automáticos (mensagem própria por escopo):
+# o vsi é multiponto e o provisionamento entra na frente seguinte à fase 4.
 _RECONCILIA_INDISPONIVEL = {
-    "l2vc": (
-        "Reconciliação automática indisponível para CR de escopo l2vc. "
-        "Crie uma CR de remoção (--acao remove) ou uma CR de provision nova (o re-diff "
-        "aplica só a ponta ausente) — runbook §3.3."
-    ),
     "vsi": (
         "Reconciliação automática indisponível para CR de escopo vsi — "
         "provisionamento multiponto em fase posterior."
     ),
 }
 _ROLLBACK_INDISPONIVEL = {
-    "l2vc": (
-        "Rollback automático indisponível para CR de escopo l2vc. "
-        "Crie uma CR de remoção (--acao remove) ou reverta manualmente — runbook §3.3."
-    ),
     "vsi": (
         "Rollback automático indisponível para CR de escopo vsi — "
         "provisionamento multiponto em fase posterior."
@@ -345,6 +335,20 @@ def _replaneja(
             if item.device_id == device_id:
                 return item
         return changes.PlanoDevice(device_id=device_id, blocos=[], baseline_snapshot_id=None)
+    if cr.escopo == "l2vc":
+        from gerenet.automation import l2vc as l2vc_auto
+        from gerenet.domain.services.mpls import get_l2vc
+
+        svc = get_l2vc(session, cr.l2vc_id)
+        plano = (
+            l2vc_auto.plan_provision_l2vc(session, svc)
+            if acao == "provision"
+            else l2vc_auto.plan_remocao_l2vc(session, svc)
+        )
+        for item in plano:
+            if item.device_id == device_id:
+                return item
+        return changes.PlanoDevice(device_id=device_id, blocos=[], baseline_snapshot_id=None)
     circ = get_circuit(session, cr.circuit_id)
     if acao == "provision":
         plano = changes.plan_provision(session, circ)
@@ -388,6 +392,10 @@ def gerar_rollback(
     remove → provision re-renderizado do desejado (SoT atual). No escopo
     upstream a mecânica é a mesma: o undo do filho remove agrega os circuitos
     vinculados por device (na ordem dos vínculos), como o plano de provision.
+    No escopo l2vc o plano sai da COLETA ATUAL (não do baseline do step): um
+    serviço recém-criado não consta no snapshot pré-mudança, e o undo vazio
+    deixaria o rollback sem passo — a ponta que não tem o VC no encontrado
+    simplesmente não ganha step.
     """
     cr = get_change_request(session, cr_id)
     if cr.escopo in _ROLLBACK_INDISPONIVEL:
@@ -406,6 +414,13 @@ def gerar_rollback(
             criticidade=cr.criticidade, motivo=f"Rollback do CR #{cr.id}",
             solicitante_id=ator_id, status="aguardando_aprovacao", rollback_de=cr.id,
         )
+    elif cr.escopo == "l2vc":
+        filho = models.ChangeRequest(
+            circuit_id=None, l2vc_id=cr.l2vc_id, escopo="l2vc",
+            acao="remove" if cr.acao == "provision" else "provision",
+            criticidade=cr.criticidade, motivo=f"Rollback do CR #{cr.id}",
+            solicitante_id=ator_id, status="aguardando_aprovacao", rollback_de=cr.id,
+        )
     else:
         circ = get_circuit(session, cr.circuit_id)
         filho = models.ChangeRequest(
@@ -417,6 +432,16 @@ def gerar_rollback(
     session.flush()
     for step in cr.steps:
         if step.status != "aplicado":
+            continue
+        if cr.escopo == "l2vc":
+            item = _replaneja(session, cr, step.device_id, acao=filho.acao)
+            if not item.blocos:
+                continue  # ponta sem o serviço no encontrado: nada a desfazer
+            session.add(models.ChangeStep(
+                change_request_id=filho.id, device_id=step.device_id, status="pendente",
+                plano_json=item.blocos, baseline_snapshot_id=item.baseline_snapshot_id,
+                aviso=item.aviso,
+            ))
             continue
         if cr.acao == "provision":
             if step.baseline_snapshot_id is None:

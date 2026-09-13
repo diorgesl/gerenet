@@ -183,13 +183,14 @@ def test_rollback_de_remocao_upstream_gera_filho_provision(
     assert all(c["acao"] == "create" for s in filho.steps for c in s.plano_json)
 
 
-def test_reconciliar_cr_l2vc_mantem_indisponivel(db_session):
-    """Regressão (mínimo): o guard por escopo real continua bloqueando l2vc."""
+def test_reconciliar_cr_l2vc_nao_e_mais_barrada_por_escopo(db_session):
+    """O guard por escopo não barra mais o l2vc (fase 4 passou a reconciliar e
+    reverter via rollback automático): a CR chega à validação de status."""
     cr = models.ChangeRequest(
         circuit_id=None, l2vc_id=None, escopo="l2vc", acao="provision",
         criticidade="media", motivo="regressão guard", status="rascunho",
     )
     db_session.add(cr)
     db_session.commit()
-    with pytest.raises(ValidationError, match="l2vc"):
+    with pytest.raises(ValidationError, match="atual: rascunho"):
         reconciliar(db_session, cr.id, actor="operador")
