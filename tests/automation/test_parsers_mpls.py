@@ -73,6 +73,19 @@ def test_merge_l2vc_sem_mtu_fica_none() -> None:
              "ac_status": None, "mtu_local": None, "mtu_remoto": None}]
 
 
+def test_merge_l2vc_vc_id_vazio_descarta_linha() -> None:
+    """`vc_id` vazio (sentinel do TextFSM, não None) descarta a linha, sem estourar.
+
+    Com o Record na linha do MTU, um bloco que imprima o MTU sem o `VC ID`
+    fecha registro com `vc_id` em `''` (o TextFSM nunca devolve None) — o guard
+    é de vazio, não de None.
+    """
+    assert merge_parsed("l2vc", {"display mpls l2vc": [
+        {"vc_id": "", "interface": None, "estado": "Up",
+         "ac_status": None, "mtu_local": None, "mtu_remoto": None},
+    ]}) == []
+
+
 def test_vsi_vazio() -> None:
     assert parse_template("vsi", "") == []
 

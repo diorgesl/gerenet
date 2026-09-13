@@ -146,8 +146,10 @@ def normaliza_l2vc(por_comando: dict[str, list[dict]]) -> list[dict]:
 
     saida: list[dict] = []
     for linha in _primeiras_linhas(por_comando):
+        # `vc_id` vazio (não None) é o sentinel do TextFSM para valor não casado:
+        # com o Record na linha do MTU, um bloco sem `VC ID` chega aqui em `''`.
         vc = linha.get("vc_id")
-        if vc is None:
+        if not vc:
             continue
         saida.append({
             "vc_id": int(vc),
