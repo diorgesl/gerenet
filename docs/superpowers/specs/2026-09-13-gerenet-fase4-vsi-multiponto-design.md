@@ -200,11 +200,21 @@ quando o escopo é `vsi`:
 **Parser.** O `vsi.template` passa a percorrer os três níveis do
 `display vsi verbose`, com o nome e o ID do VSI preenchidos ao longo do bloco:
 
-- nível do VSI: `VSI Name`, `VSI State` e `VSI ID` (como hoje);
-- nível do peer: `Peer Router ID` (o destino do pseudowire) e `Session`;
-- nível do AC: `Interface Name` e `State`;
-- nível do pseudowire: `Peer Ip Address` e `PW State`, na seção
-  `**PW Information`.
+- nível do VSI: `VSI Name`, `VSI State`, `VSI ID` e `MTU`;
+- nível do peer: `Peer Router ID` (o destino do pseudowire) e `Session`, que é
+  o estado do pseudowire que interessa;
+- nível do AC: `Interface Name` e `State`.
+
+A seção `**PW Information` (`Peer Ip Address` + `PW State`) **não é parseada**:
+medida na fixture real, ela aparece em apenas três dos nove VSIs e, quando
+aparece, repete o estado que o `Session` do bloco de peer já traz. Um campo a
+mais que às vezes falta seria ruído na divergência.
+
+O merge agrupa as linhas pelo nome do VSI, que é o único valor preenchido ao
+longo do bloco. O grupo sem `VSI ID` próprio é descartado, o que mantém o
+comportamento atual com o bloco quebrado da fixture (nome sem ID) e fecha o caso
+de um bloco truncado que trouxesse AC: sem ID, o AC não é atribuído ao VSI
+anterior.
 
 O merge devolve por VSI `{name, vsi_id, estado, mtu, peers: [{peer, estado}],
 acs: [{interface, estado}]}`, com `mtu` inteiro ou `None` e as listas vazias
@@ -213,8 +223,10 @@ ID) continua sendo descartado, e o teste do parser fixa esse comportamento.
 
 **Sincronização.** `sincronizar_mpls` mantém o match de VSI por `(vsi_id,
 membro)` e passa a atualizar o `operational_status` de cada `ServiceEndpoint` do
-tipo AC pelo estado do `Interface Name` correspondente, mantendo o agregado do
-serviço por `_status_agregado`.
+tipo AC pelo estado do `Interface Name` correspondente. O estado do **serviço**
+continua vindo do `VSI State` do equipamento, que é a visão do próprio VRP, e um
+AC caído não rebaixa o VSI na SoT: as duas informações convivem, uma no serviço
+e outra por ponta.
 
 **Pós-check** `valida_pos_vsi`:
 
@@ -222,7 +234,7 @@ serviço por `_status_agregado`.
 |---|---|---|
 | VSI ausente na coleta | `critica` | conferir a config do VSI (`display vsi verbose`) |
 | `VSI State` diferente de `up` | `critica` | verificar LDP, peer e MTU |
-| Pseudowire de um peer fora de `up` | `critica` | conferir o peer e a sessão LDP com o outro PE (§9.3) |
+| Sessão com um peer fora de `up` | `critica` | conferir o peer e o pseudowire com o outro PE (§9.3) |
 | AC de uma ponta fora de `up` | `atencao` | conferir o `l2 binding` e a Vlanif |
 | MTU do VSI diferente do configurado | `atencao` | conferir o `mtu` do serviço e reaplicar |
 
