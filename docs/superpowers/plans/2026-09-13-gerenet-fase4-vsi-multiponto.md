@@ -817,28 +817,27 @@ Ainda no arquivo, os planos e as validações:
 
 ```python
 def estado_bloco_vsi(bloco: dict, recursos: dict) -> str:
-    """Presença do bloco no encontrado, por identidade (nome VRP e Vlanif)."""
+    """Presença do bloco no encontrado, por identidade (nome VRP e Vlanif).
+
+    O bloco do AC é identificado pela `Vlanif<vid>` e o do VSI pelo nome VRP,
+    tanto na criação quanto na remoção. O snapshot não guarda o nome do VSI
+    ligado ao AC (o `display` não o mostra), então um binding de outro serviço
+    aparece aqui como "consta"; quem barra esse caso é o pré-check.
+    """
     comandos = bloco.get("comandos") or []
     if not comandos:
         return "ausente"
     linhas = recursos.get("vsi", []) or []
-    primeiro = comandos[0].split()
-    if primeiro and primeiro[0] == "undo":
-        primeiro = comandos[0].split(None, 1)[1].split() if " " in comandos[0] else []
-    if not primeiro:
-        return "ausente"
-    if primeiro[0] == "vsi":
-        nome = primeiro[1] if len(primeiro) > 1 else ""
-        vc = next((l for l in linhas if l.get("name") == nome), None)
-        return "consta" if vc is not None else "ausente"
-    if primeiro[0] == "vlan":
-        vid = primeiro[1] if len(primeiro) > 1 else ""
-        iface = f"Vlanif{vid}"
-        for linha in linhas:
-            for ac in linha.get("acs", []) or []:
-                if ac.get("interface") == iface:
-                    return "consta"
-        return "ausente"
+    texto = " ".join(comandos)
+    m_if = re.search(r"\b(Vlanif\d+)\b", texto)
+    if m_if is not None:
+        iface = m_if.group(1)
+        return "consta" if any(
+            ac.get("interface") == iface for l in linhas for ac in (l.get("acs") or [])
+        ) else "ausente"
+    m_vsi = re.search(r"\bvsi (\S+)", texto)
+    if m_vsi is not None:
+        return "consta" if any(l.get("name") == m_vsi.group(1) for l in linhas) else "ausente"
     return "ausente"
 
 
@@ -882,17 +881,16 @@ def plan_remocao_vsi(session: Session, service: models.VsiService) -> list[chang
             )
         a_remover: list[dict] = []
         por_tipo = {b.tipo: b for b in blocos}
-        for tipo, comandos_undo in (
-            ("vsi_ac", None),
-            ("vsi", None),
-        ):
+        for tipo in ("vsi_ac", "vsi"):
             bloco = por_tipo.get(tipo)
             if bloco is None:
                 continue
             item = changes._bloco_para_plano(bloco, "delete")
             if tipo == "vsi":
-                item["comandos"] = [bloco.comandos[0], f"undo vsi {service.vrp_name}"]
+                # `undo vsi` roda na visão de sistema: sem linha de contexto
+                item["comandos"] = [f"undo vsi {service.vrp_name}"]
             else:
+                # o binding mora dentro da interface: contexto + undo
                 item["comandos"] = [
                     bloco.comandos[1],
                     f"undo l2 binding vsi {service.vrp_name}",
@@ -1349,6 +1347,23 @@ def set_vsi_status(
 ```
 
 Em `src/gerenet/cli/mpls.py`, um `vsi set-status` no molde do `l2vc set-status` (parâmetro `--admin-status/--no-admin-status` e eco do resultado), e um teste de API em `tests/api/test_mpls_api.py` cobrindo o PATCH (200 no caminho feliz, 404 em id inexistente).
+
+8. exponha o nome do VSI na CR, que é o que a web usa para rotular o objeto (o mesmo padrão do `l2vc_name`): em `src/gerenet/domain/models.py`, ao lado das propriedades `l2vc_name`/`upstream_name` do `ChangeRequest`:
+
+```python
+    @property
+    def vsi_name(self) -> str | None:
+        return self.vsi.name if self.vsi is not None else None
+```
+
+(se o `ChangeRequest` não tiver uma relationship `vsi`, acrescente `vsi: Mapped["VsiService | None"] = relationship()` junto das outras). Em `src/gerenet/domain/schemas.py`, no `ChangeRequestOut`, ao lado de `l2vc_id`/`l2vc_name`:
+
+```python
+    vsi_id: int | None = None
+    vsi_name: str | None = None  # espelho do modelo (propriedade vsi_name)
+```
+
+Com testes: a API `GET /change-requests/{id}` de uma CR de escopo `vsi` devolve `vsi_id` e `vsi_name` preenchidos.
 
 - [ ] **Step 5: Ligar o runner**
 
