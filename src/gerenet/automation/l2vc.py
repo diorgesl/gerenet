@@ -134,8 +134,13 @@ def plan_remocao_l2vc(session: Session, service: models.L2vcService) -> list[cha
         snap = changes._ultimo_snapshot_ok(session, device_id)
         recursos, tem = _recursos_snapshot(snap)
         if not tem:
+            # F5: o nome do equipamento é o que o operador precisa para coletar
+            # antes de remover — sem ele a mensagem não diz QUAL switch coletar.
+            dev = session.get(models.Device, device_id)
+            nome = dev.name if dev is not None else f"device {device_id}"
             raise ValidationError(
-                "Sem snapshot recente com 'l2vc' para gerar a remoção — colete antes de remover (§5.2)."
+                f"Sem snapshot recente com 'l2vc' no {nome} para gerar a remoção — "
+                "colete antes de remover (§5.2)."
             )
         a_remover: list[dict] = []
         for bloco in blocos:

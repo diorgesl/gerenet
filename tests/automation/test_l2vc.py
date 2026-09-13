@@ -149,7 +149,9 @@ def test_plan_provision_idempotente(servico, db_session):
 
 def test_plan_remocao_exige_snapshot_novo(servico, db_session):
     d1, d2, svc = servico
-    with pytest.raises(ValidationError):
+    # a mensagem nomeia o equipamento sem coleta (F5): o operador sabe qual
+    # switch coletar antes de remover
+    with pytest.raises(ValidationError, match="sw-a"):
         l2vc.plan_remocao_l2vc(db_session, svc)
     _snapshot(db_session, d1, {
         "l2vc": [{"vc_id": 1000, "interface": "10GE0/0/1", "estado": "up"}],
