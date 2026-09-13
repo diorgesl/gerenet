@@ -250,9 +250,14 @@ uv run gerenet change-requests reconcile <cr>
 O rollback remove as pontas cujo VC consta na **coleta atual**: ponta sem o VC no snapshot não
 gera step no filho.
 
-Neste escopo o `PlanoRollbackVazio` ainda diz "Sem steps aplicados com baseline", mas a causa
-real é outra: nenhuma ponta lista o VC na coleta atual — leia como "nada do serviço consta no
-encontrado", não como problema de baseline.
+No l2vc o `PlanoRollbackVazio` tem mensagem própria — "Nada do serviço consta na coleta atual":
+nenhuma ponta lista o VC no encontrado, então não há o que desfazer (se o VC existe no switch,
+colete as pontas antes; o baseline pré-mudança não entra nesta conta).
+
+Escopos com semântica própria, para não confundir o operador: no `upstream`, desfazer uma
+remoção já **aplicada** exige reativar o upstream antes — a remoção aplicada o desativa na SoT e
+a API responde **409** ("reative antes de planejar a mudança") até a reativação, que é manual de
+propósito (sem reativação automática).
 
 Quando o caminho automático não se aplica (o `PlanoRollbackVazio` acima é o caso típico), a
 reversão segue pelos caminhos manuais documentados (§12.4 permite estratégia documentada por

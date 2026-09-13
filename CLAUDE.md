@@ -272,7 +272,10 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   pós-check (peer + Established + contagem dentro de esperado × (1 ± margem))
   — rollback (`gerenet change-requests rollback`) e reconciliar
   **disponíveis** para upstream (ao contrário do `l2vc`/`vsi` naquele ciclo —
-  o `l2vc` ganhou os dois na Fase 4, parte 2). Web: `/upstreams`
+  o `l2vc` ganhou os dois na Fase 4, parte 2); desfazer uma remoção já
+  **aplicada** exige reativar o upstream antes — a remoção aplicada o desativa
+  na SoT e a API responde 409 ("reative antes de planejar a mudança") até a
+  reativação, manual de propósito (sem reativação automática). Web: `/upstreams`
   + `/upstreams/:id` (detalhe com a matriz principal × contingência e
   "Solicitar mudança") e fumo `web/e2e/upstream.spec.ts` (org operadora pela
   UI, upstream, community, vínculo e CR aprovada pelo `e2e-aprovador`;
