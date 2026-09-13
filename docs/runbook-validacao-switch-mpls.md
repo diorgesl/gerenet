@@ -200,7 +200,10 @@ Na execução o worker, por step (ponta) e automaticamente:
 5. **Aplicação bloco a bloco** com detecção de erro do VRP — erro ⇒ step `falhou`, parada;
 6. **Pós-check**: nova coleta + `display l2vc` — **VC presente e `State Up`** nas duas pontas
    ⇒ CR `aplicado`; VC `down`/ausente ⇒ itens `l2vc.estado`/`l2vc.ausente` (severidade
-   crítica) e CR `com_divergencia`.
+   crítica) e CR `com_divergencia`. Entraram também os itens de `atencao`: `l2vc.ac` (AC fora
+   de `up`), `l2vc.mtu` (MTU local diferente do configurado no AC) e `l2vc.mtu_simetria`
+   (MTU diferente entre as pontas) — o MTU só é conferido com o VC de pé, porque o VRP
+   imprime `0` no remoto de um VC `down`.
 
 Somente a aplicação manda comandos de configuração (`interface`, `undo portswitch`, `mtu`,
 `mpls l2vc`…); a allowlist `^display` vale para a coleta — nenhum comando fora do plano é
@@ -228,6 +231,24 @@ consta no snapshot e não gera step para ponta ausente), e
 em `erro`/`parcial`. A derivação por coleta atual (em vez do baseline pré-mudança,
 como no circuito) é decisão registrada no design de 2026-09-13: num L2VC novo o
 baseline não contém o VC e o plano sairia vazio.
+
+Roteiro (a CR filha nasce em `aguardando_aprovacao` e **não executa sozinha**):
+
+```bash
+# 1. cria a CR inversa (na web: botão "Gerar rollback")
+uv run gerenet change-requests rollback <cr>
+# 2. aprovação do filho (aprovador ≠ solicitante do filho)
+uv run gerenet change-requests approve <id> --aprovador <usuario>
+# 3. worker aplica e roda o pós-check (§3.1)
+uv run gerenet change-requests execute <id>
+# 4. confira steps e pós-check
+uv run gerenet change-requests show <id>
+# 5. só quando a CR mãe ficou em erro/parcial — recomputa as pontas pendentes
+uv run gerenet change-requests reconcile <cr>
+```
+
+O rollback remove as pontas cujo VC consta na **coleta atual**: ponta sem o VC no snapshot não
+gera step no filho.
 
 Neste escopo o `PlanoRollbackVazio` ainda diz "Sem steps aplicados com baseline", mas a causa
 real é outra: nenhuma ponta lista o VC na coleta atual — leia como "nada do serviço consta no
@@ -267,7 +288,7 @@ Depois da reversão, desative o serviço de teste na SoT (`uv run gerenet mpls l
 - [ ] Serviço com nome/finalidade `teste-...`; switch não crítico e janela acordados com o setor.
 - [ ] Aprovador ≠ solicitante; aprovação registrada; CR executando com worker ativo.
 - [ ] Backup pré-mudança salvo em `data/backups/change-<cr>/` (gitignored).
-- [ ] Pós-check: `display mpls l2vc` ⇒ `VC state : up` nas duas pontas; LDP `Up`; sem alarmes novos.
+- [ ] Pós-check: `display mpls l2vc` ⇒ `VC state : up` nas duas pontas; LDP `Up`; sem alarmes novos; sem item de `atencao` de AC/MTU (`l2vc.ac`, `l2vc.mtu`, `l2vc.mtu_simetria` — o MTU só é conferido com o VC de pé).
 - [ ] Resultado registrado no **ledger**: `data`, `equipamento`, `motivo`, `janela`, `resultado`
       (ledger SDD do plano — `.superpowers/sdd/2026-09-07-gerenet-fase4-mpls/progress.md`).
 - [ ] Reversão documentada (rollback da CR, plataforma ou manual) e, se executada, conferida no `display mpls l2vc`.
