@@ -5,6 +5,8 @@ from pydantic import ValidationError as PydanticValidationError
 from gerenet.automation.naming import vsi_nome
 from gerenet.domain.schemas import (
     DeviceCreate,
+    L2vcCreate,
+    L2vcEndpointIn,
     MplsDomainCreate,
     MplsMemberIn,
     SiteCreate,
@@ -16,6 +18,7 @@ from gerenet.domain.services.errors import ConflictError, ValidationError
 from gerenet.domain.services.mpls import (
     add_domain_member,
     create_domain,
+    create_l2vc,
     create_vsi,
     get_vsi,
     list_vsi,
@@ -169,6 +172,28 @@ def test_vsi_recusa_vid_ocupado_no_mesmo_equipamento(db_session):
         create_vsi(db_session, VsiCreate(
             domain_id=dom.id, name="segundo", vsi_id=604,
             endpoints=[VsiEndpointIn(device_id=d1.id, vid=800), VsiEndpointIn(device_id=d2.id, vid=801)],
+        ), actor="cli")
+
+
+def test_vsi_recusa_vid_de_ac_ja_usado_por_l2vc(db_session):
+    """AC de L2VC na mesma VLAN/equipamento não pode virar AC de VSI.
+
+    A ponta de L2VC tem vsi_id NULL: o filtro por `vsi_id != <id>` não casa em
+    SQL (NULL != id é NULL), então o conflito passaria batido e os dois
+    serviços dividiriam a mesma VLAN de AC no equipamento.
+    """
+    d1, d2, dom = _dominio_com_dois_membros(db_session, "l2vx")
+    create_l2vc(db_session, L2vcCreate(
+        domain_id=dom.id, name="l2vc antes", vc_id=805,
+        endpoints=[
+            L2vcEndpointIn(device_id=d1.id, interface="10GE0/0/1", encapsulation="dot1q", vid=800),
+            L2vcEndpointIn(device_id=d2.id, interface="10GE0/0/2", encapsulation="dot1q", vid=801),
+        ],
+    ), actor="cli")
+    with pytest.raises(ConflictError, match="L2VC"):
+        create_vsi(db_session, VsiCreate(
+            domain_id=dom.id, name="vsi depois", vsi_id=606,
+            endpoints=[VsiEndpointIn(device_id=d1.id, vid=800)],
         ), actor="cli")
 
 

@@ -367,16 +367,20 @@ def create_l2vc(session: Session, data: L2vcCreate, *, actor: str = "cli") -> mo
     for ep in (a, b):
         vlan = reservar_vlan_ac(session, device_id=ep.device_id, vid=ep.vid, actor=actor)
         # Idempotência do helper só serve ao re-run do MESMO serviço: VLAN
-        # de outro service_endpoint bloqueia (a ponta não pode ser compartilhada).
+        # de outro service_endpoint bloqueia (a ponta não pode ser compartilhada),
+        # inclusive a de um VSI — a linha tem l2vc_id NULL, que um
+        # `l2vc_id != <id>` não pega (em SQL, NULL != id é NULL).
         dono = session.scalars(
-            select(models.ServiceEndpoint.l2vc_id).where(
+            select(models.ServiceEndpoint).where(
                 models.ServiceEndpoint.vlan_id == vlan.id,
-                models.ServiceEndpoint.l2vc_id != svc.id,
+                models.ServiceEndpoint.l2vc_id.is_distinct_from(svc.id),
             ).limit(1)
         ).first()
         if dono is not None:
             session.rollback()
-            raise ConflictError(f"VLAN {vlan.vid} já pertence ao serviço L2VC {dono}.")
+            if dono.l2vc_id is not None:
+                raise ConflictError(f"VLAN {vlan.vid} já pertence ao serviço L2VC {dono.l2vc_id}.")
+            raise ConflictError(f"VLAN {vlan.vid} já pertence ao VSI {dono.vsi_id}.")
         session.add(models.ServiceEndpoint(
             kind="l2vc", l2vc_id=svc.id, device_id=ep.device_id, interface=ep.interface.strip(),
             encapsulation=ep.encapsulation, vlan_id=vlan.id, inner_vlan=ep.inner_vlan,
@@ -529,15 +533,21 @@ def create_vsi(session: Session, data: VsiCreate, *, actor: str = "cli") -> mode
     for ep in endpoints:
         vid = ep.vid if ep.vid is not None else vsi_id
         vlan = reservar_vlan_ac(session, device_id=ep.device_id, vid=vid, actor=actor)
+        # A ponta bloqueia a VLAN de AC de QUALQUER outro serviço — inclusive a
+        # de um L2VC, cuja linha tem vsi_id NULL e por isso escaparia de um
+        # `vsi_id != <id>` (em SQL, NULL != id é NULL). A linha vem inteira
+        # porque a coluna do dono pode ser justamente a NULL.
         dono = session.scalars(
-            select(models.ServiceEndpoint.vsi_id).where(
+            select(models.ServiceEndpoint).where(
                 models.ServiceEndpoint.vlan_id == vlan.id,
-                models.ServiceEndpoint.vsi_id != vsi.id,
+                models.ServiceEndpoint.vsi_id.is_distinct_from(vsi.id),
             ).limit(1)
         ).first()
         if dono is not None:
             session.rollback()
-            raise ConflictError(f"VLAN {vlan.vid} já pertence ao VSI {dono}.")
+            if dono.vsi_id is not None:
+                raise ConflictError(f"VLAN {vlan.vid} já pertence ao VSI {dono.vsi_id}.")
+            raise ConflictError(f"VLAN {vlan.vid} já pertence ao serviço L2VC {dono.l2vc_id}.")
         session.add(models.ServiceEndpoint(
             kind="vsi", vsi_id=vsi.id, device_id=ep.device_id, interface=f"Vlanif{vid}",
             encapsulation="dot1q", vlan_id=vlan.id, mtu=ep.mtu or data.mtu,
