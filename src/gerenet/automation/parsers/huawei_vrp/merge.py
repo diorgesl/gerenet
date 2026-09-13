@@ -186,7 +186,7 @@ def normaliza_vsi(por_comando: dict[str, list[dict]]) -> list[dict]:
         if linha.get("vsi_id"):
             grupo["vsi_id"] = int(linha["vsi_id"])
             grupo["estado"] = (
-                "up" if str(linha.get("estado", "")).lower() == "up" else "down"
+                {"up": "up", "down": "down"}.get(str(linha.get("estado") or "").lower())
             )
             grupo["mtu"] = int(linha["mtu"]) if linha.get("mtu") else None
         if linha.get("peer"):

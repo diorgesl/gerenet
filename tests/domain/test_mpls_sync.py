@@ -102,6 +102,12 @@ def test_sincronizar_mpls_atualiza_estado_do_ac_do_vsi(db_session):
 
     O estado do SERVIÇO continua vindo do `VSI State` do equipamento; o do AC
     é por ponta. Um AC caído não rebaixa o serviço na SoT.
+
+    A coleta é do device que vem DEPOIS na ordem dos endpoints e as duas pontas
+    usam a mesma `Vlanif900` — o caso real do VSI multiponto (mesmo VID em PEs
+    diferentes é legítimo no repo). Como `endpoints` é ordenado por `device_id`,
+    sem o casamento por (device, interface) o `next()` pegaria a ponta do outro
+    device e a assertiva do `unknown` abaixo cairia.
     """
     site = create_site(db_session, SiteCreate(name="pop-sync-vsi"), actor="cli")
     d1 = create_device(db_session, DeviceCreate(
@@ -117,18 +123,36 @@ def test_sincronizar_mpls_atualiza_estado_do_ac_do_vsi(db_session):
                    VsiEndpointIn(device_id=d2.id, vid=900)],
     ), actor="cli")
     snap = models.DeviceSnapshot(
-        device_id=d1.id, status="success", resources={"vsi": [{
+        device_id=d2.id, status="success", resources={"vsi": [{
             "name": vsi.vrp_name, "vsi_id": vsi.vsi_id, "estado": "up", "mtu": 1500,
-            "peers": [{"peer": "10.255.4.2", "estado": "up"}],
+            "peers": [{"peer": "10.255.4.1", "estado": "up"}],
             "acs": [{"interface": "Vlanif900", "estado": "down"}],
         }]}, errors={}, raw_files={}, duration_ms=0,
     )
     db_session.add(snap)
     db_session.commit()
     sincronizar_mpls(db_session, snap)
-    ep = next(e for e in vsi.endpoints if e.device_id == d1.id)
-    assert ep.operational_status == "down"
+    por_device = {ep.device_id: ep for ep in vsi.endpoints}
+    assert por_device[d2.id].operational_status == "down"
+    assert por_device[d1.id].operational_status == "unknown"
     assert vsi.operational_status == "up"
+
+
+def test_sincronizar_mpls_estado_desconhecido_vira_unknown(db_session, cenario):
+    """`estado` None (coleta não soube o estado) grava `unknown`, não estoura o NOT NULL.
+
+    O merge devolve `estado: None` quando o bloco não traz `VSI State`
+    reconhecível; a coluna `operational_status` é NOT NULL, então quem grava é
+    que traduz o desconhecido — `linha.get("estado", "unknown")` não bastava
+    (o default do `.get` só vale para chave ausente).
+    """
+    d1, _, _, vsi = cenario
+    sincronizar_mpls(db_session, models.DeviceSnapshot(
+        device_id=d1.id, status="success",
+        resources={"vsi": [{"name": "VSI-SYNC-VSI-610", "vsi_id": 610, "estado": None,
+                            "mtu": 1500, "peers": [], "acs": []}]},
+    ))
+    assert get_vsi(db_session, vsi.id).operational_status == "unknown"
 
 
 def test_sync_sem_mpls_e_no_op(db_session, cenario):

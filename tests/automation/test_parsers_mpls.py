@@ -182,6 +182,26 @@ def test_merge_vsi_bloco_sem_id_descarta_o_ac_junto() -> None:
     }]
 
 
+def test_merge_vsi_estado_desconhecido_fica_none() -> None:
+    """`VSI ID` sem estado reconhecível não vira "down" por omissão.
+
+    Linha de `VSI State` ausente ou com sentinela (`--`) é desconhecido — o
+    enum de `operational_status` tem `unknown` exatamente para isso, e quem
+    grava (o sync) é que decide o que fazer com o None.
+    """
+    assert merge_parsed("vsi", {"display vsi verbose": [
+        {"name": "SEM-ESTADO", "estado": "", "vsi_id": "10", "mtu": "",
+         "peer": "", "peer_estado": "", "ac_if": "", "ac_estado": ""},
+        {"name": "SENTINELA", "estado": "--", "vsi_id": "11", "mtu": "",
+         "peer": "", "peer_estado": "", "ac_if": "", "ac_estado": ""},
+    ]}) == [
+        {"name": "SEM-ESTADO", "vsi_id": 10, "estado": None, "mtu": None,
+         "peers": [], "acs": []},
+        {"name": "SENTINELA", "vsi_id": 11, "estado": None, "mtu": None,
+         "peers": [], "acs": []},
+    ]
+
+
 def test_merge_vazios_devolvem_lista() -> None:
     assert merge_parsed("mpls_ldp_peer", {}) == []
     assert merge_parsed("l2vc", {}) == []

@@ -679,7 +679,8 @@ def sincronizar_mpls(session: Session, snapshot: models.DeviceSnapshot) -> None:
         if membro is None:
             continue
         vsi = membro.vsi
-        vsi.operational_status = linha.get("estado", "unknown")
+        # estado None (o merge não soube) não pode ir para a coluna NOT NULL
+        vsi.operational_status = linha.get("estado") or "unknown"
         vsi.last_collected_at = agora or vsi.last_collected_at
         for ac in linha.get("acs", []) or []:
             nome_if = ac.get("interface")
