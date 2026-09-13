@@ -1105,10 +1105,11 @@ def test_cr_vsi_exige_vsi_id_e_servico_ativo(db_session, vsi):
 
 def test_reconciliar_vsi_recomputa_ponta_pendente(db_session, vsi):
     d1, d2, svc = vsi
-    _snapshot(db_session, d1, {"vsi": _vsi_coletado(svc, ["Vlanif800"]),
-                               "interfaces": [], "config_backup": ""})
-    _snapshot(db_session, d2, {"vsi": _vsi_coletado(svc, ["Vlanif800"]),
-                               "interfaces": [], "config_backup": ""})
+    # coleta SEM o serviço: com o VSI já no encontrado o plano sai vazio (skip por
+    # presença) e não haveria o que replanejar — é o que este teste quer exercitar
+    vazio = {"vsi": [], "interfaces": [], "config_backup": ""}
+    _snapshot(db_session, d1, vazio)
+    _snapshot(db_session, d2, vazio)
     cr = create_change_request(db_session, ChangeRequestCreate(
         escopo="vsi", vsi_id=svc.id, motivo="ativar",
     ), ator_id=None)
