@@ -78,12 +78,17 @@ def test_vsi_criar_e_consultar(client):
     _site, d1, d2, dom = _criar_site_devs_dominio(client, headers)
     criado = client.post("/api/v1/mpls/vsi", headers=headers, json={
         "domain_id": dom["id"], "name": "vsi api", "vsi_id": 550,
-        "members": [d1["id"], d2["id"]],
+        "endpoints": [
+            {"device_id": d1["id"], "vid": 600},
+            {"device_id": d2["id"], "vid": 601},
+        ],
     })
     assert criado.status_code == 201
     vsi = criado.json()
     assert vsi["vrp_name"] == "VSI-VSI-API-550"
-    assert len(vsi["members"]) == 2
+    assert len(vsi["endpoints"]) == 2
+    assert sorted(ep["interface"] for ep in vsi["endpoints"]) == ["Vlanif600", "Vlanif601"]
+    assert sorted(ep["vid"] for ep in vsi["endpoints"]) == [600, 601]
     assert client.get(f"/api/v1/mpls/vsi/{vsi['id']}", headers=headers).json()["vsi_id"] == 550
 
 

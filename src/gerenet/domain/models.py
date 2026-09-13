@@ -510,7 +510,7 @@ class ChangeRequest(Base):
 
     Escopo generalizado (fase 4, §5): `circuito` (ciclo D), `l2vc`/`vsi` (MPLS)
     ou `upstream` (fase 5); o id correspondente ao escopo é o que carrega a FK
-    (circuit_id | l2vc_id | upstream_id).
+    (circuit_id | l2vc_id | vsi_id | upstream_id).
     """
 
     __tablename__ = "change_requests"
@@ -521,6 +521,7 @@ class ChangeRequest(Base):
         Enum(*CHANGE_ESCOPO, name="change_escopo"), default="circuito", nullable=False
     )
     l2vc_id: Mapped[int | None] = mapped_column(ForeignKey("l2vc_services.id"))
+    vsi_id: Mapped[int | None] = mapped_column(ForeignKey("vsi_services.id"))
     upstream_id: Mapped[int | None] = mapped_column(ForeignKey("upstreams.id"))
     acao: Mapped[str] = mapped_column(Enum(*CHANGE_ACTION, name="change_action"), nullable=False)
     criticidade: Mapped[str] = mapped_column(
@@ -712,7 +713,7 @@ class ServiceEndpoint(Base):
     )
 
     l2vc: Mapped[L2vcService | None] = relationship(back_populates="endpoints")
-    vsi: Mapped["VsiService | None"] = relationship()
+    vsi: Mapped["VsiService | None"] = relationship(back_populates="endpoints")
     device: Mapped[Device] = relationship()
     vlan: Mapped[Vlan | None] = relationship()
 
@@ -739,6 +740,8 @@ class VsiService(Base):
     split_horizon: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     mac_learning: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     mac_limit: Mapped[int | None] = mapped_column(Integer)
+    flow_label: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text())
     admin_status: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     operational_status: Mapped[str] = mapped_column(
         Enum(*MPLS_OPER_STATUS, name="mpls_oper_status"), default="unknown", nullable=False
@@ -755,8 +758,9 @@ class VsiService(Base):
     members: Mapped[list["VsiMember"]] = relationship(
         back_populates="vsi", order_by="VsiMember.id", cascade="all, delete-orphan"
     )
-    endpoints: Mapped[list[ServiceEndpoint]] = relationship(
-        order_by="ServiceEndpoint.id", cascade="all, delete-orphan", overlaps="vsi"
+    endpoints: Mapped[list["ServiceEndpoint"]] = relationship(
+        back_populates="vsi", order_by="ServiceEndpoint.device_id",
+        cascade="all, delete-orphan",
     )
 
 

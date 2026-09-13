@@ -10,6 +10,7 @@ from gerenet.domain.schemas import (
     MplsMemberIn,
     SiteCreate,
     VsiCreate,
+    VsiEndpointIn,
 )
 from gerenet.domain.services.devices import create_device
 from gerenet.domain.services.mpls import (
@@ -39,8 +40,10 @@ def cenario(db_session):
             L2vcEndpointIn(device_id=d2.id, interface="10GE0/0/2", encapsulation="dot1q", vid=602),
         ],
     ), actor="cli")
-    vsi = create_vsi(db_session, VsiCreate(domain_id=dom.id, name="sync vsi", vsi_id=610,
-                                           members=[d1.id, d2.id]), actor="cli")
+    vsi = create_vsi(db_session, VsiCreate(
+        domain_id=dom.id, name="sync vsi", vsi_id=610,
+        endpoints=[VsiEndpointIn(device_id=d1.id), VsiEndpointIn(device_id=d2.id)],
+    ), actor="cli")
     return d1, d2, l2vc, vsi
 
 
