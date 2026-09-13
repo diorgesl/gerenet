@@ -57,8 +57,9 @@ CR além do portão de `escopoComFluxo` (§4.6).
 
 **Abordagem escolhida: estender o recurso `mpls_ldp_peer`** com um segundo
 comando e um parser por comando. O gate de recursos do runner
-(`_chaves_incompletas` exige `mpls_ldp_peer` no escopo l2vc) e o pré-check
-continuam lendo o mesmo recurso, sem mudança.
+(`_chaves_incompletas`) não muda: no escopo `l2vc` a tupla dele continua
+`("interfaces", "l2vc", "config_backup")`, sem `mpls_ldp_peer` — quem lê o
+recurso é o `valida_pre_checks_l2vc`.
 
 `collectors.py`:
 
