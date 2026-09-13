@@ -109,3 +109,225 @@ def test_cr_circuito_default_inalterada(db_session):
     ), ator_id=None)
     assert cr.escopo == "circuito"
     assert cr.circuit_id == circ.id
+
+
+def _snapshot(db_session, dev, recursos):
+    from gerenet.domain import models
+    snap = models.DeviceSnapshot(
+        device_id=dev.id, status="success", resources=recursos,
+        errors={}, raw_files={}, duration_ms=0,
+    )
+    db_session.add(snap)
+    db_session.commit()
+    return snap
+
+
+def _recursos(interface, l2vc_linhas):
+    return {"interfaces": [{"nome": interface, "phy": "up", "protocolo": "up"}],
+            "l2vc": l2vc_linhas, "mpls_ldp_peer": [], "config_backup": ""}
+
+
+def _cr_aplicada(db_session, svc, acao, device_ids):
+    from gerenet.domain.services.change_requests import create_change_request
+    cr = create_change_request(db_session, ChangeRequestCreate(
+        escopo="l2vc", l2vc_id=svc.id, acao=acao, motivo="teste de rollback.",
+    ), ator_id=None)
+    cr.status = "aplicado"
+    for step in cr.steps:
+        step.status = "aplicado" if step.device_id in device_ids else "falhou"
+    db_session.commit()
+    return cr
+
+
+def test_rollback_l2vc_provision_gera_filho_remove(db_session, l2vc):
+    """Provision aplicado nas duas pontas ⇒ filho remove com `undo mpls l2vc` nas duas."""
+    from gerenet.domain.services.change_requests import gerar_rollback
+    d1, d2, svc = l2vc
+    # o encontrado mostra o VC nas duas pontas: o rollback deriva da coleta atual
+    _snapshot(db_session, d1, _recursos("10GE0/0/1", [
+        {"vc_id": 500, "interface": "10GE0/0/1", "estado": "up"},
+    ]))
+    _snapshot(db_session, d2, _recursos("10GE0/0/2", [
+        {"vc_id": 500, "interface": "10GE0/0/2", "estado": "up"},
+    ]))
+    cr = _cr_aplicada(db_session, svc, "provision", {d1.id, d2.id})
+    filho = gerar_rollback(db_session, cr.id, ator_id=None, actor="cli")
+    assert filho.escopo == "l2vc"
+    assert filho.l2vc_id == svc.id
+    assert filho.circuit_id is None
+    assert filho.acao == "remove"
+    assert filho.status == "aguardando_aprovacao"
+    assert filho.rollback_de == cr.id
+    assert {s.device_id for s in filho.steps} == {d1.id, d2.id}
+    comandos = [c for s in filho.steps for b in s.plano_json for c in b["comandos"]]
+    assert comandos.count("undo mpls l2vc 10.255.8.2 500") == 1
+    assert comandos.count("undo mpls l2vc 10.255.8.1 500") == 1
+
+
+def test_rollback_l2vc_parcial_so_na_ponta_aplicada(db_session, l2vc):
+    """Só a ponta aplicada ganha step: a outra não tem VC para remover."""
+    from gerenet.domain.services.change_requests import gerar_rollback
+    d1, d2, svc = l2vc
+    _snapshot(db_session, d1, _recursos("10GE0/0/1", [
+        {"vc_id": 500, "interface": "10GE0/0/1", "estado": "up"},
+    ]))
+    _snapshot(db_session, d2, _recursos("10GE0/0/2", []))
+    cr = _cr_aplicada(db_session, svc, "provision", {d1.id})
+    filho = gerar_rollback(db_session, cr.id, ator_id=None, actor="cli")
+    assert [s.device_id for s in filho.steps] == [d1.id]
+
+
+def test_rollback_l2vc_remocao_gera_filho_provision(db_session, l2vc):
+    """Remoção aplicada nas duas pontas ⇒ filho provision com blocos `create`.
+
+    O filho replaneja o desejado pela coleta ATUAL (pós-remoção), não pela ação
+    do pai: herdar o `remove` entregaria blocos `delete` a uma CR de provision
+    (o defeito do Task 2).
+    """
+    from gerenet.domain.services.change_requests import gerar_rollback
+    d1, d2, svc = l2vc
+    # coleta em que a CR de remoção nasceu: o VC consta nas duas pontas
+    _snapshot(db_session, d1, _recursos("10GE0/0/1", [
+        {"vc_id": 500, "interface": "10GE0/0/1", "estado": "up"},
+    ]))
+    _snapshot(db_session, d2, _recursos("10GE0/0/2", [
+        {"vc_id": 500, "interface": "10GE0/0/2", "estado": "up"},
+    ]))
+    cr = _cr_aplicada(db_session, svc, "remove", {d1.id, d2.id})
+    # coleta pós-execução: o VC sumiu do encontrado
+    _snapshot(db_session, d1, _recursos("10GE0/0/1", []))
+    _snapshot(db_session, d2, _recursos("10GE0/0/2", []))
+    filho = gerar_rollback(db_session, cr.id, ator_id=None, actor="cli")
+    assert filho.escopo == "l2vc"
+    assert filho.l2vc_id == svc.id
+    assert filho.circuit_id is None
+    assert filho.acao == "provision"
+    assert filho.status == "aguardando_aprovacao"
+    assert filho.rollback_de == cr.id
+    assert {s.device_id for s in filho.steps} == {d1.id, d2.id}
+    blocos = [b for s in filho.steps for b in s.plano_json]
+    assert len(blocos) == 2  # não-vazio explícito: o all() abaixo não passa vazio
+    assert all(b["acao"] == "create" for b in blocos)
+    comandos = [c for b in blocos for c in b["comandos"]]
+    assert comandos.count("mpls l2vc 10.255.8.2 500") == 1
+    assert comandos.count("mpls l2vc 10.255.8.1 500") == 1
+
+
+def test_rollback_l2vc_sem_encontrado_eh_plano_vazio(db_session, l2vc):
+    """Nada do serviço consta na coleta: nada persiste (PlanoRollbackVazio).
+
+    F5 (revisão final): a mensagem é do escopo — no l2vc a causa é a coleta
+    atual, não um baseline ausente (o filho deriva do encontrado).
+    """
+    from gerenet.domain.services.change_requests import gerar_rollback
+    from gerenet.domain.services.errors import PlanoRollbackVazio
+    d1, d2, svc = l2vc
+    _snapshot(db_session, d1, _recursos("10GE0/0/1", []))
+    _snapshot(db_session, d2, _recursos("10GE0/0/2", []))
+    cr = _cr_aplicada(db_session, svc, "provision", {d1.id, d2.id})
+    with pytest.raises(PlanoRollbackVazio, match="Nada do serviço consta na coleta atual"):
+        gerar_rollback(db_session, cr.id, ator_id=None, actor="cli")
+
+
+def test_reconciliar_l2vc_recomputa_ponta_pendente(db_session, l2vc):
+    """CR l2vc em erro volta a aguardando_aprovacao com o step pendente replanejado."""
+    from gerenet.domain.services.change_requests import reconciliar
+    d1, d2, svc = l2vc
+    _snapshot(db_session, d1, _recursos("10GE0/0/1", []))
+    _snapshot(db_session, d2, _recursos("10GE0/0/2", []))
+    cr = _cr_aplicada(db_session, svc, "provision", {d1.id})
+    cr.status = "erro"
+    db_session.commit()
+    cr = reconciliar(db_session, cr.id, actor="cli")
+    assert cr.status == "aguardando_aprovacao"
+    pendente = next(s for s in cr.steps if s.device_id == d2.id)
+    assert pendente.status == "pendente"
+    assert pendente.erro is None
+    assert pendente.plano_json
+
+
+def test_reconciliar_l2vc_barra_servico_desativado(db_session, l2vc):
+    """F2 (revisão final): serviço desativado depois do plano ⇒ reconciliação recusa.
+
+    Sem o guard, `_replaneja` replanejava o desejado de um serviço que o
+    operador considera desligado — mesmo ConflictError da criação de CR.
+    """
+    from gerenet.domain.services.change_requests import reconciliar
+    from gerenet.domain.services.errors import ConflictError
+    from gerenet.domain.services.mpls import set_l2vc_status
+    d1, d2, svc = l2vc
+    _snapshot(db_session, d1, _recursos("10GE0/0/1", []))
+    _snapshot(db_session, d2, _recursos("10GE0/0/2", []))
+    cr = _cr_aplicada(db_session, svc, "provision", {d1.id})  # d2 ficou pendente
+    cr.status = "erro"
+    db_session.commit()
+    set_l2vc_status(db_session, svc.id, admin_status=False, actor="cli")
+    with pytest.raises(ConflictError, match="Serviço L2VC desativado não recebe mudanças"):
+        reconciliar(db_session, cr.id, actor="cli")
+
+
+def test_rollback_l2vc_barra_servico_desativado(db_session, l2vc):
+    """F2 (revisão final): o filho do rollback não recria o VC de um serviço off.
+
+    Sequência do achado: CR criada com o serviço ativo → serviço desativado →
+    CR de remoção aplicada → rollback. Sem o guard, o filho provisionava o AC
+    de volta num serviço que o operador acredita desligado.
+    """
+    from gerenet.domain.services.change_requests import gerar_rollback
+    from gerenet.domain.services.errors import ConflictError
+    from gerenet.domain.services.mpls import set_l2vc_status
+    d1, d2, svc = l2vc
+    _snapshot(db_session, d1, _recursos("10GE0/0/1", [
+        {"vc_id": 500, "interface": "10GE0/0/1", "estado": "up"},
+    ]))
+    _snapshot(db_session, d2, _recursos("10GE0/0/2", [
+        {"vc_id": 500, "interface": "10GE0/0/2", "estado": "up"},
+    ]))
+    cr = _cr_aplicada(db_session, svc, "remove", {d1.id, d2.id})
+    # coleta pós-execução (o VC sumiu): o filho provision tem o que criar
+    _snapshot(db_session, d1, _recursos("10GE0/0/1", []))
+    _snapshot(db_session, d2, _recursos("10GE0/0/2", []))
+    set_l2vc_status(db_session, svc.id, admin_status=False, actor="cli")
+    with pytest.raises(ConflictError, match="Serviço L2VC desativado não recebe mudanças"):
+        gerar_rollback(db_session, cr.id, ator_id=None, actor="cli")
+
+
+def test_rollback_l2vc_barra_dominio_desativado(db_session, l2vc):
+    """F2: o domínio desativado também barra o filho (mesma guarda da criação)."""
+    from gerenet.domain.services.change_requests import gerar_rollback
+    from gerenet.domain.services.errors import ConflictError
+    d1, d2, svc = l2vc
+    _snapshot(db_session, d1, _recursos("10GE0/0/1", [
+        {"vc_id": 500, "interface": "10GE0/0/1", "estado": "up"},
+    ]))
+    _snapshot(db_session, d2, _recursos("10GE0/0/2", [
+        {"vc_id": 500, "interface": "10GE0/0/2", "estado": "up"},
+    ]))
+    cr = _cr_aplicada(db_session, svc, "provision", {d1.id, d2.id})
+    svc.domain.admin_status = False  # desativado depois do plano
+    db_session.commit()
+    with pytest.raises(ConflictError, match="Domínio MPLS dom-cr desativado não recebe mudanças"):
+        gerar_rollback(db_session, cr.id, ator_id=None, actor="cli")
+
+
+def test_rollback_e_reconciliar_de_vsi_seguem_indisponiveis(db_session):
+    """O escopo vsi continua barrado até a Frente B (mensagem própria)."""
+    from gerenet.domain import models
+    from gerenet.domain.services.change_requests import gerar_rollback, reconciliar
+    from gerenet.domain.services.errors import ValidationError
+    dom = create_domain(db_session, MplsDomainCreate(name="dom-vsi-msg"), actor="cli")
+    vsi = models.VsiService(
+        domain_id=dom.id, vsi_id=900, name="vsi-msg", vrp_name="VSI-MSG-900",
+    )
+    db_session.add(vsi)
+    db_session.commit()
+    cr = models.ChangeRequest(
+        circuit_id=None, l2vc_id=None, escopo="vsi", acao="provision",
+        status="erro", motivo="msg", solicitante_id=None,
+    )
+    db_session.add(cr)
+    db_session.commit()
+    with pytest.raises(ValidationError, match="fase posterior"):
+        reconciliar(db_session, cr.id, actor="cli")
+    with pytest.raises(ValidationError, match="fase posterior"):
+        gerar_rollback(db_session, cr.id, ator_id=None, actor="cli")

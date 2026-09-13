@@ -1,8 +1,13 @@
-Value Required vc_id (\d+)
+Value vc_id (\d+)
 Value interface (\S+)
 Value estado (\S+)
+Value ac_status (\S+)
+Value mtu_local (\d+)
+Value mtu_remoto (\d+)
 
 Start
   ^\s*\*?\s*client interface\s*:\s*${interface}\s+is\s+\S+\s*$$ -> Continue
+  ^\s*AC status\s*:\s*${ac_status}\s*$$ -> Continue
   ^\s*VC state\s*:\s*${estado}\s*$$ -> Continue
-  ^\s*VC ID\s*:\s*${vc_id}\s*$$ -> Record
+  ^\s*VC ID\s*:\s*${vc_id}\s*$$ -> Continue
+  ^\s*local VC MTU\s*:\s*${mtu_local}\s+remote VC MTU\s*:\s*${mtu_remoto}\s*$$ -> Record

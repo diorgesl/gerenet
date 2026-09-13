@@ -1,0 +1,16 @@
+ LDP Session(s) in Public Network
+ Codes: LAM(Label Advertisement Mode), SsnAge Unit(DDDD:HH:MM)
+ A '*' before a session means the session is being deleted.
+ ------------------------------------------------------------------------------
+ PeerID             Status      LAM  SsnRole  SsnAge      KASent/Rcv
+ ------------------------------------------------------------------------------
+ 100.127.90.251:0   Operational DU   Passive  0000:00:09  40/40
+ 100.127.90.253:0   Operational DU   Passive  0065:03:27  375228/375222
+ 100.127.90.254:0   Operational DU   Passive  0012:20:51  74127/74127
+ 100.127.90.255:0   Operational DU   Passive  0012:11:34  71899/71898
+ 100.127.90.2:0     Operational DU   Passive  0037:09:54  215497/214235
+ 100.127.90.3:0     Operational DU   Passive  0037:09:25  215380/215377
+ 100.127.90.5:0     Operational DU   Passive  0025:01:10  144283/144282
+ 100.127.90.10:0    Operational DU   Passive  0042:11:38  244715/244709
+ ------------------------------------------------------------------------------
+ TOTAL: 8 session(s) Found.

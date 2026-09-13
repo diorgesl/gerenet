@@ -48,12 +48,42 @@ def test_l2vc_vazio() -> None:
 
 
 def test_l2vc_blocos_reais() -> None:
-    """S6730: `display mpls l2vc` é um bloco por VC (client interface / VC state / VC ID)."""
+    """S6730: bloco por VC com AC status e MTU local/remoto (fixture real)."""
     linhas = parse_template("l2vc", _real("s6730_display_mpls_l2vc.txt"))
     assert len(linhas) == 4
-    assert {"vc_id": "21", "interface": "Vlanif21", "estado": "up"} in linhas
-    assert {"vc_id": "627", "interface": "Vlanif627", "estado": "down"} in linhas
-    assert {"vc_id": "633", "interface": "Vlanif633", "estado": "up"} in linhas
+    assert {"vc_id": "21", "interface": "Vlanif21", "estado": "up", "ac_status": "up",
+            "mtu_local": "9216", "mtu_remoto": "9216"} in linhas
+    assert {"vc_id": "627", "interface": "Vlanif627", "estado": "down", "ac_status": "up",
+            "mtu_local": "9216", "mtu_remoto": "0"} in linhas
+
+
+def test_merge_l2vc_extrai_ac_e_mtu() -> None:
+    assert merge_parsed("l2vc", {"display mpls l2vc": [
+        {"vc_id": "21", "interface": "Vlanif21", "estado": "up", "ac_status": "up",
+         "mtu_local": "9216", "mtu_remoto": "9216"},
+    ]}) == [{"vc_id": 21, "interface": "Vlanif21", "estado": "up",
+             "ac_status": "up", "mtu_local": 9216, "mtu_remoto": 9216}]
+
+
+def test_merge_l2vc_sem_mtu_fica_none() -> None:
+    """Bloco sem as linhas de MTU/AC não inventa valor."""
+    assert merge_parsed("l2vc", {"display mpls l2vc": [
+        {"vc_id": "1000", "interface": None, "estado": "Down"},
+    ]}) == [{"vc_id": 1000, "interface": None, "estado": "down",
+             "ac_status": None, "mtu_local": None, "mtu_remoto": None}]
+
+
+def test_merge_l2vc_vc_id_vazio_descarta_linha() -> None:
+    """`vc_id` vazio (sentinel do TextFSM, não None) descarta a linha, sem estourar.
+
+    Com o Record na linha do MTU, um bloco que imprima o MTU sem o `VC ID`
+    fecha registro com `vc_id` em `''` (o TextFSM nunca devolve None) — o guard
+    é de vazio, não de None.
+    """
+    assert merge_parsed("l2vc", {"display mpls l2vc": [
+        {"vc_id": "", "interface": None, "estado": "Up",
+         "ac_status": None, "mtu_local": None, "mtu_remoto": None},
+    ]}) == []
 
 
 def test_vsi_vazio() -> None:
@@ -96,12 +126,15 @@ def test_merge_l2vc_normaliza_blocos() -> None:
         {"vc_id": "21", "interface": "Vlanif21", "estado": "up"},
         {"vc_id": "627", "interface": "Vlanif627", "estado": "down"},
     ]}) == [
-        {"vc_id": 21, "interface": "Vlanif21", "estado": "up"},
-        {"vc_id": 627, "interface": "Vlanif627", "estado": "down"},
+        {"vc_id": 21, "interface": "Vlanif21", "estado": "up",
+         "ac_status": None, "mtu_local": None, "mtu_remoto": None},
+        {"vc_id": 627, "interface": "Vlanif627", "estado": "down",
+         "ac_status": None, "mtu_local": None, "mtu_remoto": None},
     ]
     assert merge_parsed("l2vc", {"display mpls l2vc": [
         {"vc_id": "1000", "interface": None, "estado": "Down"},
-    ]}) == [{"vc_id": 1000, "interface": None, "estado": "down"}]
+    ]}) == [{"vc_id": 1000, "interface": None, "estado": "down",
+             "ac_status": None, "mtu_local": None, "mtu_remoto": None}]
 
 
 def test_merge_vsi_normaliza_verbose() -> None:
@@ -118,3 +151,71 @@ def test_merge_vazios_devolvem_lista() -> None:
     assert merge_parsed("mpls_ldp_peer", {}) == []
     assert merge_parsed("l2vc", {}) == []
     assert merge_parsed("vsi", {}) == []
+
+
+def test_mpls_ldp_session_vazio() -> None:
+    assert parse_template("mpls_ldp_session", "") == []
+
+
+def test_mpls_ldp_session_real() -> None:
+    """S6730: tabela PeerID/Status/LAM/SsnRole/SsnAge/KASent-Rcv, 8 sessões."""
+    linhas = parse_template("mpls_ldp_session", _real("s6730_display_mpls_ldp_session.txt"))
+    assert len(linhas) == 8
+    assert {"peer_id": "100.127.90.251:0", "status": "Operational"} in linhas
+    assert {"peer_id": "100.127.90.10:0", "status": "Operational"} in linhas
+
+
+def test_mpls_ldp_session_sessao_em_remocao() -> None:
+    """O `*` de sessão em deleção não entra no peer_id."""
+    saida = (
+        " PeerID             Status      LAM  SsnRole  SsnAge      KASent/Rcv\n"
+        "*10.255.9.2:0       Operational DU   Passive  0000:00:02  5/5\n"
+    )
+    assert parse_template("mpls_ldp_session", saida) == [
+        {"peer_id": "10.255.9.2:0", "status": "Operational"},
+    ]
+
+
+def test_merge_ldp_cruza_peer_e_sessao() -> None:
+    """Sessão Operational ⇒ up; outro status ⇒ down; peer sem linha ⇒ None."""
+    assert merge_parsed("mpls_ldp_peer", {
+        "display mpls ldp peer": [
+            {"peer_id": "100.127.90.251:0", "transport": "100.127.90.251", "discovery": "Eth-Trunk9"},
+            {"peer_id": "100.127.90.253:0", "transport": "100.127.90.253", "discovery": "Remote Peer"},
+            {"peer_id": "100.127.90.254:0", "transport": "100.127.90.254", "discovery": "Vlanif10"},
+        ],
+        "display mpls ldp session": [
+            {"peer_id": "100.127.90.251:0", "status": "Operational"},
+            {"peer_id": "100.127.90.253:0", "status": "Initialized"},
+        ],
+    }) == [
+        {"peer_id": "100.127.90.251", "estado": "up"},
+        {"peer_id": "100.127.90.253", "estado": "down"},
+        {"peer_id": "100.127.90.254", "estado": None},
+    ]
+
+
+def test_merge_ldp_fixtures_reais_casam_por_peer() -> None:
+    """As duas fixtures reais do S6730 têm os mesmos 8 peers, todos Operational."""
+    linhas = merge_parsed("mpls_ldp_peer", {
+        "display mpls ldp peer": parse_template("mpls_ldp_peer", _real("s6730_display_mpls_ldp_peer.txt")),
+        "display mpls ldp session": parse_template("mpls_ldp_session", _real("s6730_display_mpls_ldp_session.txt")),
+    })
+    assert len(linhas) == 8
+    assert {l["estado"] for l in linhas} == {"up"}
+    assert {l["peer_id"] for l in linhas} == {
+        "100.127.90.251", "100.127.90.253", "100.127.90.254", "100.127.90.255",
+        "100.127.90.2", "100.127.90.3", "100.127.90.5", "100.127.90.10",
+    }
+
+
+def test_merge_ldp_sessao_sem_peer_na_tabela_e_ignorada() -> None:
+    assert merge_parsed("mpls_ldp_peer", {
+        "display mpls ldp peer": [
+            {"peer_id": "10.255.9.2:0", "transport": "10.255.9.2", "discovery": "Vlanif10"},
+        ],
+        "display mpls ldp session": [
+            {"peer_id": "10.255.9.2:0", "status": "Operational"},
+            {"peer_id": "10.255.9.9:0", "status": "Operational"},
+        ],
+    }) == [{"peer_id": "10.255.9.2", "estado": "up"}]

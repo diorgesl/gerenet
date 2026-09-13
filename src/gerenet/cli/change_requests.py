@@ -200,7 +200,15 @@ def executar(cr_id: int = typer.Argument(..., help="ID da CR aprovada.")) -> Non
 
 @app.command("rollback")
 def rollback(cr_id: int = typer.Argument(..., help="ID da CR aplicada.")) -> None:
-    """Gera a CR inversa (aguardando_aprovacao) a partir do baseline (§7)."""
+    """Gera a CR inversa (aguardando_aprovacao) com `rollback_de` (§7).
+
+    A origem do plano do filho depende do escopo e da direção: o provision de
+    circuito/upstream reverte a partir do BASELINE do step aplicado (o que a
+    mudança adicionou, visto do snapshot pré-mudança), enquanto a direção
+    inversa (desfazer uma remoção) e o escopo l2vc replanejam do estado
+    atual — o l2vc sai da COLETA ATUAL, onde o VC aparece para a ponta
+    removida (o encontrado, não o baseline).
+    """
     with get_session() as session:
         _pelo_id(session, cr_id)
         try:

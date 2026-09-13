@@ -36,7 +36,9 @@ SAIDAS = {
     "display bgp ipv6 peer": _texto_fixture("ne8000_display_bgp_ipv6_peer.txt"),
     # MPLS (fase 4 T9): saída vazia nos fakes — parse de vazio tolerado ([]),
     # sem quebrar a coleta fake (KeyError em SAIDAS derruba o recurso).
+    # `display mpls ldp session` entra no recurso mpls_ldp_peer (fase 4 parte 2).
     "display mpls ldp peer": "",
+    "display mpls ldp session": "",
     "display mpls l2vc": "",
     "display vsi verbose": "",
 }
@@ -368,6 +370,41 @@ def test_coleta_completa_registra_snapshot_estruturado(
     assert sorted(Path(p).name for p in snap.raw_files["bgp_peers"]) == [
         "bgp-ipv6-peer.txt", "bgp-peer.txt",
     ]
+
+
+def test_coleta_mpls_ldp_peer_pede_peer_e_session(
+    db_session: Session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F4 (revisão final): a fiação do recurso pede os DOIS comandos.
+
+    Sem `display mpls ldp session` o merge perde a fonte do estado do par (a
+    tabela de peers não traz estado) e o pré-check do L2VC passa a parar em
+    "estado desconhecido"; a asserção é do catálogo, não do parse.
+    """
+    from gerenet.automation.collectors import COLLECTORS
+
+    dev = _dev_com_grupo(db_session, "r-ldp", "10.0.0.47")
+    settings = Settings(_env_file=None, backups_dir=tmp_path)
+    pedidos: list[list[str]] = []
+
+    def _fake(device, username, password, commands, settings):
+        pedidos.append(list(commands))
+        return {cmd: SAIDAS[cmd] for cmd in commands}
+
+    monkeypatch.setattr("gerenet.automation.runner.VaultSecretStore", VaultFake)
+    monkeypatch.setattr("gerenet.automation.runner._conectar_e_executar", _fake)
+    # Só o recurso em teste: o pedido de comandos fica sem ruído dos demais.
+    monkeypatch.setattr(
+        "gerenet.automation.runner.COLLECTORS",
+        {"mpls_ldp_peer": COLLECTORS["mpls_ldp_peer"]},
+    )
+
+    resultado = run_collection(dev.id, settings=settings, session_override=db_session)
+    assert resultado["status"] == "success"
+    assert pedidos == [["display mpls ldp peer", "display mpls ldp session"]]
+
+    snap = db_session.query(DeviceSnapshot).filter_by(device_id=dev.id).first()
+    assert snap is not None and snap.resources["mpls_ldp_peer"] == []
 
 
 def test_coleta_recurso_falho_vira_status_parcial(

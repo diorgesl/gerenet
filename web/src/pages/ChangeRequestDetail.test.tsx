@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, beforeAll, describe, expect, it, vi } from "vitest";
 import ChangeRequestDetail from "./ChangeRequestDetail";
 import { AuthProvider } from "@/auth/auth-context";
+import type { ChangeStepOut } from "@/api/types";
 
 let ME: Record<string, unknown>; // mutável por teste — define o papel do usuário logado
 
@@ -19,7 +20,7 @@ const crBase = {
   steps: [{
     id: 1, device_id: 1, status: "pendente", aviso: null, baseline_snapshot_id: 3,
     backup_snapshot_id: null, erro: null, finished_at: null,
-    post_check_json: null, plano_json: [
+    post_check_json: null as ChangeStepOut["post_check_json"], plano_json: [
       { tipo: "bgp_peer", objeto: "peer", objeto_id: 1, acao: "create", comandos: ["peer 10.9.0.9 as-number 64512", "peer 10.9.0.9 description CLIENTE-GALAXIA"] },
     ],
   }],
@@ -130,10 +131,12 @@ describe("ChangeRequestDetail", () => {
     expect(screen.queryByText("#null")).toBeNull();
   });
 
-  it("não mostra rollback/reconciliar para CR de escopo l2vc (circuito mantém)", async () => {
-    // parcial é o modo de falha desenhado do L2VC: onde o operador acharia o
-    // beco sem saída — os botões são truncados para o escopo l2vc (risco S2-1).
-    crAtual = { ...crDe(2, "parcial"), circuit_id: null, escopo: "l2vc", l2vc_id: 1, l2vc_name: "L2VC-0001" };
+  it("não mostra rollback/reconciliar para CR de escopo vsi (circuito mantém)", async () => {
+    // o vsi segue truncado até o provisionamento multiponto existir (a frente
+    // seguinte); o l2vc deixou de ser truncado quando o rollback/reconciliação
+    // chegaram ao serviço/API/CLI. parcial é o modo de falha desenhado onde o
+    // operador acharia o beco sem saída (risco S2-1).
+    crAtual = { ...crDe(2, "parcial"), circuit_id: null, escopo: "vsi", l2vc_id: null, l2vc_name: null };
     const { unmount } = renderDetail();
     expect(await screen.findByText("Change request #1")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Gerar rollback" })).toBeNull();
@@ -164,5 +167,65 @@ describe("ChangeRequestDetail", () => {
     expect(await screen.findByText("Change request #1")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Gerar rollback" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reconciliar" })).toBeInTheDocument();
+  });
+
+  it("mostra Gerar rollback numa CR de escopo l2vc aplicada", async () => {
+    crAtual = {
+      ...crDe(2, "aplicado"),
+      circuit_id: null, escopo: "l2vc", l2vc_id: 1, l2vc_name: "L2VC-0001",
+    };
+    renderDetail();
+    await screen.findByText("Change request #1");
+    expect(screen.getByRole("button", { name: "Gerar rollback" })).toBeInTheDocument();
+  });
+
+  it("mostra Reconciliar numa CR de escopo l2vc com erro", async () => {
+    crAtual = {
+      ...crDe(2, "erro"),
+      circuit_id: null, escopo: "l2vc", l2vc_id: 1, l2vc_name: "L2VC-0001",
+    };
+    renderDetail();
+    await screen.findByText("Change request #1");
+    expect(screen.getByRole("button", { name: "Reconciliar" })).toBeInTheDocument();
+  });
+
+  it("mostra o badge de severidade da pós-checagem com a classe certa (atencao → warn)", async () => {
+    // Regressão do F3: `StatusBadge` não conhece "atencao" e pintava os itens
+    // de pós-check de cinza ("unknown"), escondendo o aviso do operador.
+    crAtual = {
+      ...crDe(2, "com_divergencia"),
+      steps: [
+        {
+          ...crBase.steps[0],
+          post_check_json: {
+            snapshot_id: 9,
+            items: [
+              {
+                tipo: "l2vc.mtu",
+                severidade: "atencao",
+                esperado: "1500",
+                encontrado: "1400",
+                acao: "Conferir o `mtu` do AC e reaplicar se preciso (§9.2).",
+              },
+            ],
+          },
+        },
+      ],
+    };
+    renderDetail();
+    await screen.findByText("Change request #1");
+    const badge = screen.getByText("atencao");
+    expect(badge).toHaveClass("badge-warn");
+    expect(badge).not.toHaveClass("badge-unknown");
+  });
+
+  it("não mostra Reconciliar numa CR de escopo vsi com erro", async () => {
+    crAtual = {
+      ...crDe(2, "erro"),
+      circuit_id: null, escopo: "vsi", l2vc_id: null, l2vc_name: null,
+    };
+    renderDetail();
+    await screen.findByText("Change request #1");
+    expect(screen.queryByRole("button", { name: "Reconciliar" })).toBeNull();
   });
 });

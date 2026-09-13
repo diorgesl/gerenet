@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from gerenet.api.main import create_app
@@ -117,6 +118,57 @@ def test_listar_escopo_upstream_filtra_e_traz_nome(
     geral = client.get("/api/v1/change-requests", headers=_auth())
     assert geral.status_code == 200
     assert {c["id"] for c in geral.json()} == {cr_up["id"], controle}
+
+
+def _snapshot_peers(db_session: Session, dev: models.Device, peers: list[dict]) -> None:
+    """Coleta do edge com os peers das sessões: o plano de remoção sai do ENCONTRADO."""
+    db_session.add(models.DeviceSnapshot(
+        device_id=dev.id, status="success",
+        resources={"interfaces": [], "bgp_peers": peers},
+    ))
+    db_session.commit()
+
+
+def test_rollback_de_remocao_upstream_desativado_409(
+    client: TestClient, db_session: Session, up_com_2_circuitos: models.Upstream,
+    edge_device: models.Device,
+) -> None:
+    """F1 (revisão final): remoção aplicada desativa o upstream ⇒ rollback 409.
+
+    A remoção classificada `aplicado` sempre desativa o upstream (runner), e o
+    filho do rollback é um provision — `plan_provision_upstream` recusa com
+    ConflictError. Sem o mapeamento na rota isso virava 500; o 409 diz o que
+    fazer (reativar).
+    """
+    up = up_com_2_circuitos
+    _snapshot_peers(db_session, edge_device, [
+        {"afi": "ipv4", "peer": "100.64.10.2", "asn": 64501},
+        {"afi": "ipv4", "peer": "100.64.10.6", "asn": 64501},
+    ])
+    criada = client.post(
+        "/api/v1/change-requests",
+        json={"escopo": "upstream", "upstream_id": up.id, "acao": "remove",
+              "motivo": "Desligar trânsito.", "criticidade": "alta"},
+        headers=_auth(),
+    )
+    assert criada.status_code == 201, criada.text
+    cr_id = criada.json()["id"]
+    modelo = db_session.get(models.ChangeRequest, cr_id)
+    modelo.status = "aplicado"  # remoção aplicada: o runner desativou o upstream
+    for step in modelo.steps:
+        step.status = "aplicado"
+    up.admin_status = False
+    db_session.commit()
+
+    resp = client.post(f"/api/v1/change-requests/{cr_id}/rollback", headers=_auth())
+    assert resp.status_code == 409, resp.text
+    detalhe = resp.json()["detail"]
+    assert "desativado" in detalhe and "reative" in detalhe
+    # recusa antes do commit: nenhuma CR filha órfã
+    db_session.expire_all()
+    assert db_session.scalars(
+        select(models.ChangeRequest).where(models.ChangeRequest.rollback_de == cr_id)
+    ).all() == []
 
 
 def test_executar_upstream_enfileira_e_marca_executando(

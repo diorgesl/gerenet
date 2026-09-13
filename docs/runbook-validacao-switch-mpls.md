@@ -113,6 +113,9 @@ aceite; a capability `mpls_flow_label` é o gate do template, mas o gate vale na
 **Checklist Etapa 1** — critérios de "ok":
 
 - [ ] `display mpls ldp peer`: tabela `PeerID/TransportAddress/DiscoverySource` parseável (sem coluna de estado — estado fica `None` até haver `display mpls ldp session`).
+- [ ] `display mpls ldp session`: a tabela `PeerID/Status` casa com os peers do comando anterior e o `estado` do peer no snapshot deixa de ser `None` (parser `mpls_ldp_session`).
+- [ ] `local VC MTU` de um VC existente diz se o campo reflete o `mtu` configurado no AC ou o MTU físico — decisão registrada no design de 2026-09-13 (se for o físico, o check de MTU do pós-check vira só simetria entre pontas).
+- [ ] Todo bloco de `display mpls l2vc` (incluindo VC `down`) imprime a linha `local VC MTU`/`remote VC MTU`: é a linha em que o parser fecha o registro. Bloco sem ela não entra no snapshot e o VC aparece como ausente na divergência — se isso acontecer, o parser precisa de outra âncora de registro.
 - [ ] `display mpls l2vc`: um bloco por VC com `client interface`/`VC state`/`VC ID`.
 - [ ] `display vsi verbose`: um bloco por VSI com `VSI Name`/`VSI State`/`VSI ID` (vazio é ok — VSI só consulta neste ciclo; VSI sem ID é descartado).
 - [ ] Templates TextFSM e fixtures atualizados e `test_parsers_mpls.py` verde.
@@ -197,7 +200,10 @@ Na execução o worker, por step (ponta) e automaticamente:
 5. **Aplicação bloco a bloco** com detecção de erro do VRP — erro ⇒ step `falhou`, parada;
 6. **Pós-check**: nova coleta + `display l2vc` — **VC presente e `State Up`** nas duas pontas
    ⇒ CR `aplicado`; VC `down`/ausente ⇒ itens `l2vc.estado`/`l2vc.ausente` (severidade
-   crítica) e CR `com_divergencia`.
+   crítica) e CR `com_divergencia`. Entraram também os itens de `atencao`: `l2vc.ac` (AC fora
+   de `up`), `l2vc.mtu` (MTU local diferente do configurado no AC) e `l2vc.mtu_simetria`
+   (MTU diferente entre as pontas) — o MTU só é conferido com o VC de pé, porque o VRP
+   imprime `0` no remoto de um VC `down`.
 
 Somente a aplicação manda comandos de configuração (`interface`, `undo portswitch`, `mtu`,
 `mpls l2vc`…); a allowlist `^display` vale para a coleta — nenhum comando fora do plano é
@@ -215,17 +221,47 @@ Critérios de "ok": `VC state : up` no VC das duas pontas; peer LDP `Up` (ou ses
 `display mpls ldp session`); MTU fim a fim consistente; sem alarmes novos no
 `display alarm active`; tráfego de teste passando (validação funcional do serviço).
 
-### 3.3 Rollback nesta fase (limite conhecido — TRABALHO FUTURO)
+### 3.3 Rollback e reconciliação nesta fase
 
-**O rollback automatizado de CR de escopo `l2vc` não está implementado**: `gerar_rollback`
-(o comando `gerenet change-requests rollback`) é circuitocêntrico — gera a CR inversa a partir
-do `circuit_id` e a CR filha nasce sem escopo `l2vc`; numa CR aplicada de L2VC ele não funciona
-(estender ao escopo `l2vc` é trabalho futuro). A reconciliação automática
-(`gerenet change-requests reconcile`) tem o mesmo limite: indisponível para escopo `l2vc` —
-após um `parcial`, os caminhos são CR de remoção (`--acao remove`) ou CR de provision nova
-(seu re-diff aplica só a ponta ausente). **Nesta fase a reversão em produção é feita por
-um destes caminhos, validado com a equipe** (§12.4 permite estratégia documentada por tipo —
-rollback manual documentado é aceitável neste ciclo):
+O rollback e a reconciliação de CR de escopo `l2vc` **estão implementados**:
+`gerenet change-requests rollback <cr>` cria a CR inversa em `aguardando_aprovacao`
+com os blocos derivados da **coleta atual** (o filho remove as pontas onde o VC
+consta no snapshot e não gera step para ponta ausente), e
+`gerenet change-requests reconcile <cr>` recomputa as pontas pendentes de uma CR
+em `erro`/`parcial`. A derivação por coleta atual (em vez do baseline pré-mudança,
+como no circuito) é decisão registrada no design de 2026-09-13: num L2VC novo o
+baseline não contém o VC e o plano sairia vazio.
+
+Roteiro (a CR filha nasce em `aguardando_aprovacao` e **não executa sozinha**):
+
+```bash
+# 1. cria a CR inversa (na web: botão "Gerar rollback")
+uv run gerenet change-requests rollback <cr>
+# 2. aprovação do filho (aprovador ≠ solicitante do filho)
+uv run gerenet change-requests approve <id> --aprovador <usuario>
+# 3. worker aplica e roda o pós-check (§3.1)
+uv run gerenet change-requests execute <id>
+# 4. confira steps e pós-check
+uv run gerenet change-requests show <id>
+# 5. só quando a CR mãe ficou em erro/parcial — recomputa as pontas pendentes
+uv run gerenet change-requests reconcile <cr>
+```
+
+O rollback remove as pontas cujo VC consta na **coleta atual**: ponta sem o VC no snapshot não
+gera step no filho.
+
+No l2vc o `PlanoRollbackVazio` tem mensagem própria — "Nada do serviço consta na coleta atual":
+nenhuma ponta lista o VC no encontrado, então não há o que desfazer (se o VC existe no switch,
+colete as pontas antes; o baseline pré-mudança não entra nesta conta).
+
+Escopos com semântica própria, para não confundir o operador: no `upstream`, desfazer uma
+remoção já **aplicada** exige reativar o upstream antes — a remoção aplicada o desativa na SoT e
+a API responde **409** ("reative antes de planejar a mudança") até a reativação, que é manual de
+propósito (sem reativação automática).
+
+Quando o caminho automático não se aplica (o `PlanoRollbackVazio` acima é o caso típico), a
+reversão segue pelos caminhos manuais documentados (§12.4 permite estratégia documentada por
+tipo — rollback manual documentado é aceitável neste ciclo), **validados com a equipe**:
 
 1. **Via plataforma (preferido)**: remova o serviço da intenção com uma CR de remoção —
    exige coleta fresca com `l2vc` no switch (`uv run gerenet collect run --device <sw>`
@@ -243,6 +279,12 @@ rollback manual documentado é aceitável neste ciclo):
    `undo mpls l2vpn flow-label` (outros VCs podem usar a mesma interface). Se o switch
    apresentar erro do VRP, parar e abrir CR/plano de remoção em vez de insistir.
 
+**Nota de coleta**: as duas tabelas dividem um único recurso (`mpls_ldp_peer`). Se o comando de
+sessão falhar — timeout, queda de conexão —, a chave vai para `erros`, o snapshot fica
+`partial` e os peers deixam de aparecer (antes chegavam com `estado=None`); se o VRP apenas
+responder com erro ao comando, os peers voltam todos com `estado=None`. O pré-check bloqueia a
+execução nos dois casos: se ela parar no check do par LDP, olhe primeiro os erros da coleta.
+
 Depois da reversão, desative o serviço de teste na SoT (`uv run gerenet mpls l2vc set-status
 <id> --inativo`), mantendo o histórico.
 
@@ -251,10 +293,10 @@ Depois da reversão, desative o serviço de teste na SoT (`uv run gerenet mpls l
 - [ ] Serviço com nome/finalidade `teste-...`; switch não crítico e janela acordados com o setor.
 - [ ] Aprovador ≠ solicitante; aprovação registrada; CR executando com worker ativo.
 - [ ] Backup pré-mudança salvo em `data/backups/change-<cr>/` (gitignored).
-- [ ] Pós-check: `display mpls l2vc` ⇒ `VC state : up` nas duas pontas; LDP `Up`; sem alarmes novos.
+- [ ] Pós-check: `display mpls l2vc` ⇒ `VC state : up` nas duas pontas; LDP `Up`; sem alarmes novos; sem item de `atencao` de AC/MTU (`l2vc.ac`, `l2vc.mtu`, `l2vc.mtu_simetria` — o MTU só é conferido com o VC de pé).
 - [ ] Resultado registrado no **ledger**: `data`, `equipamento`, `motivo`, `janela`, `resultado`
       (ledger SDD do plano — `.superpowers/sdd/2026-09-07-gerenet-fase4-mpls/progress.md`).
-- [ ] Reversão documentada (plataforma ou manual) e, se executada, conferida no `display mpls l2vc`.
+- [ ] Reversão documentada (rollback da CR, plataforma ou manual) e, se executada, conferida no `display mpls l2vc`.
 
 ---
 

@@ -228,3 +228,26 @@ def test_rollback_gera_cr_filho_inverso(db_session, tmp_path):
     assert filho.status == "aguardando_aprovacao"
     assert filho.motivo == f"Rollback do CR #{cr.id}"
     assert all(any(c["acao"] == "delete" for c in s.plano_json) for s in filho.steps)
+
+
+def test_rollback_de_remocao_gera_filho_provision_com_blocos_de_criacao(db_session, tmp_path):
+    """Rollback de uma CR de remoção replaneja o provisionamento (§12.4).
+
+    Regressão: o filho nascia com `acao="provision"` mas recebia os blocos
+    `delete` do plano do pai (undo ...), executando remoção outra vez.
+    """
+    circ, dev = _circuito_reservado(db_session)
+    _sessao(db_session, circ, dev)
+    _snapshot_encontrado(db_session, dev, tmp_path)
+    cr, _ = _cria_cr(db_session, circ, acao="remove")
+    cr.status = "aplicado"
+    cr.steps[0].status = "aplicado"
+    db_session.commit()
+    filho = crsvc.gerar_rollback(
+        db_session, cr.id, ator_id=_usuario(db_session, "exe-rem", "executor").id, actor="executor",
+    )
+    assert filho.acao == "provision"
+    assert filho.steps
+    assert all(
+        c["acao"] == "create" for s in filho.steps for c in s.plano_json
+    )

@@ -344,13 +344,29 @@ def test_cr_escopo_l2vc_popula_l2vc_name(
     assert detalhe.json()["l2vc_name"] == "l2vc-cr-api"
 
 
-def test_rollback_cr_escopo_l2vc_truncado_400(
+def _snapshots_l2vc(db_session: Session, l2vc_id: int, *, com_vc: bool) -> None:
+    """Coleta de l2vc nas duas pontas — o rollback do l2vc sai do ENCONTRADO."""
+    svc = db_session.get(models.L2vcService, l2vc_id)
+    for ep in svc.endpoints:
+        linhas = (
+            [{"vc_id": svc.vc_id, "interface": ep.interface, "estado": "up"}]
+            if com_vc else []
+        )
+        db_session.add(models.DeviceSnapshot(
+            device_id=ep.device_id, status="success",
+            resources={"interfaces": [], "l2vc": linhas, "mpls_ldp_peer": [],
+                       "config_backup": ""},
+        ))
+    db_session.commit()
+
+
+def test_rollback_cr_escopo_l2vc_gera_filho_remove(
     client: TestClient, db_session: Session
 ) -> None:
-    """Fix R2 (revisão final S2-1): `gerar_rollback` é circuitocêntrico — CR
-    de escopo l2vc recebe 400 claro (antes: 404 "Circuito None"), sem CR filha
-    e com status inalterado: a guarda dispara antes de qualquer side effect."""
+    """Fase 4 (Task 3): `gerar_rollback` atende o escopo l2vc — CR aplicada com
+    o VC no encontrado devolve a CR inversa de remoção, sem 400 de guarda."""
     l2vc_id = _l2vc_api(db_session)
+    _snapshots_l2vc(db_session, l2vc_id, com_vc=True)
     criada = client.post(
         "/api/v1/change-requests",
         json={"escopo": "l2vc", "l2vc_id": l2vc_id, "acao": "provision",
@@ -361,27 +377,28 @@ def test_rollback_cr_escopo_l2vc_truncado_400(
     cr_id = criada.json()["id"]
     modelo = db_session.get(models.ChangeRequest, cr_id)
     modelo.status = "aplicado"
-    modelo.steps[0].status = "aplicado"  # estado coerente; a guarda é anterior
+    modelo.steps[0].status = "aplicado"
     db_session.commit()
-    antes = len(db_session.scalars(select(models.ChangeRequest)).all())
     resp = client.post(f"/api/v1/change-requests/{cr_id}/rollback", headers=_auth())
-    assert resp.status_code == 400, resp.text
-    assert "l2vc" in resp.json()["detail"].lower()
-    filhos = db_session.scalars(
-        select(models.ChangeRequest).where(models.ChangeRequest.rollback_de == cr_id)
-    ).all()
-    assert filhos == []
-    assert len(db_session.scalars(select(models.ChangeRequest)).all()) == antes
-    assert db_session.get(models.ChangeRequest, cr_id).status == "aplicado"
+    assert resp.status_code == 200, resp.text
+    filho = resp.json()
+    assert filho["escopo"] == "l2vc"
+    assert filho["l2vc_id"] == l2vc_id
+    assert filho["circuit_id"] is None
+    assert filho["acao"] == "remove"
+    assert filho["status"] == "aguardando_aprovacao"
+    assert filho["rollback_de"] == cr_id
+    assert len(filho["steps"]) == 1
 
 
-def test_reconciliar_cr_escopo_l2vc_truncado_400(
+def test_reconciliar_cr_escopo_l2vc_replaneja_pendente(
     client: TestClient, db_session: Session
 ) -> None:
-    """Fix R2 (revisão final S2-1): `reconciliar` é circuitocêntrico — CR de
-    escopo l2vc recebe 400 claro, sem CR nova e sem transição de status
-    (parcial é o modo de falha desenhado do L2VC)."""
+    """Fase 4 (Task 3): `reconciliar` deixou de ser circuitocêntrico para o l2vc —
+    CR em parcial volta a aguardando_aprovacao com os steps não aplicados
+    replanejados, sem CR nova."""
     l2vc_id = _l2vc_api(db_session)
+    _snapshots_l2vc(db_session, l2vc_id, com_vc=False)
     criada = client.post(
         "/api/v1/change-requests",
         json={"escopo": "l2vc", "l2vc_id": l2vc_id, "acao": "provision",
@@ -395,7 +412,7 @@ def test_reconciliar_cr_escopo_l2vc_truncado_400(
     db_session.commit()
     antes = len(db_session.scalars(select(models.ChangeRequest)).all())
     resp = client.post(f"/api/v1/change-requests/{cr_id}/reconciliar", headers=_auth())
-    assert resp.status_code == 400, resp.text
-    assert "l2vc" in resp.json()["detail"].lower()
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "aguardando_aprovacao"
+    assert all(s["status"] == "pendente" for s in resp.json()["steps"])
     assert len(db_session.scalars(select(models.ChangeRequest)).all()) == antes
-    assert db_session.get(models.ChangeRequest, cr_id).status == "parcial"

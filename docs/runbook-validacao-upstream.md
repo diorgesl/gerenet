@@ -388,6 +388,11 @@ uv run gerenet change-requests approve <cr-inversa> --aprovador <usuario-aprovad
   step aplicado — sem baseline, não inventa: o step é pulado e a diferença
   aparece na reconciliação); se a CR original era remoção, a inversa é
   provision re-renderizada da SoT atual.
+- **Reversão de remoção já aplicada**: a remoção `aplicado` desativa o
+  upstream na SoT, então reative o upstream **antes** de gerar o rollback —
+  sem isso a API responde **409** ("reative antes de planejar a mudança"),
+  porque o filho é um provision e o plano recusa upstream desativado. A
+  reativação é manual de propósito: nada de reativação automática.
 - Se a execução deu `parcial`, `gerenet change-requests reconcile <cr-id>`
   recomputa os steps não aplicados e reabre a aprovação deles (também vale
   para o escopo upstream).

@@ -102,40 +102,62 @@ def _primeiras_linhas(por_comando: dict[str, list[dict]]) -> list[dict]:
 
 
 def normaliza_ldp(por_comando: dict[str, list[dict]]) -> list[dict]:
-    """`display mpls ldp peer` -> peers sem o sufixo `:0` do LDP ID.
+    """`display mpls ldp peer` + `display mpls ldp session` -> peers com estado.
 
-    A tabela da família S não imprime estado do peer; `estado` é `None`
-    (desconhecido) quando a linha não o traz — nunca "down" por omissão, uma
-    coleta sem estado não pode afirmar que o peer está down. Keys:
-    {peer_id, estado}; linhas sem peer_id são descartadas.
+    A tabela de peer da família S não imprime estado; ele vem da tabela de sessão
+    (`Operational` = up). Peer listado pelo comando de peer sem linha na sessão
+    fica `estado=None` (desconhecido) — nunca "down" por omissão. Quando o próprio
+    comando de peer imprime estado (outras famílias), ele é o fallback. O sufixo
+    `:0` do LDP ID sai dos dois lados. Keys: {peer_id, estado}; linhas sem
+    peer_id são descartadas.
     """
+    peers = por_comando.get("display mpls ldp peer")
+    if peers is None:
+        peers = _primeiras_linhas(por_comando)
+    estados: dict[str, str | None] = {}
+    for linha in por_comando.get("display mpls ldp session", []):
+        peer = str(linha.get("peer_id", "")).split(":")[0].strip()
+        if peer and linha.get("status"):
+            estados[peer] = (
+                "up" if str(linha["status"]).strip().lower() == "operational" else "down"
+            )
     saida: list[dict] = []
-    for linha in _primeiras_linhas(por_comando):
+    for linha in peers:
         peer = str(linha.get("peer_id", "")).split(":")[0].strip()
         if not peer:
             continue
-        estado = {"up": "up", "down": "down"}.get(str(linha.get("estado") or "").lower())
-        saida.append({
-            "peer_id": peer,
-            "estado": estado,
-        })
+        if peer in estados:
+            estado: str | None = estados[peer]
+        else:
+            estado = {"up": "up", "down": "down"}.get(str(linha.get("estado") or "").lower())
+        saida.append({"peer_id": peer, "estado": estado})
     return saida
 
 
 def normaliza_l2vc(por_comando: dict[str, list[dict]]) -> list[dict]:
-    """`display l2vc` -> vc_id int, interface (None quando ausente) e estado up/down.
+    """`display l2vc` -> vc_id int, interface, estado e os campos do §13.2.
 
-    Keys: {vc_id, interface, estado}; linhas sem vc_id são descartadas.
+    Keys: {vc_id, interface, estado, ac_status, mtu_local, mtu_remoto}; campo
+    ausente no bloco vira None (não inventa valor) e linha sem vc_id é
+    descartada. O MTU é int quando impresso (o VRP imprime `0` em VC down).
     """
+    def _int(valor: object) -> int | None:
+        return int(valor) if valor not in (None, "") else None
+
     saida: list[dict] = []
     for linha in _primeiras_linhas(por_comando):
+        # `vc_id` vazio (não None) é o sentinel do TextFSM para valor não casado:
+        # com o Record na linha do MTU, um bloco sem `VC ID` chega aqui em `''`.
         vc = linha.get("vc_id")
-        if vc is None:
+        if not vc:
             continue
         saida.append({
             "vc_id": int(vc),
             "interface": linha.get("interface"),
             "estado": "up" if str(linha.get("estado", "")).lower() == "up" else "down",
+            "ac_status": linha.get("ac_status") or None,
+            "mtu_local": _int(linha.get("mtu_local")),
+            "mtu_remoto": _int(linha.get("mtu_remoto")),
         })
     return saida
 

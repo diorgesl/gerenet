@@ -149,7 +149,9 @@ def test_plan_provision_idempotente(servico, db_session):
 
 def test_plan_remocao_exige_snapshot_novo(servico, db_session):
     d1, d2, svc = servico
-    with pytest.raises(ValidationError):
+    # a mensagem nomeia o equipamento sem coleta (F5): o operador sabe qual
+    # switch coletar antes de remover
+    with pytest.raises(ValidationError, match="sw-a"):
         l2vc.plan_remocao_l2vc(db_session, svc)
     _snapshot(db_session, d1, {
         "l2vc": [{"vc_id": 1000, "interface": "10GE0/0/1", "estado": "up"}],
@@ -221,3 +223,45 @@ def test_criar_l2vc_qinq_rejeitado(servico, db_session):
                                encapsulation="qinq", vid=202, inner_vlan=32, mtu=1500),
             ],
         ), actor="cli")
+
+
+def _pos_snapshot(db_session, dev, **campos):
+    linha = {"vc_id": 1000, "interface": "10GE0/0/1", "estado": "up",
+             "ac_status": "up", "mtu_local": 1500, "mtu_remoto": 1500}
+    linha.update(campos)
+    return _snapshot(db_session, dev, {
+        "interfaces": [{"nome": "10GE0/0/1", "phy": "up", "protocolo": "up"}],
+        "l2vc": [linha], "mpls_ldp_peer": [], "config_backup": "",
+    })
+
+
+def test_pos_check_mtu_divergente_e_atencao(servico, db_session):
+    d1, _, svc = servico
+    snap = _pos_snapshot(db_session, d1, mtu_local=9216, mtu_remoto=9216)
+    itens = l2vc.valida_pos_l2vc(db_session, svc, snap)
+    tipos = {i["tipo"]: i for i in itens}
+    assert tipos["l2vc.mtu"].get("severidade") == "atencao"
+    assert not any(i["severidade"] == "critica" for i in itens)
+
+
+def test_pos_check_mtu_assimetrico_e_atencao(servico, db_session):
+    d1, _, svc = servico
+    snap = _pos_snapshot(db_session, d1, mtu_local=1500, mtu_remoto=9216)
+    itens = l2vc.valida_pos_l2vc(db_session, svc, snap)
+    assert any(i["tipo"] == "l2vc.mtu_simetria" and i["severidade"] == "atencao" for i in itens)
+
+
+def test_pos_check_ac_fora_do_up_e_atencao(servico, db_session):
+    d1, _, svc = servico
+    snap = _pos_snapshot(db_session, d1, ac_status="down")
+    itens = l2vc.valida_pos_l2vc(db_session, svc, snap)
+    assert any(i["tipo"] == "l2vc.ac" and i["severidade"] == "atencao" for i in itens)
+
+
+def test_pos_check_mtu_ignorado_com_vc_down(servico, db_session):
+    """VC down já é item crítico; o MTU não gera ruído em cima dele."""
+    d1, _, svc = servico
+    snap = _pos_snapshot(db_session, d1, estado="down", mtu_remoto=0)
+    itens = l2vc.valida_pos_l2vc(db_session, svc, snap)
+    assert any(i["tipo"] == "l2vc.estado" and i["severidade"] == "critica" for i in itens)
+    assert not any(i["tipo"].startswith("l2vc.mtu") for i in itens)

@@ -35,25 +35,15 @@ TRANSICOES: dict[str, set[str]] = {
 
 _ATUAIS = ("aplicado", "com_divergencia", "parcial", "erro")
 
-# Escopos SEM reconciliação/rollback automáticos (mensagem por escopo real §5):
-# o l2vc é reagendado por CR de remoção/provision nova (o re-diff aplica só a
-# ponta ausente — runbook §3.3); o vsi é multiponto em fase posterior.
+# Escopos SEM reconciliação/rollback automáticos (mensagem própria por escopo):
+# o vsi é multiponto e o provisionamento entra na frente seguinte à fase 4.
 _RECONCILIA_INDISPONIVEL = {
-    "l2vc": (
-        "Reconciliação automática indisponível para CR de escopo l2vc. "
-        "Crie uma CR de remoção (--acao remove) ou uma CR de provision nova (o re-diff "
-        "aplica só a ponta ausente) — runbook §3.3."
-    ),
     "vsi": (
         "Reconciliação automática indisponível para CR de escopo vsi — "
         "provisionamento multiponto em fase posterior."
     ),
 }
 _ROLLBACK_INDISPONIVEL = {
-    "l2vc": (
-        "Rollback automático indisponível para CR de escopo l2vc. "
-        "Crie uma CR de remoção (--acao remove) ou reverta manualmente — runbook §3.3."
-    ),
     "vsi": (
         "Rollback automático indisponível para CR de escopo vsi — "
         "provisionamento multiponto em fase posterior."
@@ -125,6 +115,20 @@ def create_change_request(
     return cr
 
 
+def _exige_l2vc_ativo(svc: models.L2vcService) -> None:
+    """Serviço e domínio ativos — desativado não recebe mudanças (§14.1).
+
+    Guarda única do escopo l2vc: a criação de CR e o replanejamento
+    (reconciliação e filho do rollback) passam por aqui — sem ela o plano
+    sairia de um serviço que o operador considera desligado.
+    """
+    if not svc.admin_status:
+        raise ConflictError("Serviço L2VC desativado não recebe mudanças.")
+    dom = svc.domain
+    if not dom.admin_status:
+        raise ConflictError(f"Domínio MPLS {dom.name} desativado não recebe mudanças.")
+
+
 def _create_l2vc(
     session: Session, data: schemas.ChangeRequestCreate, *, ator_id: int | None = None, actor: str = "cli",
 ) -> models.ChangeRequest:
@@ -134,11 +138,7 @@ def _create_l2vc(
     from gerenet.domain.services.mpls import get_l2vc
 
     servico = get_l2vc(session, data.l2vc_id)  # NotFoundError propaga (404)
-    if not servico.admin_status:
-        raise ConflictError("Serviço L2VC desativado não recebe mudanças.")
-    dom = servico.domain
-    if not dom.admin_status:
-        raise ConflictError(f"Domínio MPLS {dom.name} desativado não recebe mudanças.")
+    _exige_l2vc_ativo(servico)
     plano = (
         l2vc_auto.plan_provision_l2vc(session, servico)
         if data.acao == "provision"
@@ -322,7 +322,15 @@ def marcar_executando(session: Session, cr_id: int, *, actor: str = "cli") -> mo
     return cr
 
 
-def _replaneja(session: Session, cr: models.ChangeRequest, device_id: int) -> changes.PlanoDevice:
+def _replaneja(
+    session: Session, cr: models.ChangeRequest, device_id: int, *, acao: str | None = None,
+) -> changes.PlanoDevice:
+    """Plano de um device na ação pedida (`acao=None` = ação da própria CR).
+
+    O `gerar_rollback` passa a ação do filho: planejar o passo com a ação do pai
+    entregava blocos `delete` a uma CR de provisionamento (§12.4).
+    """
+    acao = acao or cr.acao
     if cr.escopo == "upstream":
         from gerenet.automation import upstream as up_auto
         from gerenet.domain.services.upstreams import get_upstream
@@ -330,15 +338,30 @@ def _replaneja(session: Session, cr: models.ChangeRequest, device_id: int) -> ch
         up = get_upstream(session, cr.upstream_id)
         plano = (
             up_auto.plan_provision_upstream(session, up)
-            if cr.acao == "provision"
+            if acao == "provision"
             else up_auto.plan_remocao_upstream(session, up)
         )
         for item in plano:
             if item.device_id == device_id:
                 return item
         return changes.PlanoDevice(device_id=device_id, blocos=[], baseline_snapshot_id=None)
+    if cr.escopo == "l2vc":
+        from gerenet.automation import l2vc as l2vc_auto
+        from gerenet.domain.services.mpls import get_l2vc
+
+        svc = get_l2vc(session, cr.l2vc_id)
+        _exige_l2vc_ativo(svc)  # serviço/domínio off desde o plano: recusa (F2)
+        plano = (
+            l2vc_auto.plan_provision_l2vc(session, svc)
+            if acao == "provision"
+            else l2vc_auto.plan_remocao_l2vc(session, svc)
+        )
+        for item in plano:
+            if item.device_id == device_id:
+                return item
+        return changes.PlanoDevice(device_id=device_id, blocos=[], baseline_snapshot_id=None)
     circ = get_circuit(session, cr.circuit_id)
-    if cr.acao == "provision":
+    if acao == "provision":
         plano = changes.plan_provision(session, circ)
     else:
         plano = changes.plan_remocao(session, circ)
@@ -380,6 +403,10 @@ def gerar_rollback(
     remove → provision re-renderizado do desejado (SoT atual). No escopo
     upstream a mecânica é a mesma: o undo do filho remove agrega os circuitos
     vinculados por device (na ordem dos vínculos), como o plano de provision.
+    No escopo l2vc o plano sai da COLETA ATUAL (não do baseline do step): um
+    serviço recém-criado não consta no snapshot pré-mudança, e o undo vazio
+    deixaria o rollback sem passo — a ponta que não tem o VC no encontrado
+    simplesmente não ganha step.
     """
     cr = get_change_request(session, cr_id)
     if cr.escopo in _ROLLBACK_INDISPONIVEL:
@@ -398,6 +425,13 @@ def gerar_rollback(
             criticidade=cr.criticidade, motivo=f"Rollback do CR #{cr.id}",
             solicitante_id=ator_id, status="aguardando_aprovacao", rollback_de=cr.id,
         )
+    elif cr.escopo == "l2vc":
+        filho = models.ChangeRequest(
+            circuit_id=None, l2vc_id=cr.l2vc_id, escopo="l2vc",
+            acao="remove" if cr.acao == "provision" else "provision",
+            criticidade=cr.criticidade, motivo=f"Rollback do CR #{cr.id}",
+            solicitante_id=ator_id, status="aguardando_aprovacao", rollback_de=cr.id,
+        )
     else:
         circ = get_circuit(session, cr.circuit_id)
         filho = models.ChangeRequest(
@@ -409,6 +443,16 @@ def gerar_rollback(
     session.flush()
     for step in cr.steps:
         if step.status != "aplicado":
+            continue
+        if cr.escopo == "l2vc":
+            item = _replaneja(session, cr, step.device_id, acao=filho.acao)
+            if not item.blocos:
+                continue  # ponta sem o serviço no encontrado: nada a desfazer
+            session.add(models.ChangeStep(
+                change_request_id=filho.id, device_id=step.device_id, status="pendente",
+                plano_json=item.blocos, baseline_snapshot_id=item.baseline_snapshot_id,
+                aviso=item.aviso,
+            ))
             continue
         if cr.acao == "provision":
             if step.baseline_snapshot_id is None:
@@ -430,18 +474,24 @@ def gerar_rollback(
                 plano_json=blocos, baseline_snapshot_id=snap.id,
             ))
         else:
-            item = _replaneja(session, cr, step.device_id)
+            item = _replaneja(session, cr, step.device_id, acao=filho.acao)
             session.add(models.ChangeStep(
                 change_request_id=filho.id, device_id=step.device_id, status="pendente",
                 plano_json=item.blocos, baseline_snapshot_id=item.baseline_snapshot_id,
                 aviso=item.aviso,
             ))
     if not filho.steps:
-        # Tudo pulado por baseline ausente (§5.2): NADA persiste — sem CR
-        # órfã (a sessão descartada pelo get_db descarta o filho non-commitado).
+        # Tudo pulado (§5.2): NADA persiste — sem CR órfã (a sessão descartada
+        # pelo get_db descarta o filho non-commitado). A causa muda com o
+        # escopo e a mensagem acompanha: no l2vc o plano sai da COLETA ATUAL
+        # (nada do serviço no encontrado), nos demais do baseline do step.
+        causa = (
+            "Nada do serviço consta na coleta atual"
+            if cr.escopo == "l2vc"
+            else "Sem steps aplicados com baseline"
+        )
         raise PlanoRollbackVazio(
-            "Sem steps aplicados com baseline — rollback automático indisponível; "
-            "faça manualmente."
+            f"{causa} — rollback automático indisponível; faça manualmente."
         )
     registrar(
         session, tipo="change.rollback_created", ator=actor, objeto="change_request",

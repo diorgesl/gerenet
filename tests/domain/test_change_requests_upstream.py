@@ -157,13 +157,40 @@ def test_rollback_cr_upstream_provision_gera_filho_remove(
     )
 
 
-def test_reconciliar_cr_l2vc_mantem_indisponivel(db_session):
-    """Regressão (mínimo): o guard por escopo real continua bloqueando l2vc."""
+def test_rollback_de_remocao_upstream_gera_filho_provision(
+    db_session, up_com_2_circuitos, edge_device
+):
+    """Mesma correção do circuito: o filho do rollback recebe blocos de criação.
+
+    O snapshot traz os peers das DUAS sessões do fixture: com `bgp_peers` vazio
+    o plano de remoção do pai sai sem blocos e o filho nasceria vazio nos dois
+    caminhos — a asserção passaria por vacuidade e não pegaria a regressão.
+    """
+    up = up_com_2_circuitos
+    peers = [
+        {"afi": "ipv4", "peer": "100.64.10.2", "asn": 64501},
+        {"afi": "ipv4", "peer": "100.64.10.6", "asn": 64501},
+    ]
+    _snapshot_peers_up(db_session, edge_device, peers)
+    cr = _cr_upstream(db_session, up, acao="remove")
+    cr.status = "aplicado"
+    for step in cr.steps:
+        step.status = "aplicado"
+    db_session.commit()
+    filho = gerar_rollback(db_session, cr.id, ator_id=None, actor="cli")
+    assert filho.acao == "provision"
+    assert filho.steps
+    assert all(c["acao"] == "create" for s in filho.steps for c in s.plano_json)
+
+
+def test_reconciliar_cr_l2vc_nao_e_mais_barrada_por_escopo(db_session):
+    """O guard por escopo não barra mais o l2vc (fase 4 passou a reconciliar e
+    reverter via rollback automático): a CR chega à validação de status."""
     cr = models.ChangeRequest(
         circuit_id=None, l2vc_id=None, escopo="l2vc", acao="provision",
         criticidade="media", motivo="regressão guard", status="rascunho",
     )
     db_session.add(cr)
     db_session.commit()
-    with pytest.raises(ValidationError, match="l2vc"):
+    with pytest.raises(ValidationError, match="atual: rascunho"):
         reconciliar(db_session, cr.id, actor="operador")

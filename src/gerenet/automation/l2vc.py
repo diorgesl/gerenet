@@ -134,8 +134,13 @@ def plan_remocao_l2vc(session: Session, service: models.L2vcService) -> list[cha
         snap = changes._ultimo_snapshot_ok(session, device_id)
         recursos, tem = _recursos_snapshot(snap)
         if not tem:
+            # F5: o nome do equipamento é o que o operador precisa para coletar
+            # antes de remover — sem ele a mensagem não diz QUAL switch coletar.
+            dev = session.get(models.Device, device_id)
+            nome = dev.name if dev is not None else f"device {device_id}"
             raise ValidationError(
-                "Sem snapshot recente com 'l2vc' para gerar a remoção — colete antes de remover (§5.2)."
+                f"Sem snapshot recente com 'l2vc' no {nome} para gerar a remoção — "
+                "colete antes de remover (§5.2)."
             )
         a_remover: list[dict] = []
         for bloco in blocos:
@@ -186,8 +191,15 @@ def valida_pre_checks_l2vc(session: Session, service: models.L2vcService, device
     return None
 
 
-def valida_pos_l2vc(session: Session, service: models.L2vcService, snapshot: models.DeviceSnapshot) -> list[dict]:
-    """Pós-check §13 — VC presente e UP na coleta pós-aplicação."""
+def valida_pos_l2vc(
+    session: Session, service: models.L2vcService, snapshot: models.DeviceSnapshot,
+) -> list[dict]:
+    """Pós-check §13 — VC e AC na coleta pós-aplicação, com MTU fim a fim (§9.2).
+
+    VC ausente ou fora de `up` é crítico. AC fora de `up` e MTU divergente do
+    configurado ou assimétrico entre as pontas são `atencao` — o MTU só é
+    conferido com o VC de pé, porque o VRP imprime `0` no remoto de um VC down.
+    """
     recursos = snapshot.resources or {}
     linhas = [l for l in recursos.get("l2vc", []) if l.get("vc_id") == service.vc_id]
     achada = linhas[0] if linhas else None
@@ -196,12 +208,36 @@ def valida_pos_l2vc(session: Session, service: models.L2vcService, snapshot: mod
         items.append({
             "tipo": "l2vc.ausente", "severidade": "critica",
             "esperado": f"{service.name} (vc {service.vc_id})", "encontrado": "não listado",
-            "acao": "Verificar config do AC e revalidar (display l2vc).",
+            "acao": "Verificar config do AC e revalidar (display mpls l2vc).",
         })
-    elif str(achada.get("estado", "")).lower() != "up":
+        return items
+    if str(achada.get("estado", "")).lower() != "up":
         items.append({
             "tipo": "l2vc.estado", "severidade": "critica",
             "esperado": "up", "encontrado": str(achada.get("estado")),
             "acao": "Verificar estado do pseudowire/AC (LDP up, MTU, encap simétrico).",
+        })
+        return items
+    ac = achada.get("ac_status")
+    if ac is not None and str(ac).lower() != "up":
+        items.append({
+            "tipo": "l2vc.ac", "severidade": "atencao",
+            "esperado": "up", "encontrado": str(ac),
+            "acao": "Conferir o AC desta ponta (display mpls l2vc).",
+        })
+    ep = next((e for e in service.endpoints if e.device_id == snapshot.device_id), None)
+    esperado_mtu = (ep.mtu or service.mtu) if ep is not None else service.mtu
+    local, remoto = achada.get("mtu_local"), achada.get("mtu_remoto")
+    if local is not None and local != esperado_mtu:
+        items.append({
+            "tipo": "l2vc.mtu", "severidade": "atencao",
+            "esperado": str(esperado_mtu), "encontrado": str(local),
+            "acao": "Conferir o `mtu` do AC e reaplicar se preciso (§9.2).",
+        })
+    if local is not None and remoto is not None and local != remoto:
+        items.append({
+            "tipo": "l2vc.mtu_simetria", "severidade": "atencao",
+            "esperado": f"MTU igual nas pontas ({local})", "encontrado": str(remoto),
+            "acao": "Conferir o MTU da ponta remota (§9.2).",
         })
     return items
