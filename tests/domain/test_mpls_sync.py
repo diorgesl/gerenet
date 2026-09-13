@@ -97,6 +97,40 @@ def test_sync_vsi(db_session, cenario):
     assert get_vsi(db_session, vsi.id).operational_status == "up"
 
 
+def test_sincronizar_mpls_atualiza_estado_do_ac_do_vsi(db_session):
+    """O AC do VSI também é um ServiceEndpoint: o estado dele vem da coleta.
+
+    O estado do SERVIÇO continua vindo do `VSI State` do equipamento; o do AC
+    é por ponta. Um AC caído não rebaixa o serviço na SoT.
+    """
+    site = create_site(db_session, SiteCreate(name="pop-sync-vsi"), actor="cli")
+    d1 = create_device(db_session, DeviceCreate(
+        name="sw-sync-a", management_address="10.9.5.1", site_id=site.id), actor="cli")
+    d2 = create_device(db_session, DeviceCreate(
+        name="sw-sync-b", management_address="10.9.5.2", site_id=site.id), actor="cli")
+    dom = create_domain(db_session, MplsDomainCreate(name="dom-sync-vsi"), actor="cli")
+    add_domain_member(db_session, dom.id, MplsMemberIn(device_id=d1.id, loopback_address="10.255.4.1"), actor="cli")
+    add_domain_member(db_session, dom.id, MplsMemberIn(device_id=d2.id, loopback_address="10.255.4.2"), actor="cli")
+    vsi = create_vsi(db_session, VsiCreate(
+        domain_id=dom.id, name="sync vsi", vsi_id=900,
+        endpoints=[VsiEndpointIn(device_id=d1.id, vid=900),
+                   VsiEndpointIn(device_id=d2.id, vid=900)],
+    ), actor="cli")
+    snap = models.DeviceSnapshot(
+        device_id=d1.id, status="success", resources={"vsi": [{
+            "name": vsi.vrp_name, "vsi_id": vsi.vsi_id, "estado": "up", "mtu": 1500,
+            "peers": [{"peer": "10.255.4.2", "estado": "up"}],
+            "acs": [{"interface": "Vlanif900", "estado": "down"}],
+        }]}, errors={}, raw_files={}, duration_ms=0,
+    )
+    db_session.add(snap)
+    db_session.commit()
+    sincronizar_mpls(db_session, snap)
+    ep = next(e for e in vsi.endpoints if e.device_id == d1.id)
+    assert ep.operational_status == "down"
+    assert vsi.operational_status == "up"
+
+
 def test_sync_sem_mpls_e_no_op(db_session, cenario):
     _, _, l2vc, _ = cenario
     dev3 = create_device(db_session, DeviceCreate(name="sw-r", management_address="10.0.0.97"), actor="cli")

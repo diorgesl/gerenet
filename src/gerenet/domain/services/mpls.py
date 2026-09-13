@@ -634,6 +634,11 @@ def sincronizar_mpls(session: Session, snapshot: models.DeviceSnapshot) -> None:
     Match L2VC: (vc_id, device, interface guard) sobre os endpoints do device;
     Match VSI: (vsi_id, membro do VSI no device). Linha ausente na coleta
     mantém o status anterior. Dispositivo sem MPLS: no-op.
+
+    O AC de cada ponta do VSI casa por (device, interface) do próprio
+    endpoint e recebe o `State` dele. O serviço NÃO agrega os ACs: o estado
+    dele continua sendo o `VSI State` do equipamento, então um AC caído não
+    rebaixa o VSI na SoT (as duas informações convivem).
     """
     recursos = snapshot.resources or {}
     mexeu = False
@@ -676,6 +681,17 @@ def sincronizar_mpls(session: Session, snapshot: models.DeviceSnapshot) -> None:
         vsi = membro.vsi
         vsi.operational_status = linha.get("estado", "unknown")
         vsi.last_collected_at = agora or vsi.last_collected_at
+        for ac in linha.get("acs", []) or []:
+            nome_if = ac.get("interface")
+            if not nome_if:
+                continue
+            dono = next(
+                (e for e in vsi.endpoints if e.device_id == snapshot.device_id
+                 and e.interface == nome_if),
+                None,
+            )
+            if dono is not None:
+                dono.operational_status = ac.get("estado") or "unknown"
         mexeu = True
     if mexeu:
         session.flush()

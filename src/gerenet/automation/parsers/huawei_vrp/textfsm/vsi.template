@@ -1,8 +1,18 @@
-Value Required name (\S+)
-Value vsi_id (\d+)
+Value Filldown name (\S+)
 Value estado (\S+)
+Value vsi_id (\d+)
+Value mtu (\d+)
+Value peer (\d+\.\d+\.\d+\.\d+)
+Value peer_estado (\S+)
+Value ac_if (\S+)
+Value ac_estado (\S+)
 
 Start
   ^\s*\*+\s*VSI Name\s*:\s*${name}\s*$$ -> Continue
+  ^\s*MTU\s*:\s*${mtu}\s*$$ -> Continue
   ^\s*VSI State\s*:\s*${estado}\s*$$ -> Continue
   ^\s*VSI ID\s*:\s*${vsi_id}\s*$$ -> Record
+  ^\s*\*Peer Router ID\s*:\s*${peer}\s*$$ -> Continue
+  ^\s*Session\s*:\s*${peer_estado}\s*$$ -> Record
+  ^\s*Interface Name\s*:\s*${ac_if}\s*$$ -> Continue
+  ^\s*State\s*:\s*${ac_estado}\s*$$ -> Record
