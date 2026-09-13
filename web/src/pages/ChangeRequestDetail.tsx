@@ -13,6 +13,7 @@ import {
   useCircuits,
   useDevices,
 } from "@/api/hooks";
+import { SeverityBadge } from "@/components/SeverityBadge";
 import { StatusBadge } from "@/components/StatusBadge";
 import { PageHeader } from "@/components/PageHeader";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -201,7 +202,9 @@ export default function ChangeRequestDetail() {
               <ul>
                 {step.post_check_json.items.map((item, idx) => (
                   <li key={idx}>
-                    <StatusBadge estado={item.severidade} /> {item.esperado} — encontrado: {item.encontrado}
+                    {/* SeverityBadge (não StatusBadge): "atencao"/"alerta" têm
+                        cor própria — o StatusBadge não conhece as duas. */}
+                    <SeverityBadge severidade={item.severidade} /> {item.esperado} — encontrado: {item.encontrado}
                   </li>
                 ))}
               </ul>

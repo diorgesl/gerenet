@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, beforeAll, describe, expect, it, vi } from "vitest";
 import ChangeRequestDetail from "./ChangeRequestDetail";
 import { AuthProvider } from "@/auth/auth-context";
+import type { ChangeStepOut } from "@/api/types";
 
 let ME: Record<string, unknown>; // mutável por teste — define o papel do usuário logado
 
@@ -19,7 +20,7 @@ const crBase = {
   steps: [{
     id: 1, device_id: 1, status: "pendente", aviso: null, baseline_snapshot_id: 3,
     backup_snapshot_id: null, erro: null, finished_at: null,
-    post_check_json: null, plano_json: [
+    post_check_json: null as ChangeStepOut["post_check_json"], plano_json: [
       { tipo: "bgp_peer", objeto: "peer", objeto_id: 1, acao: "create", comandos: ["peer 10.9.0.9 as-number 64512", "peer 10.9.0.9 description CLIENTE-GALAXIA"] },
     ],
   }],
@@ -186,6 +187,36 @@ describe("ChangeRequestDetail", () => {
     renderDetail();
     await screen.findByText("Change request #1");
     expect(screen.getByRole("button", { name: "Reconciliar" })).toBeInTheDocument();
+  });
+
+  it("mostra o badge de severidade da pós-checagem com a classe certa (atencao → warn)", async () => {
+    // Regressão do F3: `StatusBadge` não conhece "atencao" e pintava os itens
+    // de pós-check de cinza ("unknown"), escondendo o aviso do operador.
+    crAtual = {
+      ...crDe(2, "com_divergencia"),
+      steps: [
+        {
+          ...crBase.steps[0],
+          post_check_json: {
+            snapshot_id: 9,
+            items: [
+              {
+                tipo: "l2vc.mtu",
+                severidade: "atencao",
+                esperado: "1500",
+                encontrado: "1400",
+                acao: "Conferir o `mtu` do AC e reaplicar se preciso (§9.2).",
+              },
+            ],
+          },
+        },
+      ],
+    };
+    renderDetail();
+    await screen.findByText("Change request #1");
+    const badge = screen.getByText("atencao");
+    expect(badge).toHaveClass("badge-warn");
+    expect(badge).not.toHaveClass("badge-unknown");
   });
 
   it("não mostra Reconciliar numa CR de escopo vsi com erro", async () => {
