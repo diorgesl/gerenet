@@ -1,0 +1,5 @@
+Value peer_id (\d+\.\d+\.\d+\.\d+:\d+)
+Value status (\S+)
+
+Start
+  ^\s*\*?\s*${peer_id}\s+${status}(\s+.*)?$$ -> Record

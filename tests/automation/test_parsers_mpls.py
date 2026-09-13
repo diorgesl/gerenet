@@ -118,3 +118,71 @@ def test_merge_vazios_devolvem_lista() -> None:
     assert merge_parsed("mpls_ldp_peer", {}) == []
     assert merge_parsed("l2vc", {}) == []
     assert merge_parsed("vsi", {}) == []
+
+
+def test_mpls_ldp_session_vazio() -> None:
+    assert parse_template("mpls_ldp_session", "") == []
+
+
+def test_mpls_ldp_session_real() -> None:
+    """S6730: tabela PeerID/Status/LAM/SsnRole/SsnAge/KASent-Rcv, 8 sessões."""
+    linhas = parse_template("mpls_ldp_session", _real("s6730_display_mpls_ldp_session.txt"))
+    assert len(linhas) == 8
+    assert {"peer_id": "100.127.90.251:0", "status": "Operational"} in linhas
+    assert {"peer_id": "100.127.90.10:0", "status": "Operational"} in linhas
+
+
+def test_mpls_ldp_session_sessao_em_remocao() -> None:
+    """O `*` de sessão em deleção não entra no peer_id."""
+    saida = (
+        " PeerID             Status      LAM  SsnRole  SsnAge      KASent/Rcv\n"
+        "*10.255.9.2:0       Operational DU   Passive  0000:00:02  5/5\n"
+    )
+    assert parse_template("mpls_ldp_session", saida) == [
+        {"peer_id": "10.255.9.2:0", "status": "Operational"},
+    ]
+
+
+def test_merge_ldp_cruza_peer_e_sessao() -> None:
+    """Sessão Operational ⇒ up; outro status ⇒ down; peer sem linha ⇒ None."""
+    assert merge_parsed("mpls_ldp_peer", {
+        "display mpls ldp peer": [
+            {"peer_id": "100.127.90.251:0", "transport": "100.127.90.251", "discovery": "Eth-Trunk9"},
+            {"peer_id": "100.127.90.253:0", "transport": "100.127.90.253", "discovery": "Remote Peer"},
+            {"peer_id": "100.127.90.254:0", "transport": "100.127.90.254", "discovery": "Vlanif10"},
+        ],
+        "display mpls ldp session": [
+            {"peer_id": "100.127.90.251:0", "status": "Operational"},
+            {"peer_id": "100.127.90.253:0", "status": "Initialized"},
+        ],
+    }) == [
+        {"peer_id": "100.127.90.251", "estado": "up"},
+        {"peer_id": "100.127.90.253", "estado": "down"},
+        {"peer_id": "100.127.90.254", "estado": None},
+    ]
+
+
+def test_merge_ldp_fixtures_reais_casam_por_peer() -> None:
+    """As duas fixtures reais do S6730 têm os mesmos 8 peers, todos Operational."""
+    linhas = merge_parsed("mpls_ldp_peer", {
+        "display mpls ldp peer": parse_template("mpls_ldp_peer", _real("s6730_display_mpls_ldp_peer.txt")),
+        "display mpls ldp session": parse_template("mpls_ldp_session", _real("s6730_display_mpls_ldp_session.txt")),
+    })
+    assert len(linhas) == 8
+    assert {l["estado"] for l in linhas} == {"up"}
+    assert {l["peer_id"] for l in linhas} == {
+        "100.127.90.251", "100.127.90.253", "100.127.90.254", "100.127.90.255",
+        "100.127.90.2", "100.127.90.3", "100.127.90.5", "100.127.90.10",
+    }
+
+
+def test_merge_ldp_sessao_sem_peer_na_tabela_e_ignorada() -> None:
+    assert merge_parsed("mpls_ldp_peer", {
+        "display mpls ldp peer": [
+            {"peer_id": "10.255.9.2:0", "transport": "10.255.9.2", "discovery": "Vlanif10"},
+        ],
+        "display mpls ldp session": [
+            {"peer_id": "10.255.9.2:0", "status": "Operational"},
+            {"peer_id": "10.255.9.9:0", "status": "Operational"},
+        ],
+    }) == [{"peer_id": "10.255.9.2", "estado": "up"}]

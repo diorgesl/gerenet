@@ -41,8 +41,11 @@ COLLECTORS = {
         "merge": "bgp_peers_detalhes",
     },
     "mpls_ldp_peer": {
-        "commands": ["display mpls ldp peer"],
-        "parsers": {"display mpls ldp peer": "mpls_ldp_peer"},
+        "commands": ["display mpls ldp peer", "display mpls ldp session"],
+        "parsers": {
+            "display mpls ldp peer": "mpls_ldp_peer",
+            "display mpls ldp session": "mpls_ldp_session",
+        },
         "merge": "mpls_ldp_peer",
     },
     "l2vc": {

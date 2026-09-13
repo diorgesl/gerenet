@@ -36,7 +36,9 @@ SAIDAS = {
     "display bgp ipv6 peer": _texto_fixture("ne8000_display_bgp_ipv6_peer.txt"),
     # MPLS (fase 4 T9): saída vazia nos fakes — parse de vazio tolerado ([]),
     # sem quebrar a coleta fake (KeyError em SAIDAS derruba o recurso).
+    # `display mpls ldp session` entra no recurso mpls_ldp_peer (fase 4 parte 2).
     "display mpls ldp peer": "",
+    "display mpls ldp session": "",
     "display mpls l2vc": "",
     "display vsi verbose": "",
 }
