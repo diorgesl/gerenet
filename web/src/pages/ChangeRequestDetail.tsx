@@ -30,11 +30,11 @@ function rotuloObjeto(cr: ChangeRequestOut): string {
   return cr.circuit_id !== null ? `#${cr.circuit_id}` : (cr.l2vc_name ?? cr.upstream_name ?? "—");
 }
 
-// Escopos com Reconciliar/Rollback: o fluxo existe no serviço/API/CLI para
-// circuito e upstream — o l2vc/vsi ainda não (rollback/reconciliação
-// circuitocêntricos; truncamento deliberado, risco S2-1 da fase 4).
+// Escopos com Reconciliar/Rollback: circuito, l2vc e upstream têm o fluxo no
+// serviço, na API e na CLI. O vsi entra quando o provisionamento multiponto
+// existir (frente seguinte à fase 4).
 function escopoComFluxo(cr: ChangeRequestOut): boolean {
-  return cr.escopo === "circuito" || cr.escopo === "upstream";
+  return cr.escopo === "circuito" || cr.escopo === "l2vc" || cr.escopo === "upstream";
 }
 
 const CONFIRMACOES: Record<string, { titulo: string; mensagem: string }> = {
@@ -56,7 +56,7 @@ const CONFIRMACOES: Record<string, { titulo: string; mensagem: string }> = {
   },
   rollback: {
     titulo: "Gerar rollback?",
-    mensagem: "Uma nova CR inversa (aguardando_aprovacao) será criada a partir do snapshot anterior à mudança.",
+    mensagem: "Uma nova CR inversa (aguardando_aprovacao) será criada para desfazer a mudança.",
   },
 };
 

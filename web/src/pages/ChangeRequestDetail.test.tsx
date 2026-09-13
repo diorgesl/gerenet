@@ -130,10 +130,12 @@ describe("ChangeRequestDetail", () => {
     expect(screen.queryByText("#null")).toBeNull();
   });
 
-  it("não mostra rollback/reconciliar para CR de escopo l2vc (circuito mantém)", async () => {
-    // parcial é o modo de falha desenhado do L2VC: onde o operador acharia o
-    // beco sem saída — os botões são truncados para o escopo l2vc (risco S2-1).
-    crAtual = { ...crDe(2, "parcial"), circuit_id: null, escopo: "l2vc", l2vc_id: 1, l2vc_name: "L2VC-0001" };
+  it("não mostra rollback/reconciliar para CR de escopo vsi (circuito mantém)", async () => {
+    // o vsi segue truncado até o provisionamento multiponto existir (a frente
+    // seguinte); o l2vc deixou de ser truncado quando o rollback/reconciliação
+    // chegaram ao serviço/API/CLI. parcial é o modo de falha desenhado onde o
+    // operador acharia o beco sem saída (risco S2-1).
+    crAtual = { ...crDe(2, "parcial"), circuit_id: null, escopo: "vsi", l2vc_id: null, l2vc_name: null };
     const { unmount } = renderDetail();
     expect(await screen.findByText("Change request #1")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Gerar rollback" })).toBeNull();
@@ -164,5 +166,35 @@ describe("ChangeRequestDetail", () => {
     expect(await screen.findByText("Change request #1")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Gerar rollback" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reconciliar" })).toBeInTheDocument();
+  });
+
+  it("mostra Gerar rollback numa CR de escopo l2vc aplicada", async () => {
+    crAtual = {
+      ...crDe(2, "aplicado"),
+      circuit_id: null, escopo: "l2vc", l2vc_id: 1, l2vc_name: "L2VC-0001",
+    };
+    renderDetail();
+    await screen.findByText("Change request #1");
+    expect(screen.getByRole("button", { name: "Gerar rollback" })).toBeInTheDocument();
+  });
+
+  it("mostra Reconciliar numa CR de escopo l2vc com erro", async () => {
+    crAtual = {
+      ...crDe(2, "erro"),
+      circuit_id: null, escopo: "l2vc", l2vc_id: 1, l2vc_name: "L2VC-0001",
+    };
+    renderDetail();
+    await screen.findByText("Change request #1");
+    expect(screen.getByRole("button", { name: "Reconciliar" })).toBeInTheDocument();
+  });
+
+  it("não mostra Reconciliar numa CR de escopo vsi com erro", async () => {
+    crAtual = {
+      ...crDe(2, "erro"),
+      circuit_id: null, escopo: "vsi", l2vc_id: null, l2vc_name: null,
+    };
+    renderDetail();
+    await screen.findByText("Change request #1");
+    expect(screen.queryByRole("button", { name: "Reconciliar" })).toBeNull();
   });
 });
