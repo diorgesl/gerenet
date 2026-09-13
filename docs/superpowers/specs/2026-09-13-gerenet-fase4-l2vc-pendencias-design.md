@@ -23,7 +23,7 @@ Três entregas, na ordem em que destravam uma à outra:
 Fora de escopo: provisionamento VSI multiponto e o rollback/reconciliação de
 escopo `vsi` (Frente B); correção da derivação por baseline no rollback do escopo
 `circuito`, que é dívida do ciclo D registrada na §9; mudanças de UI no fluxo de
-CR além do portão de `escopoComFluxo` (§4.5).
+CR além do portão de `escopoComFluxo` (§4.6).
 
 ## 2. Contexto (verificado em 2026-09-13)
 
@@ -138,7 +138,7 @@ contém o VC, então a derivação pelo baseline produziria plano vazio e o
 - `provision` aplicado ⇒ filho `remove` com `plan_remocao_l2vc`, que só emite
   bloco para a ponta cujo VC consta no snapshot;
 - `remove` aplicado ⇒ filho `provision` com `plan_provision_l2vc`;
-- ponta que não aplicou não gera bloco, e o step fecha como `pulado` na execução;
+- ponta que não aplicou não gera bloco e não ganha step no filho;
 - o re-diff de execução continua sendo a rede de segurança, e a idempotência vem
   dele.
 
@@ -152,21 +152,39 @@ Duas guardas valem para o rollback do L2VC:
   nada persiste;
 - se nenhum step aplicado gerar bloco (nada do serviço consta no encontrado
   atual), vale o `PlanoRollbackVazio`: nada persiste e a mensagem manda fazer
-  manualmente. Step de ponta específica sem bloco não aciona essa guarda, porque
-  o filho tem conteúdo nas outras.
+  manualmente.
 
 O `plan_remocao_l2vc` exige snapshot com o recurso `l2vc` e devolve
 `ValidationError` quando não há, então o rollback de uma CR de provision também
 depende da coleta estar em dia. É o mesmo requisito da CR de remoção explícita, e
 a mensagem já orienta a coletar antes.
 
-### 4.4 Permissões e aprovação
+### 4.4 Correção do rollback de CR de remoção (circuito e upstream)
+
+Defeito encontrado na leitura do código em 2026-09-13 e corrigido nesta frente,
+por decisão do usuário. Em `gerar_rollback`, o ramo de CR pai com `acao="remove"`
+monta os steps do filho com `_replaneja(cr_pai)`, que devolve o plano da ação do
+**pai** (`plan_remocao`, blocos `acao="delete"` com comandos `undo ...`). O filho
+nasce com `acao="provision"` e executa remoção outra vez, o que contradiz a
+docstring da própria função ("remove → provision re-renderizado do desejado") e
+o §12.4.
+
+Correção: o filho é planejado com a ação inversa à do pai, nos três escopos. Para
+isso o `_replaneja` passa a aceitar a ação como parâmetro opcional (`acao=None`
+mantém o comportamento atual, usado pelo `reconciliar`), e o `gerar_rollback`
+chama com a ação do filho. O rollback de `provision` não muda: continua derivando
+da evidência do baseline no circuito e do encontrado atual no L2VC.
+
+Testes: rollback de uma CR de remoção aplicada gera filho `provision` cujos
+blocos são de criação, em circuito e em upstream.
+
+### 4.5 Permissões e aprovação
 
 Nada muda. O filho nasce em `aguardando_aprovacao` e obedece à mesma regra de
 aprovador diferente do solicitante do filho. Papel `operator` cria, `aprovador`
 aprova, `executor` executa.
 
-### 4.5 Web
+### 4.6 Web
 
 `escopoComFluxo` (`web/src/pages/ChangeRequestDetail.tsx`) passa a devolver
 `true` para `l2vc`, o que libera os botões "Reconciliar" e "Gerar rollback". O
@@ -221,6 +239,9 @@ Automatizados (padrão do repo):
   CR sem step aplicado ⇒ erro e nada persistido.
 - **Reconciliação**: CR `l2vc` em `erro` recomputa só as pontas pendentes e volta
   a `aguardando_aprovacao`; `vsi` continua barrado com a mensagem da Frente B.
+- **Rollback de remoção (§4.4)**: CR de circuito e CR de upstream com
+  `acao="remove"` aplicadas geram filho `provision` com blocos de criação, não
+  com os `undo` do pai.
 - **Web**: Vitest do botão de rollback e do de reconciliação numa CR de escopo
   `l2vc`.
 
@@ -252,6 +273,10 @@ O roteiro de rollback e reconciliação com esse L2VC de teste entra no runbook.
    ao escopo `circuito` registrada e a dívida deste último mantida na §9.
 5. **MTU comparado com o configurado**, com a ressalva de campo da §5 e a decisão
    final tomada na etapa 1 do runbook.
+6. **Correção do rollback de CR de remoção entra nesta frente** (usuário,
+   2026-09-13): em vez de virar dívida, o defeito do §4.4 é corrigido junto, já
+   que o `gerar_rollback` é tocado de qualquer forma e o rollback do L2VC precisa
+   nascer com a semântica certa.
 
 ## 9. Dívidas registradas
 
@@ -262,5 +287,8 @@ O roteiro de rollback e reconciliação com esse L2VC de teste entra no runbook.
 - **VSI multiponto** (Frente B): ACs por ponta, render, CR de escopo `vsi` com N
   steps, pós-check por pseudowire e AC, MAC learning. O rollback e a
   reconciliação de `vsi` continuam indisponíveis até lá.
+- **Rollback de `remove` em circuito e upstream**: o defeito do plano invertido
+  foi corrigido nesta frente (§4.4). O que fica de fora é a derivação por
+  baseline do rollback de `provision`, descrita no item acima.
 - **Evidência pendente do runbook**: o `display l2vc` sem o prefixo `mpls` e o
   comportamento do `display mpls ldp session` em outras versões de VRP.
