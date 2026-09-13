@@ -214,14 +214,18 @@ def test_rollback_l2vc_remocao_gera_filho_provision(db_session, l2vc):
 
 
 def test_rollback_l2vc_sem_encontrado_eh_plano_vazio(db_session, l2vc):
-    """Nada do serviço consta na coleta: nada persiste (PlanoRollbackVazio)."""
+    """Nada do serviço consta na coleta: nada persiste (PlanoRollbackVazio).
+
+    F5 (revisão final): a mensagem é do escopo — no l2vc a causa é a coleta
+    atual, não um baseline ausente (o filho deriva do encontrado).
+    """
     from gerenet.domain.services.change_requests import gerar_rollback
     from gerenet.domain.services.errors import PlanoRollbackVazio
     d1, d2, svc = l2vc
     _snapshot(db_session, d1, _recursos("10GE0/0/1", []))
     _snapshot(db_session, d2, _recursos("10GE0/0/2", []))
     cr = _cr_aplicada(db_session, svc, "provision", {d1.id, d2.id})
-    with pytest.raises(PlanoRollbackVazio):
+    with pytest.raises(PlanoRollbackVazio, match="Nada do serviço consta na coleta atual"):
         gerar_rollback(db_session, cr.id, ator_id=None, actor="cli")
 
 
@@ -240,6 +244,70 @@ def test_reconciliar_l2vc_recomputa_ponta_pendente(db_session, l2vc):
     assert pendente.status == "pendente"
     assert pendente.erro is None
     assert pendente.plano_json
+
+
+def test_reconciliar_l2vc_barra_servico_desativado(db_session, l2vc):
+    """F2 (revisão final): serviço desativado depois do plano ⇒ reconciliação recusa.
+
+    Sem o guard, `_replaneja` replanejava o desejado de um serviço que o
+    operador considera desligado — mesmo ConflictError da criação de CR.
+    """
+    from gerenet.domain.services.change_requests import reconciliar
+    from gerenet.domain.services.errors import ConflictError
+    from gerenet.domain.services.mpls import set_l2vc_status
+    d1, d2, svc = l2vc
+    _snapshot(db_session, d1, _recursos("10GE0/0/1", []))
+    _snapshot(db_session, d2, _recursos("10GE0/0/2", []))
+    cr = _cr_aplicada(db_session, svc, "provision", {d1.id})  # d2 ficou pendente
+    cr.status = "erro"
+    db_session.commit()
+    set_l2vc_status(db_session, svc.id, admin_status=False, actor="cli")
+    with pytest.raises(ConflictError, match="Serviço L2VC desativado não recebe mudanças"):
+        reconciliar(db_session, cr.id, actor="cli")
+
+
+def test_rollback_l2vc_barra_servico_desativado(db_session, l2vc):
+    """F2 (revisão final): o filho do rollback não recria o VC de um serviço off.
+
+    Sequência do achado: CR criada com o serviço ativo → serviço desativado →
+    CR de remoção aplicada → rollback. Sem o guard, o filho provisionava o AC
+    de volta num serviço que o operador acredita desligado.
+    """
+    from gerenet.domain.services.change_requests import gerar_rollback
+    from gerenet.domain.services.errors import ConflictError
+    from gerenet.domain.services.mpls import set_l2vc_status
+    d1, d2, svc = l2vc
+    _snapshot(db_session, d1, _recursos("10GE0/0/1", [
+        {"vc_id": 500, "interface": "10GE0/0/1", "estado": "up"},
+    ]))
+    _snapshot(db_session, d2, _recursos("10GE0/0/2", [
+        {"vc_id": 500, "interface": "10GE0/0/2", "estado": "up"},
+    ]))
+    cr = _cr_aplicada(db_session, svc, "remove", {d1.id, d2.id})
+    # coleta pós-execução (o VC sumiu): o filho provision tem o que criar
+    _snapshot(db_session, d1, _recursos("10GE0/0/1", []))
+    _snapshot(db_session, d2, _recursos("10GE0/0/2", []))
+    set_l2vc_status(db_session, svc.id, admin_status=False, actor="cli")
+    with pytest.raises(ConflictError, match="Serviço L2VC desativado não recebe mudanças"):
+        gerar_rollback(db_session, cr.id, ator_id=None, actor="cli")
+
+
+def test_rollback_l2vc_barra_dominio_desativado(db_session, l2vc):
+    """F2: o domínio desativado também barra o filho (mesma guarda da criação)."""
+    from gerenet.domain.services.change_requests import gerar_rollback
+    from gerenet.domain.services.errors import ConflictError
+    d1, d2, svc = l2vc
+    _snapshot(db_session, d1, _recursos("10GE0/0/1", [
+        {"vc_id": 500, "interface": "10GE0/0/1", "estado": "up"},
+    ]))
+    _snapshot(db_session, d2, _recursos("10GE0/0/2", [
+        {"vc_id": 500, "interface": "10GE0/0/2", "estado": "up"},
+    ]))
+    cr = _cr_aplicada(db_session, svc, "provision", {d1.id, d2.id})
+    svc.domain.admin_status = False  # desativado depois do plano
+    db_session.commit()
+    with pytest.raises(ConflictError, match="Domínio MPLS dom-cr desativado não recebe mudanças"):
+        gerar_rollback(db_session, cr.id, ator_id=None, actor="cli")
 
 
 def test_rollback_e_reconciliar_de_vsi_seguem_indisponiveis(db_session):

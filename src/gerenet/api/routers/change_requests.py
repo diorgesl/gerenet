@@ -142,7 +142,9 @@ def executar(cr_id: int, session: SessionDep, executor: ExecutorDep) -> dict:
 def rollback(cr_id: int, session: SessionDep, actor: Annotated[Actor, Depends(require_actor)]) -> object:
     """Novo CR inverso em aguardando_aprovacao. Nota T4 review: filho sem steps
     (nenhum step aplicado com baseline) ≠ rollback automático — o serviço
-    rejeita antes do commit (sem CR órfã); 422, sem inventar comandos (§5.2)."""
+    rejeita antes do commit (sem CR órfã); 422, sem inventar comandos (§5.2).
+    Estado que recusa o replanejamento (ex.: upstream desativado pela própria
+    remoção aplicada) ⇒ 409 — o operador reativa e repete."""
     try:
         return svc.gerar_rollback(
             session,
@@ -152,6 +154,8 @@ def rollback(cr_id: int, session: SessionDep, actor: Annotated[Actor, Depends(re
         )
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except PlanoRollbackVazio as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ValidationError as exc:
@@ -162,9 +166,13 @@ def rollback(cr_id: int, session: SessionDep, actor: Annotated[Actor, Depends(re
 def reconciliar(
     cr_id: int, session: SessionDep, actor: Annotated[Actor, Depends(require_actor)]
 ) -> object:
+    """Recomputa os steps não aplicados. Estado que recusa o replanejamento
+    (ex.: upstream ou serviço L2VC desativado desde o plano) ⇒ 409."""
     try:
         return svc.reconciliar(session, cr_id, actor=actor.nome)
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

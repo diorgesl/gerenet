@@ -115,6 +115,20 @@ def create_change_request(
     return cr
 
 
+def _exige_l2vc_ativo(svc: models.L2vcService) -> None:
+    """Serviço e domínio ativos — desativado não recebe mudanças (§14.1).
+
+    Guarda única do escopo l2vc: a criação de CR e o replanejamento
+    (reconciliação e filho do rollback) passam por aqui — sem ela o plano
+    sairia de um serviço que o operador considera desligado.
+    """
+    if not svc.admin_status:
+        raise ConflictError("Serviço L2VC desativado não recebe mudanças.")
+    dom = svc.domain
+    if not dom.admin_status:
+        raise ConflictError(f"Domínio MPLS {dom.name} desativado não recebe mudanças.")
+
+
 def _create_l2vc(
     session: Session, data: schemas.ChangeRequestCreate, *, ator_id: int | None = None, actor: str = "cli",
 ) -> models.ChangeRequest:
@@ -124,11 +138,7 @@ def _create_l2vc(
     from gerenet.domain.services.mpls import get_l2vc
 
     servico = get_l2vc(session, data.l2vc_id)  # NotFoundError propaga (404)
-    if not servico.admin_status:
-        raise ConflictError("Serviço L2VC desativado não recebe mudanças.")
-    dom = servico.domain
-    if not dom.admin_status:
-        raise ConflictError(f"Domínio MPLS {dom.name} desativado não recebe mudanças.")
+    _exige_l2vc_ativo(servico)
     plano = (
         l2vc_auto.plan_provision_l2vc(session, servico)
         if data.acao == "provision"
@@ -340,6 +350,7 @@ def _replaneja(
         from gerenet.domain.services.mpls import get_l2vc
 
         svc = get_l2vc(session, cr.l2vc_id)
+        _exige_l2vc_ativo(svc)  # serviço/domínio off desde o plano: recusa (F2)
         plano = (
             l2vc_auto.plan_provision_l2vc(session, svc)
             if acao == "provision"
@@ -470,11 +481,17 @@ def gerar_rollback(
                 aviso=item.aviso,
             ))
     if not filho.steps:
-        # Tudo pulado por baseline ausente (§5.2): NADA persiste — sem CR
-        # órfã (a sessão descartada pelo get_db descarta o filho non-commitado).
+        # Tudo pulado (§5.2): NADA persiste — sem CR órfã (a sessão descartada
+        # pelo get_db descarta o filho non-commitado). A causa muda com o
+        # escopo e a mensagem acompanha: no l2vc o plano sai da COLETA ATUAL
+        # (nada do serviço no encontrado), nos demais do baseline do step.
+        causa = (
+            "Nada do serviço consta na coleta atual"
+            if cr.escopo == "l2vc"
+            else "Sem steps aplicados com baseline"
+        )
         raise PlanoRollbackVazio(
-            "Sem steps aplicados com baseline — rollback automático indisponível; "
-            "faça manualmente."
+            f"{causa} — rollback automático indisponível; faça manualmente."
         )
     registrar(
         session, tipo="change.rollback_created", ator=actor, objeto="change_request",
