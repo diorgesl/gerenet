@@ -198,7 +198,7 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   TextFSM de `display mpls ldp peer`/`display mpls l2vc`/`display vsi verbose`
   (formatos validados em S6730 real — família S: peers em tabela SEM estado,
   L2VC em blocos por VC, VSI só com ID no verbose; o estado do par LDP vem de
-  `display mpls ldp session`, ainda não coletado) + sincronização
+  `display mpls ldp session`, coletado na Fase 4, parte 2) + sincronização
   na SoT pós-coleta (`sincronizar_mpls`); web `/mpls/domains`,
   `/mpls/l2vc`, `/mpls/vsi` (lista/detalhe com "Solicitar mudança") e fumo
   `web/e2e/mpls.spec.ts`. Comandos de teste: `uv run pytest -q`,
@@ -209,13 +209,27 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   2026-09-07). Etapa 1 validada em S6730 real em 2026-09-08: parsers ajustados
   aos formatos reais (fixtures `tests/fixtures/huawei_vrp/s6730_*`), coletor
   passou a usar `display mpls l2vc` e `display vsi verbose`, estado do par LDP
-  fica `None` ("desconhecido") sem `display mpls ldp session` — evidência ainda
-  pendente: sessão LDP (estado do par) e confirmação do `display l2vc` sem
-  `mpls`. Atenção: rollback e reconciliação de CR de escopo `l2vc` ainda
-  não são automatizados (`gerar_rollback`/`reconciliar` são circuitocêntricos
-  — 400 guardado na API) — reversão/recomposição via CR de remoção aprovada
-  (`--acao remove`) ou CR de provision nova (o re-diff aplica só a ponta
-  ausente), conforme o runbook.
+  ficava `None` ("desconhecido") sem `display mpls ldp session` — evidência
+  pendente na ocasião: sessão LDP (estado do par, coletada na Fase 4, parte 2) e
+  confirmação do `display l2vc` sem `mpls`. Atenção: nessa fase o rollback e a
+  reconciliação de CR de escopo `l2vc` ainda não existiam
+  (`gerar_rollback`/`reconciliar` eram circuitocêntricos — 400 guardado na API)
+  — reversão/recomposição via CR de remoção aprovada (`--acao remove`) ou CR de
+  provision nova (o re-diff aplica só a ponta ausente), conforme o runbook;
+  ambas passaram a existir na Fase 4, parte 2 (bullet seguinte).
+- Fase 4, parte 2 (pendências do L2VC, 2026-09-13): a coleta do recurso
+  `mpls_ldp_peer` passou a rodar também `display mpls ldp session` (parser
+  `mpls_ldp_session`, merge cruzando por `PeerID` sem o `:0`), o que destrava o
+  pré-check do L2VC que antes parava em "estado desconhecido"; o rollback e a
+  reconciliação de CR de escopo `l2vc` passaram a existir (`gerar_rollback`
+  deriva o plano da **coleta atual** e o `_replaneja` aceita a ação como
+  parâmetro), e a web mostra os botões para esse escopo; o parser de L2VC passou
+  a extrair `AC status` e MTU local/remoto e o pós-check a validá-los
+  (`l2vc.ac`, `l2vc.mtu`, `l2vc.mtu_simetria`, todos `atencao`, com o MTU só
+  conferido com o VC de pé). Corrigido de passagem: o rollback de CR de remoção
+  (circuito e upstream) planejava o filho com a ação do pai e recebia blocos
+  `delete`. O provisionamento VSI multiponto segue como frente seguinte
+  (rollback/reconciliação de `vsi` continuam indisponíveis).
 - Fase 5 (upstreams): organizações com `kind='operadora'` (ASN + IRR AS-SET)
   e upstreams com tipo (`transito`/`ix`/`pni`/`contingencia`), capacidade,
   prioridade/custo, prefixos esperados v4/v6 e margem do maximum-prefix;
@@ -257,7 +271,8 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   na criação), pré-check (`bgp_peers`, ASN conflitante, sessão no device) e
   pós-check (peer + Established + contagem dentro de esperado × (1 ± margem))
   — rollback (`gerenet change-requests rollback`) e reconciliar
-  **disponíveis** para upstream (ao contrário do l2vc/vsi). Web: `/upstreams`
+  **disponíveis** para upstream (ao contrário do `l2vc`/`vsi` naquele ciclo —
+  o `l2vc` ganhou os dois na Fase 4, parte 2). Web: `/upstreams`
   + `/upstreams/:id` (detalhe com a matriz principal × contingência e
   "Solicitar mudança") e fumo `web/e2e/upstream.spec.ts` (org operadora pela
   UI, upstream, community, vínculo e CR aprovada pelo `e2e-aprovador`;
