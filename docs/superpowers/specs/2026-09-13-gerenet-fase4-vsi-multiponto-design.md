@@ -154,7 +154,11 @@ cada comando emitido a mais é superfície de erro sem contrapartida.
 **Plano.** `plan_provision_vsi` e `plan_remocao_vsi` seguem o L2VC: render por
 device, diff bloco × snapshot da última coleta (`bloco presente ⇒ skip`, sem
 snapshot confiável ⇒ aviso), um `PlanoDevice` por PE. A identidade do bloco do
-VSI é o nome VRP e a do AC é o par (Vlanif, `l2 binding vsi <nome>`).
+VSI é o nome VRP; a do AC é a `Vlanif<vid>`, e não o par (Vlanif, `l2 binding
+vsi <nome>`): o snapshot não carrega o nome do VSI ligado ao AC (o `display`
+não o mostra), então o par não é avaliável. Daí `estado_bloco_vsi` nunca
+devolver `"conflito"` e um binding de outro serviço na mesma Vlanif aparecer
+como `consta` — quem barra esse caso é o pré-check (§6).
 
 **Remoção** (decisão do usuário em 2026-09-13): por PE, `undo l2 binding vsi
 <nome>` no contexto da Vlanif e depois `undo vsi <nome>`, nessa ordem, porque o
@@ -192,8 +196,11 @@ quando o escopo é `vsi`:
 - a Vlanif da ponta não pode ter `l2 binding vsi` de outro serviço: se o
   encontrado mostrar binding para nome VRP diferente, o step falha antes de
   tocar o equipamento;
-- a simetria do serviço é conferida na SoT (todos os membros com endpoint e o
-  mesmo MTU quando definido), revalidada na execução como no L2VC.
+- a simetria do serviço é conferida na SoT e revalidada na execução, como no
+  L2VC: todo membro do serviço tem a sua ponta, e são pelo menos dois. O MTU
+  não entra na conferência: no VSI ele é campo do serviço (um só, não um por
+  ponta) e o AC não o renderiza, então não há o par de MTUs do L2VC para
+  comparar — quem compara com o coletado é o pós-check.
 
 ## 7. Coleta, parser e pós-check
 
@@ -238,6 +245,10 @@ e outra por ponta.
 | AC de uma ponta fora de `up` | `atencao` | conferir o `l2 binding` e a Vlanif |
 | MTU do VSI diferente do configurado | `atencao` | conferir o `mtu` do serviço e reaplicar |
 
+O item de MTU roda **sempre**, e não só com o VSI de pé: o `MTU` do `display`
+é o configurado do VSI, e a fixture real mostra VSI `down` ainda imprimindo o
+dele (diferente do `local VC MTU` do L2VC, que vem `0` com o VC caído).
+
 ## 8. Web e CLI
 
 - **Detalhe do VSI** (`/mpls/vsi/:id`): lista de ACs com equipamento, Vlanif,
@@ -270,9 +281,11 @@ Automatizados (padrão do repo):
   VSI aplicado gerando o filho de remoção; rollback de remoção gerando
   provisionamento; `PlanoRollbackVazio` quando nada consta.
 - **Pré-check**: peer LDP up libera, `down` bloqueia, `None` bloqueia com a
-  mensagem de coleta, binding de outro VSI na mesma Vlanif bloqueia.
-- **Pós-check**: os cinco itens da tabela da §7, com o MTU só conferido quando
-  o VSI está de pé.
+  mensagem de coleta, binding de outro VSI na mesma Vlanif bloqueia, e membro
+  sem ponta bloqueia com o "revalide o serviço".
+- **Pós-check**: os cinco itens da tabela da §7, com o MTU conferido também
+  com o VSI fora de `up` (o `display` imprime o MTU configurado do VSI nos
+  dois casos).
 - **Web**: Vitest do detalhe do VSI com ACs e do botão numa CR de escopo `vsi`.
 - **API e CLI**: criação de CR `--escopo vsi`, 409 nos conflitos e o
   `--endpoint` repetível.

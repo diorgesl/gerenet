@@ -130,8 +130,12 @@ def plan_remocao_vsi(session: Session, service: models.VsiService) -> list[chang
         snap = changes._ultimo_snapshot_ok(session, device_id)
         recursos, tem = _recursos_snapshot(snap)
         if not tem:
+            # com 3+ PEs a mensagem sem o nome não diz QUAL switch coletar
+            dev = session.get(models.Device, device_id)
+            nome = dev.name if dev is not None else f"device {device_id}"
             raise ValidationError(
-                "Sem snapshot recente com 'vsi' para gerar a remoção — colete antes (§5.2)."
+                f"Sem snapshot recente com 'vsi' no {nome} para gerar a remoção — "
+                "colete antes (§5.2)."
             )
         a_remover: list[dict] = []
         por_tipo = {b.tipo: b for b in blocos}
@@ -160,7 +164,21 @@ def plan_remocao_vsi(session: Session, service: models.VsiService) -> list[chang
 def valida_pre_checks_vsi(
     session: Session, service: models.VsiService, device: models.Device, recursos: dict,
 ) -> str | None:
-    """§12.2/§9.2 — sessão LDP UP com cada peer, sem binding alheio na Vlanif."""
+    """§12.2/§9.2 — sessão LDP UP com cada peer, sem binding alheio na Vlanif.
+
+    A simetria da SoT vem antes das checagens de equipamento (no L2VC ela fica
+    no fim): aqui ela é a cobertura de membros, e é ela que dá a mensagem certa
+    quando o serviço está malformado — sem isso o `_peers` abaixo estouraria
+    antes, com um erro de outra natureza.
+    """
+    # simetria (SoT §6): todo membro do serviço tem a sua ponta, e são pelo
+    # menos dois. O MTU fica fora da comparação: no VSI ele é campo do serviço
+    # (um só, não um por ponta) e o AC não o renderiza, então não há o par de
+    # MTUs do L2VC — quem compara com o coletado é o pós-check.
+    if len(service.members) < 2:
+        return "VSI com menos de dois membros — revalide o serviço."
+    if len(service.endpoints) != len(service.members):
+        return "VSI com membro sem ponta — revalide o serviço."
     peers = _peers(session, service, device.id)
     ldp = recursos.get("mpls_ldp_peer")
     if ldp is None:
