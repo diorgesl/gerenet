@@ -1,0 +1,8 @@
+vsi {{ vrp_name }} static
+{% if description %} description {{ description }}
+{% endif %} pwsignal ldp
+  vsi-id {{ vsi_id }}
+{% if flow_label %}  flow-label both
+{% endif %}{% for peer in peers %}  peer {{ peer }}
+{% endfor %}{% if mtu %} mtu {{ mtu }}
+{% endif %}
