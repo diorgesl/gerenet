@@ -226,6 +226,11 @@ Duas notas de honestidade:
   equipamento sem snapshot não emite `gerenet_snapshot_age_seconds` (ausência de
   série é diferente de zero), e o mesmo vale para quem não tem resumo de
   divergência, que aparece na contagem de `gerenet_devices_sem_resumo`.
+- Emenda (revisão de branch): `gerenet_devices_sem_resumo` conta **só** quem tem
+  snapshot, então equipamento **nunca coletado** não aparece em contagem nenhuma
+  do `/metrics` — nem nessa, nem nas de severidade. E o campo `parcial` do resumo
+  **não** é publicado como série: o card do dashboard o mostra, e o porquê de não
+  virar painel está no runbook de observabilidade.
 
 **Custo por scrape.** N consultas de snapshot mais recente (uma por
 equipamento), três agregações e as duas consultas de fila no Redis, no mesmo
@@ -284,6 +289,12 @@ lá.
 - **Sem resumo não é zero.** Equipamento coletado antes desta frente entra em
   `devices_sem_resumo` e o card diz "N sem resumo" em vez de somar zero, que
   afirmaria uma rede sem divergências onde ninguém olhou.
+- **Nunca coletado também não é zero** (emenda da revisão de branch). O LED do
+  bloco fica âmbar não só com divergência de atenção/aviso, snapshot sem resumo
+  ou comparação parcial: também quando `devices.with_snapshot < devices.total`,
+  que é o caso da instalação nova — equipamentos cadastrados e nenhum coletado,
+  que sem isso leria "0 divergências" verde. A nota do card traz essa contagem
+  ("N equipamento(s) sem coleta"), junto das de parcial e sem resumo.
 
 ## 8. Testes
 
