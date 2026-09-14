@@ -36,7 +36,10 @@ def _detalhe(session: Session, circ: models.Circuit) -> CircuitDetailOut:
             )
         )
     )
-    por_versao = {ipaddress.ip_network(linha.network).version: linha.network for linha in linhas}
+    por_versao = {
+        ipaddress.ip_network(linha.network).version: (linha.network, linha.ponta_local)
+        for linha in linhas
+    }
     pontas: dict[str, str | None] = {
         "ipv4_local": None,
         "ipv4_remote": None,
@@ -44,9 +47,11 @@ def _detalhe(session: Session, circ: models.Circuit) -> CircuitDetailOut:
         "ipv6_remote": None,
     }
     if circ.stack in ("ipv4", "dual") and 4 in por_versao:
-        pontas["ipv4_local"], pontas["ipv4_remote"] = pontas_v4(por_versao[4])
+        rede, orientacao = por_versao[4]
+        pontas["ipv4_local"], pontas["ipv4_remote"] = pontas_v4(rede, orientacao)
     if circ.stack in ("ipv6", "dual") and 6 in por_versao:
-        pontas["ipv6_local"], pontas["ipv6_remote"] = pontas_v6(por_versao[6])
+        rede, orientacao = por_versao[6]
+        pontas["ipv6_local"], pontas["ipv6_remote"] = pontas_v6(rede, orientacao)
     # R-25: vínculo com upstream — a UNIQUE em upstream_circuits.circuit_id (BR-1 §7)
     # garante no máximo 1 upstream por circuito, então um scalar resolve.
     vinculo = session.scalar(

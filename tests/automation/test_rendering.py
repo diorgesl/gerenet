@@ -2,7 +2,7 @@
 import ipaddress
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from gerenet.domain import models
@@ -465,3 +465,38 @@ def test_circuito_liberado_nao_renderiza_subinterface(db_session: Session) -> No
 
     resultado = render_desejado(db_session, env["ne_id"])
     assert [b.tipo for b in resultado.blocos] == ["bgp_peer"], resultado.texto
+
+
+def test_subinterface_usa_a_ponta_superior_quando_a_linha_diz(db_session: Session) -> None:
+    """Circuito adotado com o roteador no endereço de cima (spec §7).
+
+    O helper do arquivo devolve o circuito reservado e o device; o endereço
+    esperado sai do banco, não de um literal escrito à mão.
+    """
+    from gerenet.automation.render import render_desejado
+
+    env = _ambiente(db_session)
+    circ_id = _circuito_reservado(db_session, env, code="CIRC-R-ORIENT")
+    db_session.execute(
+        update(models.IpPrefix).where(models.IpPrefix.circuit_id == circ_id).values(
+            ponta_local="superior"
+        )
+    )
+    db_session.commit()
+    redes = {
+        ipaddress.ip_network(n).version: n
+        for n in db_session.scalars(
+            select(models.IpPrefix.network).where(models.IpPrefix.circuit_id == circ_id)
+        )
+    }
+    esperado, remoto = pontas_v4(redes[4], "superior")
+    inferior = pontas_v4(redes[4], "inferior")[0]
+    # a sessão é o que leva o circuito ao render (render_desejado itera as
+    # sessões do device); ela nasce na ponta de cima, como no circuito adotado.
+    _sessao(db_session, env, circ_id, afi="ipv4", local_address=esperado, remote_address=remoto)
+    linhas = [
+        linha for bloco in render_desejado(db_session, env["ne_id"]).blocos
+        for linha in bloco.comandos
+    ]
+    assert any(linha.startswith(f"ip address {esperado} ") for linha in linhas)
+    assert not any(linha.startswith(f"ip address {inferior} ") for linha in linhas)

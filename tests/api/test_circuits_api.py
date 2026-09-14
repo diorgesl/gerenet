@@ -1,6 +1,8 @@
+import ipaddress
+
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from gerenet.api.main import create_app
@@ -313,3 +315,29 @@ def test_edge_trunk_maior_que_64_da_422(client: TestClient, db_session: Session)
     corpo["edge_trunk"] = "Eth-Trunk" + "9" * 56  # 65 chars no total
     resp = client.post("/api/v1/circuits", json=corpo, headers=_auth())
     assert resp.status_code == 422
+
+
+def test_detail_expoe_pontas_na_orientacao_da_linha(client: TestClient, db_session: Session) -> None:
+    """A orientação gravada na linha do enlace manda nas pontas do detalhe (§7)."""
+    env = _ambiente(db_session)
+    circ_id = client.post(
+        "/api/v1/circuits", json=_corpo(env, "CIRC-ORIENT"), headers=_auth()
+    ).json()["id"]
+    reserva = client.post(f"/api/v1/circuits/{circ_id}/reserve", headers=_auth())
+    assert reserva.status_code == 200, reserva.text
+
+    db_session.execute(
+        update(models.IpPrefix).where(models.IpPrefix.circuit_id == circ_id).values(
+            ponta_local="superior"
+        )
+    )
+    db_session.commit()
+    redes = {
+        int(ipaddress.ip_network(linha.network).version): linha.network
+        for linha in db_session.scalars(
+            select(models.IpPrefix).where(models.IpPrefix.circuit_id == circ_id)
+        )
+    }
+    corpo = client.get(f"/api/v1/circuits/{circ_id}", headers=_auth()).json()
+    assert corpo["ipv4_local"] == pontas_v4(redes[4], "superior")[0]
+    assert corpo["ipv6_local"] == pontas_v6(redes[6], "superior")[0]
