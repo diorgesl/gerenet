@@ -55,6 +55,13 @@ def _exige_afi(afi: str) -> None:
         raise typer.Exit(1)
 
 
+def _ignorado(session: Session, device_id: int, endereco: str) -> bool:
+    """O peer está na lista de ignorados deste equipamento (qualquer família)."""
+    canonico = endereco_canonico(endereco)
+    return any(endereco_canonico(linha.remote_address) == canonico
+               for linha in listar_ignorados(session, device_id))
+
+
 def _imprime_propostas(propostas) -> None:
     for proposta in propostas:
         alvo = proposta.subinterface or "sem enlace"
@@ -115,7 +122,9 @@ def listar(device: str = typer.Argument(..., help="ID ou nome do equipamento."))
         if resultado.aviso:
             typer.echo(f"Aviso: {resultado.aviso}")
         _imprime_propostas(resultado.propostas)
-        if not resultado.propostas and not internos:
+        if resultado.aviso is None and not resultado.propostas:
+            # Sem coleta a lista vazia não sustenta conclusão nenhuma: quem diz
+            # que não há peer é a leitura, e ela não aconteceu.
             typer.echo("Nenhum peer fora da SoT.")
         _imprime_internos(encontrado.name, internos)
         ignorados = listar_ignorados(session, encontrado.id)
@@ -138,6 +147,10 @@ def mostrar(
         except GerenetError as exc:
             typer.echo(f"Erro: {exc}", err=True)
             raise typer.Exit(1) from exc
+        if resultado.aviso:
+            # Sem coleta não há candidato lido: "não está entre os candidatos"
+            # mandaria o operador procurar o que ninguém leu ainda.
+            typer.echo(f"Aviso: {resultado.aviso}")
         # A comparação é pela forma canônica: o endereço do IPv6 sai do
         # equipamento em maiúsculas e o operador digita o que copiou da tela,
         # e os dois são o mesmo peer.
@@ -148,7 +161,14 @@ def mostrar(
             None,
         )
         if proposta is None:
-            typer.echo("Peer não está entre os candidatos.", err=True)
+            if _ignorado(session, encontrado.id, alvo):
+                typer.echo(
+                    f"O peer {peer} está na lista de ignorados do equipamento "
+                    f"{encontrado.name}: use `discovery unignore` para desfazer.",
+                    err=True,
+                )
+            else:
+                typer.echo("Peer não está entre os candidatos.", err=True)
             raise typer.Exit(1)
         _imprime_propostas([proposta])
         for diferenca in conferir_fidelidade(session, proposta):

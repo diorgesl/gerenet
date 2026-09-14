@@ -445,6 +445,12 @@ def _conflitos_de(
     O par de endereços é único por domínio/site, não por equipamento: dois POPs
     podem ter o mesmo `/31` privado legitimamente, então a sessão que conta é a
     DESTE equipamento — a de outro POP não fala deste enlace.
+
+    A conferência do par é pela forma canônica dos dois lados, e em Python:
+    `bgp_sessions` guarda o endereço como foi digitado (a escrita de sessão não
+    canonicaliza) e o par vem da configuração. Em SQL, um par escrito em outra
+    caixa não casaria e o aviso se perderia — o operador adotaria um enlace que
+    a SoT já tem. As sessões de um equipamento são poucas dezenas.
     """
     conflitos: list[Conflito] = []
     site_id = device.site_id
@@ -477,14 +483,18 @@ def _conflitos_de(
                 "prefixo_tomado",
                 f"O prefixo {rede} já está reservado para outro circuito neste site.",
             ))
-    em_uso = session.scalar(
-        select(models.BgpSession.id).where(
-            models.BgpSession.device_id == device.id,
-            models.BgpSession.local_address == local,
-            models.BgpSession.remote_address == remoto,
-            models.BgpSession.admin_status.is_(True),
+    alvo_local = endereco_canonico(local)
+    alvo_remoto = endereco_canonico(remoto)
+    em_uso = next((
+        sessao for sessao in session.scalars(
+            select(models.BgpSession).where(
+                models.BgpSession.device_id == device.id,
+                models.BgpSession.admin_status.is_(True),
+            )
         )
-    )
+        if endereco_canonico(sessao.local_address) == alvo_local
+        and endereco_canonico(sessao.remote_address) == alvo_remoto
+    ), None)
     if em_uso:
         # Sem qualificar o estado: a conferência olha a sessão da SoT, não o
         # `shutdown` do equipamento, e "ativa" afirmaria o que não foi lido.

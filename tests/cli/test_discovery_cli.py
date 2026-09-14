@@ -7,6 +7,8 @@ from gerenet.cli.main import app as cli_app
 from gerenet.domain import models
 from gerenet.domain.schemas import DeviceCreate, SiteCreate
 from gerenet.domain.services.devices import create_device
+from gerenet.domain.services.discovery import listar_ignorados
+from gerenet.domain.services.errors import ConflictError
 from gerenet.domain.services.sites import create_site, link_device
 
 runner = CliRunner()
@@ -92,6 +94,118 @@ def test_unignore_do_que_nao_foi_ignorado_avisa(db_session, tmp_path) -> None:
     r = runner.invoke(cli_app, ["discovery", "unignore", dev.name, "100.64.10.4"])
     assert r.exit_code == 0, r.output
     assert "não estava na lista" in r.output
+
+
+def test_afi_invalido_e_erro_de_cli(db_session, tmp_path) -> None:
+    """`--afi ipv44` para antes de qualquer escrita: sem o check o valor chegaria
+    ao Postgres, que o recusa com `DataError` (o enum deixa a string passar no
+    bind) — um traceback no operador."""
+    dev = _ambiente(db_session, tmp_path)
+    for comando in ("ignore", "unignore"):
+        r = runner.invoke(cli_app, [
+            "discovery", comando, dev.name, "100.64.10.4", "--afi", "ipv44",
+        ])
+        assert r.exit_code == 1, r.output
+        assert "Família inválida" in r.output
+    assert listar_ignorados(db_session, dev.id) == []
+
+
+def test_conflito_do_servico_vira_mensagem(db_session, tmp_path, monkeypatch) -> None:
+    """O `ConflictError` do serviço (corrida: o equipamento apagado entre a
+    conferência e o insert) não é traceback: sai mensagem e exit 1. Só é
+    alcançável por corrida, e é por isso que o teste força o serviço."""
+    dev = _ambiente(db_session, tmp_path)
+
+    def _estoura(*args, **kwargs):
+        raise ConflictError("a linha acabou de ser criada por outra requisição")
+
+    for comando, alvo in (
+        ("ignore", "gerenet.cli.discovery.ignorar_candidato"),
+        ("unignore", "gerenet.cli.discovery.esquecer_ignorado"),
+    ):
+        monkeypatch.setattr(alvo, _estoura)
+        r = runner.invoke(cli_app, ["discovery", comando, dev.name, "100.64.10.4"])
+        assert r.exit_code == 1, r.output
+        assert "Erro: a linha acabou de ser criada" in r.output
+        # `SystemExit` e não `ConflictError`: é o que separa mensagem de traceback.
+        assert isinstance(r.exception, SystemExit)
+
+
+def test_leitura_parcial_ainda_lista_propostas(db_session, tmp_path) -> None:
+    """`aviso` carrega dois estados, e o teste do equipamento sem coleta cobre um
+    só. Leitura parcial (cabeçalho de família fora do escopo) não pode zerar a
+    lista: quem manda parar é a ausência de coleta, não o aviso."""
+    site = create_site(db_session, SiteCreate(name="pop-cli-parcial",
+                                              p2p_ipv4_block="100.64.10.0/24"), actor="cli")
+    dev = create_device(db_session, DeviceCreate(name="ne-cli-parcial",
+                                                 management_address="10.0.0.6", asn=65001),
+                        actor="cli")
+    link_device(db_session, site.id, dev.id, actor="cli")
+    arquivo = tmp_path / "parcial.txt"
+    arquivo.write_text(
+        "interface Eth-Trunk127.6001\n"
+        " vlan-type dot1q 6001\n"
+        " ip address 100.64.10.0 255.255.255.254\n"
+        "#\n"
+        "bgp 65001\n"
+        " peer 100.64.10.1 as-number 64512\n"
+        " ipv4-family unicast\n"
+        "  peer 100.64.10.1 enable\n"
+        " ipv4-family multicast\n"
+        "  peer 10.0.0.9 enable\n",
+        encoding="utf-8",
+    )
+    db_session.add(models.DeviceSnapshot(device_id=dev.id, status="success",
+                                        raw_files={"config_backup": [str(arquivo)]}))
+    db_session.commit()
+
+    r = runner.invoke(cli_app, ["discovery", "list", dev.name])
+    assert r.exit_code == 0, r.output
+    assert "Aviso:" in r.output
+    assert "100.64.10.1" in r.output
+    assert "adotavel_com_pendencias" in r.output
+
+
+def test_aviso_nao_vira_conclusao_de_lista_vazia(db_session) -> None:
+    """Sem coleta o `list` não afirma "Nenhum peer fora da SoT.": a lista vazia
+    não é prova de borda sem peer, é falta de leitura (§4 do design)."""
+    site = create_site(db_session, SiteCreate(name="pop-cli-sem-conclusao"), actor="cli")
+    dev = create_device(db_session, DeviceCreate(name="ne-cli-sem-conclusao",
+                                                 management_address="10.0.0.8", asn=65001),
+                        actor="cli")
+    link_device(db_session, site.id, dev.id, actor="cli")
+    r = runner.invoke(cli_app, ["discovery", "list", dev.name])
+    assert r.exit_code == 0, r.output
+    assert "Aviso:" in r.output
+    assert "Nenhum peer fora da SoT." not in r.output
+
+
+def test_show_sem_coleta_avisa_antes_de_nao_encontrar(db_session) -> None:
+    """Sem coleta o `show` diz que falta coletar, em vez de "não está entre os
+    candidatos" — que faria o operador procurar o que ninguém leu."""
+    site = create_site(db_session, SiteCreate(name="pop-cli-show-sem-coleta"), actor="cli")
+    dev = create_device(db_session, DeviceCreate(name="ne-cli-show-sem-coleta",
+                                                 management_address="10.0.0.7", asn=65001),
+                        actor="cli")
+    link_device(db_session, site.id, dev.id, actor="cli")
+    r = runner.invoke(cli_app, ["discovery", "show", dev.name, "100.64.10.1"])
+    assert r.exit_code == 1, r.output
+    assert "Colete antes" in r.output
+
+
+def test_show_de_peer_ignorado_diz_que_esta_ignorado(db_session, tmp_path) -> None:
+    """O peer na lista de ignorados sai da lista de candidatos, e o `show` do
+    endereço dele respondia "não está entre os candidatos": a resposta honesta
+    é que ele está ignorado, e desfazer é o `unignore`."""
+    dev = _ambiente(db_session, tmp_path)
+    assert runner.invoke(cli_app, [
+        "discovery", "ignore", dev.name, "100.64.10.4", "--motivo", "cliente saiu",
+    ]).exit_code == 0
+
+    r = runner.invoke(cli_app, ["discovery", "show", dev.name, "100.64.10.4"])
+    assert r.exit_code == 1, r.output
+    assert "está na lista de ignorados" in r.output
+    assert "Peer não está entre os candidatos." not in r.output
 
 
 def test_device_sem_coleta_avisa(db_session) -> None:

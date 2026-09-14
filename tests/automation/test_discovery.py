@@ -766,6 +766,31 @@ def test_sessao_de_outro_equipamento_nao_e_o_mesmo_par(db_session, tmp_path) -> 
     assert "par_em_uso" not in {c.tipo for c in alfa.conflitos}
 
 
+def test_sessao_do_mesmo_equipamento_acha_o_par_em_outra_caixa(db_session, tmp_path) -> None:
+    """A sessão da SoT guarda o endereço como foi digitado e o par vem da
+    configuração: a conferência é pela forma canônica dos dois lados. Em SQL o
+    par escrito em outra caixa não casaria, o aviso se perderia e o operador
+    adotaria um enlace que a SoT já tem.
+
+    A sessão vive em outra VRF de propósito: na instância pública ela tornaria o
+    par `conhecido` e o candidato sairia da lista, e aí não haveria proposta para
+    conferir. A conferência de `par_em_uso` olha o equipamento, não a VRF.
+    """
+    dev = _ambiente(db_session)
+    circ = _circuito_tomado(db_session, dev, code="CIRC-DESC-V6-CAIXA", vrf="VPNA")
+    db_session.add(models.BgpSession(
+        circuit_id=circ.id, device_id=dev.id, afi="ipv6",
+        local_address="2804:194C:1000::1100:73:1",
+        remote_address="2804:194C:1000::1100:73:2",
+        asn_local=65001, asn_remote=64512,
+    ))
+    db_session.commit()
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+    conflito = next(c for c in alfa.conflitos if c.tipo == "par_em_uso")
+    assert "2804:194c:1000::1100:73:2" in conflito.descricao
+
+
 def test_sessao_do_mesmo_equipamento_e_conflito(db_session, tmp_path) -> None:
     """A sessão do par já existe **neste** equipamento, em outra VRF: o
     conflito aparece, e a mensagem diz de que equipamento é a sessão — sem

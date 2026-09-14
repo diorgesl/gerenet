@@ -52,9 +52,14 @@ def endereco_canonico(endereco: str) -> str:
 
     O endereço é a identidade do peer, e a caixa não faz parte dela: o
     equipamento escreve o hex do IPv6 como digitado (`2804:194C:1000::...`) e o
-    cadastro à mão escreve minúsculo. Comparar texto cru faz o mesmo peer virar
-    dois — duas linhas na lista de ignorados, um `unignore` que responde sucesso
-    sem apagar nada. Quem guarda ou compara endereço de peer passa por aqui.
+    cadastro à mão escreve minúsculo. Quem compara endereço de peer em memória
+    passa por aqui: a descoberta (os candidatos e a conferência de par em uso), a
+    lista de ignorados (gravação e busca) e o `show` do CLI. A conferência de
+    fidelidade fica de fora: ela compara linha de configuração, não endereço.
+
+    Não é a regra da escrita: `bgp_sessions` continua gravando o texto como
+    veio, e canonicalizar aquela escrita é frente própria. É por isso que a
+    conferência com ela é feita em Python, dos dois lados.
     """
     try:
         return str(ipaddress.ip_address(endereco))
