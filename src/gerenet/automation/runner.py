@@ -94,13 +94,14 @@ def _mascarar_texto(texto: str) -> str:
 # seguir: a ausência viraria "objeto ausente" e o plano congelado seria
 # aplicado às cegas (config inalterada? §12.2). `bgp_peers_verbose` fica fora
 # — sem sessões o coletor nem o coleta (chave ausente é o normal, não uma
-# coleta incompleta). Escopo `l2vc` omite `bgp_peers`: switch sem BGP tem
-# `display bgp peer` em erro na coleta (fase 4, §5). Escopo `upstream` reusa
-# o do circuito: os peers do upstream estão nos mesmos recursos do edge.
+# coleta incompleta). Escopos `l2vc`/`vsi` omitem `bgp_peers`: switch sem BGP
+# tem `display bgp peer` em erro na coleta (fase 4, §5). Escopo `upstream`
+# reusa o do circuito: os peers do upstream estão nos mesmos recursos do edge.
 _CHAVES_POR_ESCOPO = {
     "circuito": ("interfaces", "bgp_peers", "config_backup"),
     "upstream": ("interfaces", "bgp_peers", "config_backup"),
     "l2vc": ("interfaces", "l2vc", "config_backup"),
+    "vsi": ("interfaces", "vsi", "config_backup"),
 }
 
 
@@ -478,6 +479,9 @@ def _estado_do_bloco(bloco: dict, recursos: dict, texto: str) -> str:
     if tipo == "l2vc_ac":
         from gerenet.automation.l2vc import estado_bloco_l2vc
         return estado_bloco_l2vc(bloco, recursos)
+    if tipo in ("vsi", "vsi_ac"):
+        from gerenet.automation.vsi import estado_bloco_vsi
+        return estado_bloco_vsi(bloco, recursos)
     return "ausente"  # tipo fora do repertório: reaplica (o comando é do nosso render)
 
 
@@ -619,13 +623,18 @@ def _executa_step(
             )
 
         # Pré-check do escopo (§9.2/§7) — antes do re-diff (aplicar sem o par
-        # UP quebraria o VC; revalide antes de aplicar um peer de upstream).
-        if cr.escopo in ("l2vc", "upstream"):
+        # UP quebraria o VC/VSI; revalide antes de aplicar um peer de upstream).
+        if cr.escopo in ("l2vc", "vsi", "upstream"):
             if cr.escopo == "l2vc":
                 from gerenet.automation import l2vc as l2vc_auto
                 from gerenet.domain.services.mpls import get_l2vc
                 servico = get_l2vc(session, cr.l2vc_id)
                 pre_erro = l2vc_auto.valida_pre_checks_l2vc(session, servico, dev, recursos_pre)
+            elif cr.escopo == "vsi":
+                from gerenet.automation import vsi as vsi_auto
+                from gerenet.domain.services.mpls import get_vsi
+                servico = get_vsi(session, cr.vsi_id)
+                pre_erro = vsi_auto.valida_pre_checks_vsi(session, servico, dev, recursos_pre)
             else:
                 # R-22: a execução de REMOÇÃO aceita sessões desativadas (o
                 # default de valida_pre_upstream é o contexto de provision).
@@ -697,15 +706,20 @@ def _executa_step(
             # filtros divergentes viram itens críticos ⇒ CR com_divergencia.
             resultado = reconciliar_device(session, dev.id, snapshot_id=snap_pos.id)
             itens = [asdict(i) for i in resultado.items]
-            if cr.escopo in ("l2vc", "upstream"):
-                # Pós-check do escopo (§13): VC presente e UP / sessões do
-                # upstream listadas e Established — o reconciliador de circuito
-                # nada acusa do específico do escopo.
+            if cr.escopo in ("l2vc", "vsi", "upstream"):
+                # Pós-check do escopo (§13): VC presente e UP / VSI e pseudowires
+                # UP / sessões do upstream listadas e Established — o
+                # reconciliador de circuito nada acusa do específico do escopo.
                 if cr.escopo == "l2vc":
                     from gerenet.automation import l2vc as l2vc_auto
                     from gerenet.domain.services.mpls import get_l2vc
                     servico = get_l2vc(session, cr.l2vc_id)
                     itens += l2vc_auto.valida_pos_l2vc(session, servico, snap_pos)
+                elif cr.escopo == "vsi":
+                    from gerenet.automation import vsi as vsi_auto
+                    from gerenet.domain.services.mpls import get_vsi
+                    servico = get_vsi(session, cr.vsi_id)
+                    itens += vsi_auto.valida_pos_vsi(session, servico, snap_pos)
                 else:
                     from gerenet.automation import upstream as up_auto
                     from gerenet.domain.services.upstreams import get_upstream
@@ -858,12 +872,15 @@ def run_change(
                 session.commit()
                 return {"status": "error", "error": f"Change request não executável (estado {cr.status})."}
 
-            if cr.escopo in ("l2vc", "upstream"):
+            if cr.escopo in ("l2vc", "vsi", "upstream"):
                 # CR destes escopos tem circuit_id=None — chamar get_circuit
                 # aqui viraria NotFoundError injusta no setup.
                 if cr.escopo == "l2vc":
                     from gerenet.domain.services.mpls import get_l2vc
                     get_l2vc(session, cr.l2vc_id)  # setup: NotFoundError propaga
+                elif cr.escopo == "vsi":
+                    from gerenet.domain.services.mpls import get_vsi
+                    get_vsi(session, cr.vsi_id)  # setup: NotFoundError propaga
                 else:
                     from gerenet.domain.services.upstreams import get_upstream
                     get_upstream(session, cr.upstream_id)  # setup: NotFoundError propaga

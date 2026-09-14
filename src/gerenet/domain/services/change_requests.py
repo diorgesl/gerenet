@@ -35,20 +35,12 @@ TRANSICOES: dict[str, set[str]] = {
 
 _ATUAIS = ("aplicado", "com_divergencia", "parcial", "erro")
 
-# Escopos SEM reconciliação/rollback automáticos (mensagem própria por escopo):
-# o vsi é multiponto e o provisionamento entra na frente seguinte à fase 4.
-_RECONCILIA_INDISPONIVEL = {
-    "vsi": (
-        "Reconciliação automática indisponível para CR de escopo vsi — "
-        "provisionamento multiponto em fase posterior."
-    ),
-}
-_ROLLBACK_INDISPONIVEL = {
-    "vsi": (
-        "Rollback automático indisponível para CR de escopo vsi — "
-        "provisionamento multiponto em fase posterior."
-    ),
-}
+# Escopos SEM reconciliação/rollback automáticos, por escopo (mensagem própria).
+# Vazios desde a frente do VSI multiponto: o último escopo bloqueado (vsi)
+# ganhou `_replaneja` e o ramo do filho no `gerar_rollback`. Os dicionários
+# ficam como ponto de extensão — um escopo novo entra aqui em vez de um `if`.
+_RECONCILIA_INDISPONIVEL: dict[str, str] = {}
+_ROLLBACK_INDISPONIVEL: dict[str, str] = {}
 
 
 def _transita(
@@ -78,11 +70,14 @@ def create_change_request(
 ) -> models.ChangeRequest:
     """Cria a CR já planejada (rascunho com steps), por escopo (§5 fase 4).
 
-    O schema validou a coerência do escopo (circuit_id/l2vc_id/upstream_id
-    conforme o caso); o fluxo de circuito do ciclo D permanece intacto abaixo.
+    O schema validou a coerência do escopo (circuit_id/l2vc_id/vsi_id/
+    upstream_id conforme o caso); o fluxo de circuito do ciclo D permanece
+    intacto abaixo.
     """
     if data.escopo == "l2vc":
         return _create_l2vc(session, data, ator_id=ator_id, actor=actor)
+    if data.escopo == "vsi":
+        return _create_vsi(session, data, ator_id=ator_id, actor=actor)
     if data.escopo == "upstream":
         return _create_upstream(session, data, ator_id=ator_id, actor=actor)
     circ = get_circuit(session, data.circuit_id)
@@ -129,6 +124,15 @@ def _exige_l2vc_ativo(svc: models.L2vcService) -> None:
         raise ConflictError(f"Domínio MPLS {dom.name} desativado não recebe mudanças.")
 
 
+def _exige_vsi_ativo(svc: models.VsiService) -> None:
+    """Serviço e domínio ativos — desativado não recebe mudanças (§14.1)."""
+    if not svc.admin_status:
+        raise ConflictError("VSI desativado não recebe mudanças.")
+    dom = svc.domain
+    if not dom.admin_status:
+        raise ConflictError(f"Domínio MPLS {dom.name} desativado não recebe mudanças.")
+
+
 def _create_l2vc(
     session: Session, data: schemas.ChangeRequestCreate, *, ator_id: int | None = None, actor: str = "cli",
 ) -> models.ChangeRequest:
@@ -158,6 +162,43 @@ def _create_l2vc(
         session, tipo="change.created", ator=actor, objeto="change_request",
         objeto_id=cr.id, antes=None,
         depois={"l2vc_id": servico.id, "acao": cr.acao, "criticidade": cr.criticidade,
+                "steps": len(cr.steps), "blocos": sum(len(s.plano_json) for s in cr.steps)},
+    )
+    session.commit()
+    session.refresh(cr)
+    return cr
+
+
+def _create_vsi(
+    session: Session, data: schemas.ChangeRequestCreate, *, ator_id: int | None = None, actor: str = "cli",
+) -> models.ChangeRequest:
+    """CR de VSI multiponto — um step por PE, plano na criação (§9.3)."""
+    from gerenet.automation import vsi as vsi_auto
+    from gerenet.domain.services.mpls import get_vsi
+
+    servico = get_vsi(session, data.vsi_id)
+    _exige_vsi_ativo(servico)
+    if len(servico.endpoints) < 2:
+        raise ValidationError("VSI com menos de duas pontas não tem o que provisionar.")
+    plano = (
+        vsi_auto.plan_provision_vsi(session, servico)
+        if data.acao == "provision"
+        else vsi_auto.plan_remocao_vsi(session, servico)
+    )
+    cr = models.ChangeRequest(
+        circuit_id=None, vsi_id=servico.id, acao=data.acao, criticidade=data.criticidade,
+        motivo=data.motivo, ticket=data.ticket, solicitante_id=ator_id, status="rascunho",
+        escopo="vsi",
+    )
+    session.add(cr)
+    session.flush()
+    _cria_steps(session, cr, plano)
+    if not cr.steps or all(not s.plano_json for s in cr.steps):
+        raise PlanoVazio("VSI sem blocos a aplicar — revalide o serviço e a coleta.")
+    registrar(
+        session, tipo="change.created", ator=actor, objeto="change_request",
+        objeto_id=cr.id, antes=None,
+        depois={"vsi_id": servico.id, "acao": cr.acao, "criticidade": cr.criticidade,
                 "steps": len(cr.steps), "blocos": sum(len(s.plano_json) for s in cr.steps)},
     )
     session.commit()
@@ -221,7 +262,7 @@ def _create_upstream(
 def get_change_request(session: Session, cr_id: int) -> models.ChangeRequest:
     cr = session.get(
         models.ChangeRequest, cr_id,
-        options=[selectinload(models.ChangeRequest.l2vc)],
+        options=[selectinload(models.ChangeRequest.l2vc), selectinload(models.ChangeRequest.vsi)],
     )
     if cr is None:
         from gerenet.domain.services.errors import NotFoundError
@@ -236,7 +277,7 @@ def list_change_requests(
 ) -> list[models.ChangeRequest]:
     stmt = (
         select(models.ChangeRequest)
-        .options(selectinload(models.ChangeRequest.l2vc))
+        .options(selectinload(models.ChangeRequest.l2vc), selectinload(models.ChangeRequest.vsi))
         .order_by(models.ChangeRequest.id.desc())
     )
     if status is not None:
@@ -360,6 +401,21 @@ def _replaneja(
             if item.device_id == device_id:
                 return item
         return changes.PlanoDevice(device_id=device_id, blocos=[], baseline_snapshot_id=None)
+    if cr.escopo == "vsi":
+        from gerenet.automation import vsi as vsi_auto
+        from gerenet.domain.services.mpls import get_vsi
+
+        svc = get_vsi(session, cr.vsi_id)
+        _exige_vsi_ativo(svc)
+        plano = (
+            vsi_auto.plan_provision_vsi(session, svc)
+            if acao == "provision"
+            else vsi_auto.plan_remocao_vsi(session, svc)
+        )
+        for item in plano:
+            if item.device_id == device_id:
+                return item
+        return changes.PlanoDevice(device_id=device_id, blocos=[], baseline_snapshot_id=None)
     circ = get_circuit(session, cr.circuit_id)
     if acao == "provision":
         plano = changes.plan_provision(session, circ)
@@ -403,10 +459,10 @@ def gerar_rollback(
     remove → provision re-renderizado do desejado (SoT atual). No escopo
     upstream a mecânica é a mesma: o undo do filho remove agrega os circuitos
     vinculados por device (na ordem dos vínculos), como o plano de provision.
-    No escopo l2vc o plano sai da COLETA ATUAL (não do baseline do step): um
-    serviço recém-criado não consta no snapshot pré-mudança, e o undo vazio
-    deixaria o rollback sem passo — a ponta que não tem o VC no encontrado
-    simplesmente não ganha step.
+    Nos escopos l2vc e vsi o plano sai da COLETA ATUAL (não do baseline do
+    step): um serviço recém-criado não consta no snapshot pré-mudança, e o undo
+    vazio deixaria o rollback sem passo — a ponta que não tem o VC/VSI no
+    encontrado simplesmente não ganha step.
     """
     cr = get_change_request(session, cr_id)
     if cr.escopo in _ROLLBACK_INDISPONIVEL:
@@ -432,6 +488,16 @@ def gerar_rollback(
             criticidade=cr.criticidade, motivo=f"Rollback do CR #{cr.id}",
             solicitante_id=ator_id, status="aguardando_aprovacao", rollback_de=cr.id,
         )
+    elif cr.escopo == "vsi":
+        from gerenet.domain.services.mpls import get_vsi
+
+        _exige_vsi_ativo(get_vsi(session, cr.vsi_id))
+        filho = models.ChangeRequest(
+            circuit_id=None, vsi_id=cr.vsi_id, escopo="vsi",
+            acao="remove" if cr.acao == "provision" else "provision",
+            criticidade=cr.criticidade, motivo=f"Rollback do CR #{cr.id}",
+            solicitante_id=ator_id, status="aguardando_aprovacao", rollback_de=cr.id,
+        )
     else:
         circ = get_circuit(session, cr.circuit_id)
         filho = models.ChangeRequest(
@@ -444,7 +510,7 @@ def gerar_rollback(
     for step in cr.steps:
         if step.status != "aplicado":
             continue
-        if cr.escopo == "l2vc":
+        if cr.escopo in ("l2vc", "vsi"):
             item = _replaneja(session, cr, step.device_id, acao=filho.acao)
             if not item.blocos:
                 continue  # ponta sem o serviço no encontrado: nada a desfazer
@@ -483,11 +549,11 @@ def gerar_rollback(
     if not filho.steps:
         # Tudo pulado (§5.2): NADA persiste — sem CR órfã (a sessão descartada
         # pelo get_db descarta o filho non-commitado). A causa muda com o
-        # escopo e a mensagem acompanha: no l2vc o plano sai da COLETA ATUAL
-        # (nada do serviço no encontrado), nos demais do baseline do step.
+        # escopo e a mensagem acompanha: no l2vc/vsi o plano sai da COLETA
+        # ATUAL (nada do serviço no encontrado), nos demais do baseline do step.
         causa = (
             "Nada do serviço consta na coleta atual"
-            if cr.escopo == "l2vc"
+            if cr.escopo in ("l2vc", "vsi")
             else "Sem steps aplicados com baseline"
         )
         raise PlanoRollbackVazio(

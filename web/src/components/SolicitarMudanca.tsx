@@ -18,10 +18,12 @@ export default function SolicitarMudanca({
   circuit_id,
   l2vc_id,
   upstream_id,
+  vsi_id,
 }: {
   circuit_id?: number;
   l2vc_id?: number;
   upstream_id?: number;
+  vsi_id?: number;
 }) {
   const { podeEscrever } = useAuth();
   const navigate = useNavigate();
@@ -35,10 +37,11 @@ export default function SolicitarMudanca({
     setErro(null);
     try {
       const cr = await criar.mutateAsync({
-        escopo: upstream_id ? "upstream" : l2vc_id ? "l2vc" : "circuito",
+        escopo: upstream_id ? "upstream" : vsi_id ? "vsi" : l2vc_id ? "l2vc" : "circuito",
         circuit_id: circuit_id ?? null,
         l2vc_id: l2vc_id ?? null,
         upstream_id: upstream_id ?? null,
+        vsi_id: vsi_id ?? null,
         acao: form.acao,
         criticidade: form.criticidade,
         motivo: form.motivo,
@@ -65,7 +68,13 @@ export default function SolicitarMudanca({
           setAberto(true);
         }}
       >
-        {upstream_id ? "Solicitar mudança no upstream" : l2vc_id ? "Solicitar mudança no L2VC" : "Solicitar mudança"}
+        {upstream_id
+          ? "Solicitar mudança no upstream"
+          : vsi_id
+            ? "Solicitar mudança no VSI"
+            : l2vc_id
+              ? "Solicitar mudança no L2VC"
+              : "Solicitar mudança"}
       </button>
       {aberto && (
         <Modal aberto titulo="Solicitar mudança" onFechar={() => setAberto(false)}>

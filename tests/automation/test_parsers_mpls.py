@@ -90,17 +90,17 @@ def test_vsi_vazio() -> None:
     assert parse_template("vsi", "") == []
 
 
-def test_vsi_verbose_real() -> None:
-    """S6730: `display vsi verbose` é um bloco por VSI (***VSI Name / VSI State / VSI ID).
-
-    Há um VSI órfão na rede (VLAN653_INTECH]) sem VSI ID nem peer — sem ID não
-    casa com a SoT e o bloco não fecha Registro, então o parse o descarta.
-    """
+def test_vsi_verbose_tres_niveis() -> None:
+    """S6730: o bloco traz VSI, peer e AC — o parse devolve uma linha por nível."""
     linhas = parse_template("vsi", _real("s6730_display_vsi_verbose.txt"))
-    assert len(linhas) == 9
-    assert {"name": "IntechCDN", "vsi_id": "2827", "estado": "up"} in linhas
-    assert {"name": "VLAN4030", "vsi_id": "4030", "estado": "down"} in linhas
-    assert not any(l.get("name") == "VLAN653_INTECH]" for l in linhas)
+    assert {"name": "IntechCDN", "estado": "up", "vsi_id": "2827", "mtu": "1500",
+            "peer": "", "peer_estado": "", "ac_if": "", "ac_estado": ""} in linhas
+    assert {"name": "IntechCDN", "peer": "100.127.90.255", "peer_estado": "up",
+            "vsi_id": "", "ac_if": "", "estado": "", "mtu": "",
+            "ac_estado": ""} in linhas
+    assert {"name": "IntechCDN", "ac_if": "Vlanif2827", "ac_estado": "up",
+            "vsi_id": "", "peer": "", "estado": "", "mtu": "",
+            "peer_estado": ""} in linhas
 
 
 def test_merge_ldp_tabela_sem_estado_vira_none() -> None:
@@ -137,14 +137,92 @@ def test_merge_l2vc_normaliza_blocos() -> None:
              "ac_status": None, "mtu_local": None, "mtu_remoto": None}]
 
 
-def test_merge_vsi_normaliza_verbose() -> None:
+def test_merge_vsi_agrupa_por_nome() -> None:
     assert merge_parsed("vsi", {"display vsi verbose": [
-        {"name": "IntechCDN", "vsi_id": "2827", "estado": "up"},
-        {"name": "VSI-SEM-ID", "vsi_id": "", "estado": "down"},
+        {"name": "IntechCDN", "estado": "up", "vsi_id": "2827", "mtu": "1500",
+         "peer": "", "peer_estado": "", "ac_if": "", "ac_estado": ""},
+        {"name": "IntechCDN", "estado": "", "vsi_id": "", "mtu": "",
+         "peer": "100.127.90.255", "peer_estado": "up", "ac_if": "", "ac_estado": ""},
+        {"name": "IntechCDN", "estado": "", "vsi_id": "", "mtu": "",
+         "peer": "", "peer_estado": "", "ac_if": "Vlanif2827", "ac_estado": "up"},
+    ]}) == [{
+        "name": "IntechCDN", "vsi_id": 2827, "estado": "up", "mtu": 1500,
+        "peers": [{"peer": "100.127.90.255", "estado": "up"}],
+        "acs": [{"interface": "Vlanif2827", "estado": "up"}],
+    }]
+
+
+def test_merge_vsi_fixture_real() -> None:
+    """Nove VSIs com ID; o bloco quebrado (nome sem ID) não entra, nem o AC dele."""
+    linhas = merge_parsed("vsi", {
+        "display vsi verbose": parse_template("vsi", _real("s6730_display_vsi_verbose.txt")),
+    })
+    assert len(linhas) == 9
+    por_nome = {l["name"]: l for l in linhas}
+    assert por_nome["IntechCDN"]["peers"] == [{"peer": "100.127.90.255", "estado": "up"}]
+    assert por_nome["IntechCDN"]["acs"] == [{"interface": "Vlanif2827", "estado": "up"}]
+    assert por_nome["VLAN4030"]["estado"] == "down"
+    assert por_nome["VLAN4030"]["peers"] == [{"peer": "100.127.90.247", "estado": "down"}]
+    assert por_nome["VLAN4004"]["mtu"] == 9216
+    assert not any(l["name"].endswith("]") for l in linhas)
+
+
+def test_merge_vsi_bloco_sem_id_descarta_o_ac_junto() -> None:
+    """Bloco truncado com AC não pode herdar o VSI anterior (o nome é o único filldown)."""
+    assert merge_parsed("vsi", {"display vsi verbose": [
+        {"name": "BOM", "estado": "up", "vsi_id": "10", "mtu": "9100",
+         "peer": "", "peer_estado": "", "ac_if": "", "ac_estado": ""},
+        {"name": "BOM", "estado": "", "vsi_id": "", "mtu": "",
+         "peer": "", "peer_estado": "", "ac_if": "Vlanif10", "ac_estado": "up"},
+        {"name": "ORFAO]", "estado": "", "vsi_id": "", "mtu": "",
+         "peer": "", "peer_estado": "", "ac_if": "Vlanif99", "ac_estado": "up"},
+    ]}) == [{
+        "name": "BOM", "vsi_id": 10, "estado": "up", "mtu": 9100,
+        "peers": [], "acs": [{"interface": "Vlanif10", "estado": "up"}],
+    }]
+
+
+def test_merge_vsi_estado_desconhecido_fica_none() -> None:
+    """`VSI ID` sem estado reconhecível não vira "down" por omissão.
+
+    Linha de `VSI State` ausente ou com sentinela (`--`) é desconhecido — o
+    enum de `operational_status` tem `unknown` exatamente para isso, e quem
+    grava (o sync) é que decide o que fazer com o None.
+    """
+    assert merge_parsed("vsi", {"display vsi verbose": [
+        {"name": "SEM-ESTADO", "estado": "", "vsi_id": "10", "mtu": "",
+         "peer": "", "peer_estado": "", "ac_if": "", "ac_estado": ""},
+        {"name": "SENTINELA", "estado": "--", "vsi_id": "11", "mtu": "",
+         "peer": "", "peer_estado": "", "ac_if": "", "ac_estado": ""},
     ]}) == [
-        {"name": "IntechCDN", "vsi_id": 2827, "estado": "up"},
-        {"name": "VSI-SEM-ID", "vsi_id": None, "estado": "down"},
+        {"name": "SEM-ESTADO", "vsi_id": 10, "estado": None, "mtu": None,
+         "peers": [], "acs": []},
+        {"name": "SENTINELA", "vsi_id": 11, "estado": None, "mtu": None,
+         "peers": [], "acs": []},
     ]
+
+
+def test_merge_vsi_peer_e_ac_sem_estado_ficam_none() -> None:
+    """Peer e AC sem a linha de estado no grupo continuam com `estado=None`.
+
+    O `display vsi verbose` imprime o estado do peer (`Session`) e do AC
+    (`Interface State`) em linhas próprias: quando elas não vêm — bloco
+    truncado no meio —, o item permanece no grupo como desconhecido, nunca
+    virando "down" por omissão (mesma regra do estado do VSI). O pós-check
+    trata o None como crítico, então o item precisa existir para ser acusado.
+    """
+    assert merge_parsed("vsi", {"display vsi verbose": [
+        {"name": "SEM-ESTADOS", "estado": "up", "vsi_id": "10", "mtu": "1500",
+         "peer": "", "peer_estado": "", "ac_if": "", "ac_estado": ""},
+        {"name": "SEM-ESTADOS", "estado": "", "vsi_id": "", "mtu": "",
+         "peer": "10.255.9.2", "peer_estado": "", "ac_if": "", "ac_estado": ""},
+        {"name": "SEM-ESTADOS", "estado": "", "vsi_id": "", "mtu": "",
+         "peer": "", "peer_estado": "", "ac_if": "Vlanif10", "ac_estado": ""},
+    ]}) == [{
+        "name": "SEM-ESTADOS", "vsi_id": 10, "estado": "up", "mtu": 1500,
+        "peers": [{"peer": "10.255.9.2", "estado": None}],
+        "acs": [{"interface": "Vlanif10", "estado": None}],
+    }]
 
 
 def test_merge_vazios_devolvem_lista() -> None:

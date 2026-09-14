@@ -39,10 +39,12 @@ const ACAO_LABELS: Record<ChangeRequestOut["acao"], string> = {
 };
 
 // Rótulo do objeto da CR quando o catálogo não tem o id: circuitos usam #N;
-// CRs de escopo l2vc e upstream não têm circuito e exibem o nome do serviço
-// /upstream (ou "—").
+// CRs de escopo l2vc/vsi e upstream não têm circuito e exibem o nome do
+// serviço/upstream (ou "—").
 function rotuloObjeto(cr: ChangeRequestOut): string {
-  return cr.circuit_id !== null ? `#${cr.circuit_id}` : (cr.l2vc_name ?? cr.upstream_name ?? "—");
+  return cr.circuit_id !== null
+    ? `#${cr.circuit_id}`
+    : (cr.l2vc_name ?? cr.vsi_name ?? cr.upstream_name ?? "—");
 }
 
 export default function ChangeRequests() {

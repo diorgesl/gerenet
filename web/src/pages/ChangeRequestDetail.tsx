@@ -24,18 +24,22 @@ const ACAO_LABELS: Record<ChangeRequestOut["acao"], string> = {
   remove: "Remover configuração",
 };
 
-// Rótulo do objeto da CR sem vínculo com circuito: circuitos usam #N;
-// CRs de escopo l2vc exibem o nome do serviço e as de escopo upstream o nome
-// do upstream (ou "—" quando ausente).
+// Rótulo do objeto da CR sem vínculo com circuito: circuitos usam #N; CRs de
+// escopo l2vc/vsi exibem o nome do serviço e as de escopo upstream o nome do
+// upstream (ou "—" quando ausente).
 function rotuloObjeto(cr: ChangeRequestOut): string {
-  return cr.circuit_id !== null ? `#${cr.circuit_id}` : (cr.l2vc_name ?? cr.upstream_name ?? "—");
+  return cr.circuit_id !== null
+    ? `#${cr.circuit_id}`
+    : (cr.l2vc_name ?? cr.vsi_name ?? cr.upstream_name ?? "—");
 }
 
-// Escopos com Reconciliar/Rollback: circuito, l2vc e upstream têm o fluxo no
-// serviço, na API e na CLI. O vsi entra quando o provisionamento multiponto
-// existir (frente seguinte à fase 4).
+// Escopos com Reconciliar/Rollback: todos os quatro têm o fluxo no serviço, na
+// API e na CLI — o vsi era o último bloqueado e entrou com o provisionamento
+// multiponto. Um escopo novo precisa entrar aqui junto do serviço.
 function escopoComFluxo(cr: ChangeRequestOut): boolean {
-  return cr.escopo === "circuito" || cr.escopo === "l2vc" || cr.escopo === "upstream";
+  return (
+    cr.escopo === "circuito" || cr.escopo === "l2vc" || cr.escopo === "vsi" || cr.escopo === "upstream"
+  );
 }
 
 const CONFIRMACOES: Record<string, { titulo: string; mensagem: string }> = {

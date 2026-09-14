@@ -1,7 +1,8 @@
 # Runbook — validação em equipamento real da fase 4 (MPLS em switches)
 
 > A fase 4 está implementada e testada (domínios MPLS, serviço L2VC com change request de
-> escopo `l2vc`, coletores/parsers LDP/L2VC/VSI, páginas web `/mpls/*`). Esta é a **validação
+> escopo `l2vc`, **VSI multiponto** com CR de escopo `vsi`, ACs por PE, rollback e
+> reconciliação, coletores/parsers LDP/L2VC/VSI, páginas web `/mpls/*`). Esta é a **validação
 > manual contra os switches reais da família S** (S6730…), executada por você — o código só é
 > alterado se a saída real divergir (ajuste de TextFSM/templates, único desvio previsto).
 > A validação é **em produção, sem laboratório** — decisão consciente do usuário em
@@ -17,10 +18,10 @@ Nada aqui funciona sem o worker para a Etapa 3 (a fila `gerenet-change` executa 
 
 ---
 
-## Referência rápida — sintaxe do AC (fonte: `src/gerenet/automation/templates/huawei_vrp/l2vc_ac.j2`)
+## Referência rápida — sintaxe dos templates (`src/gerenet/automation/templates/huawei_vrp/`)
 
-O AC é **untag na interface principal** (correção do produto aplicada na fase 4) — física ou
-Eth-Trunk, em modo L3:
+**L2VC** (fonte: `l2vc_ac.j2`). O AC é **untag na interface principal** (correção do produto
+aplicada na fase 4) — física ou Eth-Trunk, em modo L3:
 
 ```
 interface <trunk>
@@ -33,8 +34,31 @@ mpls l2vpn flow-label both     # linha separada, apenas com flow_label + capabil
 - **Remoção**: `undo mpls l2vc <peer-loopback> <vc-id>` no contexto da interface. **Nunca**
   `undo interface`, `undo portswitch` nem `undo mpls l2vpn flow-label` — outro VC pode estar
   na mesma interface (é esse o propósito do AC untag compartilhado).
-- **VSI** (somente referência futura): o AC de VSI usa `l2 binding vsi <VSI-name>` — nenhuma
-  ponta VSI é provisionada neste ciclo.
+
+**VSI multiponto** (fontes: `vsi.j2` e `vsi_ac.j2`) — os dois blocos saem **por PE**, o do
+VSI primeiro e o do AC depois:
+
+```
+# bloco do VSI (uma vez em cada PE participante)
+vsi <vrp-name> static
+ description <description>          # apenas quando definida
+ pwsignal ldp
+  vsi-id <vsi_id>
+  flow-label both                   # apenas com flow_label + a capability do device
+  peer <loopback-LDP-do-outro-PE>   # uma linha por membro restante (é o ponto multiponto)
+ mtu <mtu>
+
+# bloco do AC (por ponta; a interface vem do VID reservado)
+vlan <vid>
+interface Vlanif<vid>
+ description <description>          # apenas quando definida
+ l2 binding vsi <vrp-name>          # indentado: é sub-comando da Vlanif
+```
+
+- **Remoção do VSI** (por PE, nessa ordem — o VRP recusa remover VSI com AC ligado): no
+  contexto da `Vlanif`, `undo l2 binding vsi <vrp-name>`, e depois `undo vsi <vrp-name>`. A
+  **`Vlanif` e a `vlan` ficam** no equipamento (o serviço só desfaz o binding e o VSI), como
+  o L2VC nunca dá `undo interface` — a sobra é esperada e aparece na divergência.
 - **flow-label/control-word**: confirmar suporte na família/versão alvo. `flow_label` é gerado
   apenas se o device tiver a capability `mpls_flow_label` em `devices.capabilities` (string
   exata `"mpls_flow_label"` se suportado) — sem a capability, a linha é omitida. Se o switch
@@ -70,7 +94,7 @@ S6730 real em 2026-09-08 — a família S imprime em formatos diferentes dos ass
 |---|---|---|
 | `display mpls ldp peer` | tabela `PeerID  TransportAddress  DiscoverySource` — **sem coluna de estado** | `peer_id` sem `:0`; `estado` `None` (desconhecido, nunca `down` por omissão) |
 | `display mpls l2vc` | um bloco por VC: `client interface : Vlanif21 is up`, `VC state : up`, `VC ID : 21` | `vc_id` int; `interface`; `estado` `up`/`down` |
-| `display vsi verbose` | um bloco por VSI: `***VSI Name : X` → `VSI State : up` → `VSI ID : 2827` | `name`; `vsi_id` int (`None` se o VSI não tem ID); `estado` `up`/`down` |
+| `display vsi verbose` | um bloco por VSI (`***VSI Name : X` → `VSI State : up` → `VSI ID : 2827` → `MTU`), com os blocos aninhados de peer (`Peer Router ID`/`Session`) e de AC (`Interface Name`/`State`) | `name`; `vsi_id` int (`None` se o VSI não tem ID); `estado` `up`/`down`; `mtu` int; `peers: [{peer, estado}]`; `acs: [{interface, estado}]` |
 
 Notas da validação real:
 - O L2VC é **obrigatoriamente** `display mpls l2vc` — `display l2vc` sem `mpls` é um comando
@@ -113,11 +137,14 @@ aceite; a capability `mpls_flow_label` é o gate do template, mas o gate vale na
 **Checklist Etapa 1** — critérios de "ok":
 
 - [ ] `display mpls ldp peer`: tabela `PeerID/TransportAddress/DiscoverySource` parseável (sem coluna de estado — estado fica `None` até haver `display mpls ldp session`).
-- [ ] `display mpls ldp session`: a tabela `PeerID/Status` casa com os peers do comando anterior e o `estado` do peer no snapshot deixa de ser `None` (parser `mpls_ldp_session`).
+- [ ] `display mpls ldp session`: a tabela `PeerID/Status` casa com os peers do comando anterior e o `estado` do peer no snapshot deixa de ser `None` (parser `mpls_ldp_session`) — com o VSI provisionável ela deixou de ser conferência secundária: o pré-check do escopo `vsi` exige o par **UP**, e `None` bloqueia.
 - [ ] `local VC MTU` de um VC existente diz se o campo reflete o `mtu` configurado no AC ou o MTU físico — decisão registrada no design de 2026-09-13 (se for o físico, o check de MTU do pós-check vira só simetria entre pontas).
 - [ ] Todo bloco de `display mpls l2vc` (incluindo VC `down`) imprime a linha `local VC MTU`/`remote VC MTU`: é a linha em que o parser fecha o registro. Bloco sem ela não entra no snapshot e o VC aparece como ausente na divergência — se isso acontecer, o parser precisa de outra âncora de registro.
 - [ ] `display mpls l2vc`: um bloco por VC com `client interface`/`VC state`/`VC ID`.
-- [ ] `display vsi verbose`: um bloco por VSI com `VSI Name`/`VSI State`/`VSI ID` (vazio é ok — VSI só consulta neste ciclo; VSI sem ID é descartado).
+- [ ] `display vsi verbose`: um bloco por VSI com `VSI Name`/`VSI State`/`VSI ID`/`MTU` (VSI sem ID é descartado, como o bloco quebrado da fixture real).
+- [ ] `display current-configuration configuration vsi`: a forma é `vsi <nome> static` com `vsi-id`, `flow-label` e `peer` dentro de `pwsignal ldp`, e `mtu`/`description` no nível do VSI.
+- [ ] `display vsi verbose` nos três níveis: `VSI State` do serviço, `Session` de cada peer e `Interface Name`/`State` de cada AC. O `**PW Information` aparece só em alguns VSIs e repete o `Session`, por isso não é parseado.
+- [ ] `display current-configuration interface Vlanif<vid>` do AC: confirma o `l2 binding vsi <nome>` e a `description`.
 - [ ] Templates TextFSM e fixtures atualizados e `test_parsers_mpls.py` verde.
 - [ ] Sintaxe do AC confirmada no `display this` da interface de teste (não conectada).
 - [ ] Suporte a flow-label/control-word confirmado (ou flags desligadas na SoT).
@@ -223,7 +250,8 @@ Critérios de "ok": `VC state : up` no VC das duas pontas; peer LDP `Up` (ou ses
 
 ### 3.3 Rollback e reconciliação nesta fase
 
-O rollback e a reconciliação de CR de escopo `l2vc` **estão implementados**:
+O rollback e a reconciliação de CR de escopo `l2vc` e de escopo **`vsi`** **estão
+implementados** (os dois escopos MPLS saíram dos dicionários de indisponível):
 `gerenet change-requests rollback <cr>` cria a CR inversa em `aguardando_aprovacao`
 com os blocos derivados da **coleta atual** (o filho remove as pontas onde o VC
 consta no snapshot e não gera step para ponta ausente), e
@@ -288,12 +316,77 @@ execução nos dois casos: se ela parar no check do par LDP, olhe primeiro os er
 Depois da reversão, desative o serviço de teste na SoT (`uv run gerenet mpls l2vc set-status
 <id> --inativo`), mantendo o histórico.
 
+### 3.4 VSI de teste (multiponto, dois PEs)
+
+Mesma disciplina do L2VC (switch não crítico, janela acordada, aprovador ≠ solicitante), com
+duas diferenças: o VSI é **multiponto** (um step por PE e uma linha `peer` por membro
+restante) e o AC segue a convenção da operação — **VID igual ao `vsi_id`**, que é o que o
+cadastro assume quando o `--endpoint` vem sem VID.
+
+```bash
+# cadastro: um --endpoint por PE (VID omitido = VSI-ID)
+uv run gerenet mpls vsi add --domain-id <id> --name teste-<finalidade> \
+  --endpoint <id-sw-a> --endpoint <id-sw-b> [--vsi-id <id>] [--flow-label]
+uv run gerenet mpls vsi list && uv run gerenet mpls vsi show <id>
+
+# CR de provisionamento: nasce em rascunho, com o plano por PE congelado
+uv run gerenet change-requests add --escopo vsi --vsi-id <id> --motivo "Teste VSI fase 4"
+uv run gerenet change-requests show <cr-id>   # confira o diff bloco a bloco nos 2 PEs
+uv run gerenet change-requests send <cr-id>
+uv run gerenet change-requests approve <cr-id> --aprovador <usuario-aprovador>
+uv run gerenet change-requests execute <cr-id>  # worker ativo (fila gerenet-change)
+```
+
+Na execução o worker, por PE: backup pré-mudança, gate de coleta (`interfaces`, `vsi`,
+`config_backup`), pré-check do escopo (simetria de membros, **par LDP UP** de cada peer e
+Vlanif sem binding alheio), re-diff do plano congelado, aplicação bloco a bloco e pós-check.
+Uma ponta que falha deixa a CR em `parcial` — o serviço fica parcialmente provisionado, que é
+o caso que o §9.3 manda reconciliar (`uv run gerenet change-requests reconcile <cr>`).
+
+O `mpls_ldp_peer` **não** entra no gate de coleta do escopo (que é `interfaces`, `vsi` e
+`config_backup`): coleta em que o comando da sessão LDP falhou passa pelo gate e quem barra a
+execução é o `valida_pre_checks_vsi` ("Coleta sem 'mpls_ldp_peer'") — a mesma leitura da **Nota
+de coleta** da §3.3, aqui no pré-check do VSI. Se a execução parar pedindo a coleta do LDP,
+olhe primeiro os erros do snapshot.
+
+Conferência nos **três níveis** (na web, o detalhe da CR mostra o `post_check_json` de cada
+step):
+
+```
+display vsi verbose    # VSI State do serviço, Session de cada peer e Interface Name/State de cada AC
+display mpls ldp peer  # o peer de cada ponta listado (o estado vem do `display mpls ldp session`)
+display alarm active   # nada de alarmes novos
+```
+
+Critérios de "ok": `VSI State : up`; `Session` UP em **cada** peer; AC (`Vlanif<vid>`) `up`
+nas duas pontas; `MTU` do VSI igual ao cadastrado; nenhum alarme novo. Itens do pós-check:
+`vsi.ausente`, `vsi.estado` e `vsi.peer` são **críticos**; `vsi.ac` e `vsi.mtu`, de atenção.
+
+**Remoção** — CR aprovada com `--acao remove`
+(`uv run gerenet change-requests add --escopo vsi --vsi-id <id> --acao remove --motivo
+"Remoção do VSI de teste"`, depois `send`/`approve`/`execute`) — desfaz **só o binding e o
+VSI**: por PE, `undo l2 binding vsi <vrp-name>` no contexto da `Vlanif` e depois
+`undo vsi <vrp-name>` (nessa ordem: o VRP recusa remover VSI com AC ligado). A **`Vlanif` e
+a `vlan` ficam** no equipamento — sobra esperada (decisão registrada no design de
+2026-09-13), visível na divergência e reaproveitada por um re-provisionamento. Confira com
+`display current-configuration interface Vlanif<vid>` (sem o `l2 binding`) e
+`display vsi verbose` (sem o VSI). A limpeza da `Vlanif`/`vlan`, se for desejada, é manual e
+fora do produto.
+
+Se a remoção não sair pelo caminho automático, valem os caminhos da §3.3 (`change-requests
+rollback`, CR de remoção pela plataforma ou o `undo` manual no switch).
+
+Depois da validação, desative o VSI de teste na SoT
+(`uv run gerenet mpls vsi set-status <id> --inativo`), mantendo o histórico.
+
 **Checklist Etapa 3**:
 
 - [ ] Serviço com nome/finalidade `teste-...`; switch não crítico e janela acordados com o setor.
 - [ ] Aprovador ≠ solicitante; aprovação registrada; CR executando com worker ativo.
 - [ ] Backup pré-mudança salvo em `data/backups/change-<cr>/` (gitignored).
 - [ ] Pós-check: `display mpls l2vc` ⇒ `VC state : up` nas duas pontas; LDP `Up`; sem alarmes novos; sem item de `atencao` de AC/MTU (`l2vc.ac`, `l2vc.mtu`, `l2vc.mtu_simetria` — o MTU só é conferido com o VC de pé).
+- [ ] VSI de teste com dois PEs e VID igual ao VSI-ID: CR de escopo `vsi` `aplicado` e pós-check nos três níveis (`VSI State` e `Session` de cada peer UP, AC `up`), sem item `vsi.ausente`/`vsi.estado`/`vsi.peer` (`vsi.ac`/`vsi.mtu` são de atenção).
+- [ ] Remoção do VSI conferida: `undo l2 binding vsi` + `undo vsi` aplicados por PE, com a `Vlanif` e a `vlan` deixadas no equipamento (sobra esperada).
 - [ ] Resultado registrado no **ledger**: `data`, `equipamento`, `motivo`, `janela`, `resultado`
       (ledger SDD do plano — `.superpowers/sdd/2026-09-07-gerenet-fase4-mpls/progress.md`).
 - [ ] Reversão documentada (rollback da CR, plataforma ou manual) e, se executada, conferida no `display mpls l2vc`.
@@ -307,6 +400,8 @@ Depois da reversão, desative o serviço de teste na SoT (`uv run gerenet mpls l
 - Nenhuma execução sem aprovação (§3.3); CR aprovada com aprovador ≠ solicitante.
 - Nenhum comando fora do plano/allowlist; backup bruto (`data/`) nunca versionado.
 - Interfaces com AC untag são **compartilhadas**: só o VC sai, nunca a interface inteira.
+- O AC de VSI vive na `Vlanif<vid>`: a remoção desfaz o **binding e o VSI**, nunca a `Vlanif`
+  nem a `vlan` — a sobra é esperada e o re-provisionamento a reaproveita.
 - Serviços de validação sempre com nome/finalidade `teste-...`; reversão documentada.
 
 ## Critérios de aceite (da fase, a validar aqui)
@@ -314,6 +409,8 @@ Depois da reversão, desative o serviço de teste na SoT (`uv run gerenet mpls l
 - [ ] Parsers LDP/L2VC/VSI criam dados úteis contra o output real (ou foram ajustados).
 - [ ] `l2vc_ac.j2` validado no switch real (comentário de versão no template se ajustado).
 - [ ] CR de escopo `l2vc`: criação → aprovação → execução (`aplicado`) e remoção, com pós-check.
+- [ ] CR de escopo `vsi`: criação → aprovação → execução (`aplicado`) → remoção, com pós-check
+      nos três níveis (VSI, pseudowire e AC) e a `Vlanif` deixada no equipamento.
 - [ ] `display mpls ldp peer`/`display mpls l2vc`/`display vsi verbose` coletados pelo worker e
       sincronizados na SoT (estado operacional do serviço/pontas atualizado).
 - [ ] Nenhuma credencial vazada; nenhum backup versionado; nenhum comando sem aprovação.

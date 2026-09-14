@@ -515,6 +515,17 @@ export function useVsi(opts: { domainId?: number; includeDisabled?: boolean } = 
 export const useVsiCriar = () => useCriar<VsiCreateIn, VsiOut>("mpls-vsi", "/api/v1/mpls/vsi");
 export const useVsiDetalhe = (id: number) =>
   useQuery({ queryKey: ["mpls-vsi", id], queryFn: () => apiFetch<VsiOut>(`/api/v1/mpls/vsi/${id}`), enabled: id > 0 });
+export function useVsiStatus() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, admin_status }: { id: number; admin_status: boolean }) =>
+      apiFetch<VsiOut>(`/api/v1/mpls/vsi/${id}/status`, { method: "PATCH", body: { admin_status } }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["mpls-vsi"] });
+      void qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+}
 
 // ---- Upstreams (spec §7; rotas da fase 5) ---------------------------------
 // O detail traz circuitos, sessões e communities DENTRO do UpstreamDetailOut —

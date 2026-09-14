@@ -582,6 +582,7 @@ class ChangeRequestCreate(BaseModel):
     escopo: Literal["circuito", "l2vc", "vsi", "upstream"] = "circuito"
     circuit_id: int | None = None
     l2vc_id: int | None = None
+    vsi_id: int | None = None  # escopo vsi (fase 4, parte 3)
     upstream_id: int | None = None  # escopo upstream (fase 5)
     acao: Literal["provision", "remove"] = "provision"
     criticidade: Literal["baixa", "media", "alta"] = "media"
@@ -596,8 +597,8 @@ class ChangeRequestCreate(BaseModel):
             raise ValueError("l2vc_id é obrigatório para escopo 'l2vc'.")
         if self.escopo == "upstream" and self.upstream_id is None:
             raise ValueError("upstream_id é obrigatório para escopo 'upstream'.")
-        if self.escopo == "vsi":
-            raise ValueError("Escopo 'vsi' não está disponível neste ciclo.")
+        if self.escopo == "vsi" and self.vsi_id is None:
+            raise ValueError("vsi_id é obrigatório para escopo 'vsi'.")
         return self
 
 
@@ -639,6 +640,8 @@ class ChangeRequestOut(BaseModel):
     escopo: str
     l2vc_id: int | None = None
     l2vc_name: str | None = None
+    vsi_id: int | None = None
+    vsi_name: str | None = None  # espelho do modelo (propriedade vsi_name)
     upstream_id: int | None = None
     upstream_name: str | None = None  # espelho do modelo (propriedade upstream_name)
     acao: str
@@ -746,10 +749,20 @@ class L2vcOut(BaseModel):
     domain_name: str | None = None
 
 
-class VsiMemberOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+class VsiEndpointIn(BaseModel):
     device_id: int
-    device_name: str | None = None
+    # None ⇒ o VID assume o vsi_id do serviço (convenção da operação)
+    vid: int | None = Field(default=None, ge=2, le=4094)
+    mtu: int | None = Field(default=None, ge=576, le=9216)
+
+
+class VsiEndpointOut(BaseModel):
+    device_id: int
+    device_name: str | None
+    interface: str
+    vid: int | None
+    mtu: int | None
+    operational_status: str
 
 
 class VsiCreate(BaseModel):
@@ -760,7 +773,9 @@ class VsiCreate(BaseModel):
     split_horizon: bool = True
     mac_learning: bool = True
     mac_limit: int | None = Field(default=None, ge=0)
-    members: list[int] = Field(default_factory=list, min_length=1)
+    flow_label: bool = False
+    description: str | None = Field(default=None, max_length=255)
+    endpoints: list[VsiEndpointIn] = Field(default_factory=list, min_length=1)
 
 
 class VsiOut(BaseModel):
@@ -775,12 +790,20 @@ class VsiOut(BaseModel):
     split_horizon: bool
     mac_learning: bool
     mac_limit: int | None
+    flow_label: bool
+    description: str | None
     admin_status: bool
     operational_status: str
     last_collected_at: datetime | None
     created_at: datetime
-    members: list[VsiMemberOut] = Field(default_factory=list)
+    endpoints: list[VsiEndpointOut] = Field(default_factory=list)
     domain_name: str | None = None
+
+
+class VsiStatusIn(BaseModel):
+    """Corpo do PATCH de status do VSI (espelho do `L2vcStatusIn` do router)."""
+
+    admin_status: bool
 
 
 # ---- Fase 5 (upstreams, §7): conectividade própria — trânsito/IX/PNI. ----

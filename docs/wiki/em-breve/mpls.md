@@ -8,10 +8,9 @@ order: 2
 # Serviços MPLS (L2VC e VSI)
 
 O gerenet gerencia serviços MPLS em switches da família S (S6730…): o **domínio MPLS** é
-cadastrável com seus membros e loopbacks LDP, e o **L2VC** (ponto a ponto) sai como mudança
-controlada — com pré-check de LDP, execução aprovada e pós-validação. **VSI é apenas cadastro
-e consulta** nesta fase (o provisionamento multiponto vem em fase posterior). Os dois mundos
-têm um ponto comum: o tráfego de downstreams.
+cadastrável com seus membros e loopbacks LDP, e tanto o **L2VC** (ponto a ponto) quanto o
+**VSI** (multiponto) saem como mudança controlada — com pré-check de LDP, execução aprovada e
+pós-validação. Os dois mundos têm um ponto comum: o tráfego de downstreams.
 
 ## Domínio MPLS e L2VC
 
@@ -25,24 +24,35 @@ têm um ponto comum: o tráfego de downstreams.
   (diff por bloco desejado × encontrado) já nasce com a CR, que segue o fluxo normal
   (rascunho → aprovação → execução no worker com **pré-check do peer LDP** e **pós-check**
   do `display l2vc` ⇒ `Up`). A remoção é uma CR inversa, também aprovada.
-- **Coleta e estado**: o worker coleta `display mpls ldp peer` e `display l2vc` e a
-  plataforma mostra o desejado × encontrado e a divergência, por objeto e severidade —
-  com a última coleta e a ação recomendada.
+- **Coleta e estado**: o worker coleta `display mpls ldp peer` (com a sessão LDP), `display
+  mpls l2vc` e `display vsi verbose`, e a plataforma mostra o desejado × encontrado e a
+  divergência, por objeto e severidade — com a última coleta e a ação recomendada.
 
 ## VSI (multiponto)
 
-- **Cadastro e consulta** (página `/mpls/vsi`): PEs participantes, attachment circuits,
-  split-horizon, limite de MAC aprendido e status por pseudowire/AC (coleta do
-  `display vsi`).
-- **Sem provisionamento neste ciclo**: a configuração de "todos os equipamentos na mesma
-  mudança lógica" (e o estado "parcialmente provisionado" com reconciliação) é de fase
-  posterior.
+- **Cadastro** (página `/mpls/vsi`): um **AC por PE participante**, com VLAN reservada por
+  equipamento e a interface derivada do VID (`Vlanif<vid>` — o VID omitido assume o VSI-ID,
+  que é a convenção da operação), mais sinalização LDP, split-horizon, limite de MAC
+  aprendido e flow-label (requer a capability `mpls_flow_label` no equipamento).
+- **Mudança controlada**: o provisionamento é uma change request de **escopo `vsi`**, com
+  um step por PE — o bloco do VSI (com uma linha `peer` por membro) e o do AC —, **pré-check**
+  do par LDP de cada peer e da Vlanif sem binding alheio, **pós-check nos três níveis**
+  (estado do VSI, de cada pseudowire e de cada AC) e **rollback e reconciliação** disponíveis.
+  Uma ponta que falha deixa a CR em `parcial`: o serviço fica parcialmente provisionado e a
+  recomposição passa pela reconciliação.
+- **Remoção**: desfaz só o `l2 binding` e o VSI. A **`Vlanif` e a `vlan` ficam no
+  equipamento** — sobra esperada, visível na divergência e reaproveitada por um
+  re-provisionamento, como o L2VC nunca remove a interface.
+- **Estado na página** (`/mpls/vsi/:id`): o estado do VSI e o de cada AC, atualizados pela
+  coleta; o estado por pseudowire aparece no pós-check da change request (`vsi.peer`) e no
+  snapshot cru.
 
 ## Recursos e validações previstas
 
-Entra também na fase: a **validação** de LDP operacional, L2VC Up, MTU consistente e ausência
-de alarmes novos — e a **reserva interna de recursos** (VLAN de AC por device, VC-ID/VSI-ID
-por domínio), com conflitos detectados antes de qualquer mudança.
+Entra também na fase: a **validação** de LDP operacional, L2VC Up, VSI Up com os
+pseudowires e ACs, MTU consistente e ausência de alarmes novos — e a **reserva interna de
+recursos** (VLAN de AC por device, VC-ID/VSI-ID por domínio), com conflitos detectados antes
+de qualquer mudança.
 
 *Validação em equipamento real: ver o runbook `docs/runbook-validacao-switch-mpls.md` —
 somente leitura → geração sem execução → execução de teste em switch não crítico.*

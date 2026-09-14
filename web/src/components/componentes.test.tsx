@@ -43,6 +43,19 @@ describe("kit", () => {
     }
   });
 
+  it("StatusBadge mapeia o estado operacional up/down (MPLS)", () => {
+    const casos: [string, string][] = [
+      ["up", "ok"],
+      ["down", "fail"],
+    ];
+    for (const [estado, classe] of casos) {
+      const { container, unmount } = render(<StatusBadge estado={estado} />);
+      expect(container.querySelector(`.badge-${classe}`)).toBeInTheDocument();
+      expect(container.querySelector(".badge-unknown")).not.toBeInTheDocument();
+      unmount();
+    }
+  });
+
   it("SeverityBadge critica → danger", () => {
     const { container } = render(<SeverityBadge severidade="critica" />);
     expect(container.querySelector(".badge-danger")).toBeInTheDocument();

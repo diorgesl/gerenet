@@ -298,6 +298,8 @@ export interface ChangeRequestOut {
   l2vc_name: string | null;
   upstream_id: number | null;
   upstream_name: string | null;
+  vsi_id: number | null;
+  vsi_name: string | null;
   acao: "provision" | "remove";
   criticidade: "baixa" | "media" | "alta";
   motivo: string;
@@ -314,6 +316,7 @@ export type ChangeRequestCreateIn = {
   circuit_id?: number | null;
   l2vc_id?: number | null;
   upstream_id?: number | null;
+  vsi_id?: number | null;
   acao: "provision" | "remove";
   criticidade: "baixa" | "media" | "alta";
   motivo: string;
@@ -416,9 +419,15 @@ export interface PlanoL2vcOut {
   aviso: string | null;
   baseline_snapshot_id: number | null;
 }
-export interface VsiMemberOut {
+// AC de um VSI: uma ponta por PE, com a Vlanif derivada do VID (nada de
+// `members` — o provisionamento multiponto substituiu a lista de equipamentos).
+export interface VsiEndpointOut {
   device_id: number;
-  device_name?: string | null;
+  device_name: string | null;
+  interface: string;
+  vid: number | null;
+  mtu: number | null;
+  operational_status: string;
 }
 export interface VsiOut {
   id: number;
@@ -432,10 +441,17 @@ export interface VsiOut {
   split_horizon: boolean;
   mac_learning: boolean;
   mac_limit: number | null;
+  flow_label: boolean;
+  description: string | null;
   admin_status: boolean;
   operational_status: string;
   last_collected_at: string | null;
-  members: VsiMemberOut[];
+  endpoints: VsiEndpointOut[];
+}
+export interface VsiEndpointIn {
+  device_id: number;
+  vid?: number | null; // vazio ⇒ assume o vsi_id do serviço
+  mtu?: number | null;
 }
 export interface VsiCreateIn {
   domain_id: number;
@@ -445,7 +461,9 @@ export interface VsiCreateIn {
   split_horizon?: boolean;
   mac_learning?: boolean;
   mac_limit?: number | null;
-  members: number[];
+  flow_label?: boolean;
+  description?: string | null;
+  endpoints: VsiEndpointIn[];
 }
 
 // Fase 5 — Upstreams (spec §7): conectividade própria — trânsito/IX/PNI.

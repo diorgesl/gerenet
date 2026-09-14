@@ -179,7 +179,8 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   `aprovador` — seedado no globalSetup, único usuário novo do seed).
 - Fase 4 (MPLS em switches): domínios MPLS/LDP + L2VC ponto a ponto com
   provisionamento/remoção via fluxo de CR; VSI é só cadastro e consulta
-  (provisionamento multiponto em fase posterior). Modelos novos:
+  (provisionamento multiponto em fase posterior — entregue na Fase 4, parte 3,
+  bullet adiante). Modelos novos:
   `mpls_domains` + `mpls_domain_members` (membro = PE com `loopback_address`, o
   remote do VC), `l2vc_services` + `service_endpoints` (pontas com interface e
   VLAN de AC reservada por device — `vlans.kind='mpls_ac'`, escopo por device:
@@ -229,7 +230,44 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   conferido com o VC de pé). Corrigido de passagem: o rollback de CR de remoção
   (circuito e upstream) planejava o filho com a ação do pai e recebia blocos
   `delete`. O provisionamento VSI multiponto segue como frente seguinte
-  (rollback/reconciliação de `vsi` continuam indisponíveis).
+  (rollback/reconciliação de `vsi` continuam indisponíveis) — entregue na
+  Fase 4, parte 3, bullet seguinte.
+- Fase 4, parte 3 (VSI multiponto, 2026-09-13): fecha a fase — o VSI passou a
+  ser **provisionável**, com um **AC por PE** (`service_endpoints` com
+  `kind='vsi'`, VLAN de AC de `vlans.kind='mpls_ac'` reservada por device e a
+  interface **derivada do VID** como `Vlanif<vid>` — nunca campo livre; VID
+  omitido assume o `vsi_id`, a convenção da operação) e os campos novos
+  `vsi_services.flow_label`/`description` (migração
+  `alembic/versions/9b1f7c4e2a05_vsi_multiponto.py`, com `change_requests.vsi_id`
+  e os dois campos em `vsi_services`). Templates `vsi.j2` (bloco do
+  serviço: `vsi <nome> static`, `description`, `pwsignal ldp` com `vsi-id`,
+  `flow-label` só com a capability `mpls_flow_label` e uma linha `peer` por
+  membro restante, e `mtu`) e `vsi_ac.j2` (`vlan` + `interface Vlanif<vid>` +
+  ` l2 binding vsi <vrp_name>`, indentado por ser sub-comando); dois blocos por
+  PE e **um step por PE** na CR de **escopo `vsi`** (o provisionamento exige 2+
+  endpoints; o cadastro aceita um). Pré-check `valida_pre_checks_vsi` (simetria
+  de membros, par LDP **UP** de cada peer e Vlanif sem binding alheio — `None`,
+  `down` ou coleta sem `mpls_ldp_peer` bloqueiam), pós-check `valida_pos_vsi`
+  (`vsi.ausente`/`vsi.estado`/`vsi.peer` críticos; `vsi.ac`/`vsi.mtu` de
+  atenção), gate de coleta `("interfaces", "vsi", "config_backup")`, e
+  **rollback e reconciliação** de escopo `vsi` disponíveis (os dois dicionários
+  de indisponível ficaram vazios; o filho deriva da coleta atual, como o
+  `l2vc`) — uma ponta que falha deixa a CR em `parcial`. O parser `vsi` passou
+  a ler os **três níveis** do `display vsi verbose` (nome/estado/ID/MTU do VSI,
+  `Peer Router ID`/`Session` por peer, `Interface Name`/`State` por AC; a seção
+  `**PW Information` não é parseada — aparece em poucos VSIs e repete o
+  `Session`) e o `sincronizar_mpls` atualiza o `operational_status` de cada AC,
+  sem rebaixar o VSI (o estado do serviço segue vindo do `VSI State`). A
+  remoção desfaz **só** o binding e o VSI (`undo l2 binding vsi <nome>` no
+  contexto da Vlanif e depois `undo vsi <nome>`, nessa ordem porque o VRP
+  recusa remover VSI com AC ligado): a `Vlanif` e a `vlan` **ficam** no
+  equipamento. Web: `/mpls/vsi` e `/mpls/vsi/:id` com ACs, "Solicitar mudança"
+  e desativar/reativar; CLI `gerenet mpls vsi add --endpoint DEVICE:VID`
+  (repetível, `--flow-label`) e `change-requests add --escopo vsi --vsi-id`.
+  Dívidas registradas (design §12): aprendizado de MAC (exige
+  `display mac-address` e item de pós-check próprios), `tnl-policy` fora do
+  modelo e do render, e a limpeza da `Vlanif`/`vlan` na remoção (a sobra é
+  decisão registrada, visível na divergência).
 - Fase 5 (upstreams): organizações com `kind='operadora'` (ASN + IRR AS-SET)
   e upstreams com tipo (`transito`/`ix`/`pni`/`contingencia`), capacidade,
   prioridade/custo, prefixos esperados v4/v6 e margem do maximum-prefix;
@@ -272,10 +310,11 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   pós-check (peer + Established + contagem dentro de esperado × (1 ± margem))
   — rollback (`gerenet change-requests rollback`) e reconciliar
   **disponíveis** para upstream (ao contrário do `l2vc`/`vsi` naquele ciclo —
-  o `l2vc` ganhou os dois na Fase 4, parte 2); desfazer uma remoção já
-  **aplicada** exige reativar o upstream antes — a remoção aplicada o desativa
-  na SoT e a API responde 409 ("reative antes de planejar a mudança") até a
-  reativação, manual de propósito (sem reativação automática). Web: `/upstreams`
+  o `l2vc` ganhou os dois na Fase 4, parte 2, e o `vsi` na parte 3); desfazer
+  uma remoção já **aplicada** exige reativar o upstream antes — a remoção
+  aplicada o desativa na SoT e a API responde 409 ("reative antes de planejar
+  a mudança") até a reativação, manual de propósito (sem reativação
+  automática). Web: `/upstreams`
   + `/upstreams/:id` (detalhe com a matriz principal × contingência e
   "Solicitar mudança") e fumo `web/e2e/upstream.spec.ts` (org operadora pela
   UI, upstream, community, vínculo e CR aprovada pelo `e2e-aprovador`;

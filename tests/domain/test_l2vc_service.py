@@ -11,6 +11,8 @@ from gerenet.domain.schemas import (
     MplsDomainCreate,
     MplsMemberIn,
     SiteCreate,
+    VsiCreate,
+    VsiEndpointIn,
 )
 from gerenet.domain.services.devices import create_device
 from gerenet.domain.services.errors import ConflictError, NotFoundError, ValidationError
@@ -18,6 +20,7 @@ from gerenet.domain.services.mpls import (
     add_domain_member,
     create_domain,
     create_l2vc,
+    create_vsi,
     get_l2vc,
     list_l2vc,
     set_l2vc_status,
@@ -192,6 +195,30 @@ def test_vlan_de_outro_servico_bloqueia_nova_reserva(db_session, pares):
     db_session.rollback()
     svcs = db_session.scalars(select(models.L2vcService)).all()
     assert len(svcs) == 1 and svcs[0].name == "a-777"
+
+
+def test_vlan_de_ac_de_vsi_bloqueia_nova_ponta_l2vc(db_session, pares):
+    """A direção inversa: AC de VSI na mesma VLAN/equipamento bloqueia o L2VC.
+
+    A ponta de VSI tem l2vc_id NULL — o filtro por `l2vc_id != <id>` não casa
+    em SQL (NULL != id é NULL) e o L2VC tomaria a VLAN de AC do VSI.
+    """
+    _, d1, d2, dom = pares
+    create_vsi(db_session, VsiCreate(
+        domain_id=dom.id, name="vsi antes", vsi_id=610,
+        endpoints=[
+            VsiEndpointIn(device_id=d1.id, vid=800),
+            VsiEndpointIn(device_id=d2.id, vid=801),
+        ],
+    ), actor="cli")
+    with pytest.raises(ConflictError, match="VSI"):
+        _create(db_session, dom, d1, d2, name="b-800", endpoints=[
+            L2vcEndpointIn(device_id=d1.id, interface="10GE0/0/1", encapsulation="dot1q", vid=800),
+            L2vcEndpointIn(device_id=d2.id, interface="10GE0/0/2", encapsulation="dot1q", vid=802),
+        ])
+    db_session.rollback()
+    assert len(db_session.scalars(select(models.L2vcService)).all()) == 0
+    assert len(db_session.scalars(select(models.VsiService)).all()) == 1
 
 
 def test_nome_so_whitespace_rejeitado(db_session, pares):

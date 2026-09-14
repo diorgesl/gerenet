@@ -18,7 +18,7 @@ from gerenet.domain.schemas import (
     MplsMemberOut,
     ServiceEndpointOut,
     VsiCreate,
-    VsiMemberOut,
+    VsiEndpointOut,
     VsiOut,
 )
 from gerenet.domain.services.devices import get_device
@@ -367,16 +367,20 @@ def create_l2vc(session: Session, data: L2vcCreate, *, actor: str = "cli") -> mo
     for ep in (a, b):
         vlan = reservar_vlan_ac(session, device_id=ep.device_id, vid=ep.vid, actor=actor)
         # Idempotência do helper só serve ao re-run do MESMO serviço: VLAN
-        # de outro service_endpoint bloqueia (a ponta não pode ser compartilhada).
+        # de outro service_endpoint bloqueia (a ponta não pode ser compartilhada),
+        # inclusive a de um VSI — a linha tem l2vc_id NULL, que um
+        # `l2vc_id != <id>` não pega (em SQL, NULL != id é NULL).
         dono = session.scalars(
-            select(models.ServiceEndpoint.l2vc_id).where(
+            select(models.ServiceEndpoint).where(
                 models.ServiceEndpoint.vlan_id == vlan.id,
-                models.ServiceEndpoint.l2vc_id != svc.id,
+                models.ServiceEndpoint.l2vc_id.is_distinct_from(svc.id),
             ).limit(1)
         ).first()
         if dono is not None:
             session.rollback()
-            raise ConflictError(f"VLAN {vlan.vid} já pertence ao serviço L2VC {dono}.")
+            if dono.l2vc_id is not None:
+                raise ConflictError(f"VLAN {vlan.vid} já pertence ao serviço L2VC {dono.l2vc_id}.")
+            raise ConflictError(f"VLAN {vlan.vid} já pertence ao VSI {dono.vsi_id}.")
         session.add(models.ServiceEndpoint(
             kind="l2vc", l2vc_id=svc.id, device_id=ep.device_id, interface=ep.interface.strip(),
             encapsulation=ep.encapsulation, vlan_id=vlan.id, inner_vlan=ep.inner_vlan,
@@ -414,6 +418,21 @@ def set_l2vc_status(session: Session, l2vc_id: int, *, admin_status: bool, actor
               antes={"admin_status": antes}, depois={"admin_status": admin_status})
     session.commit()
     return _l2vc(session, svc.id)
+
+
+def set_vsi_status(session: Session, vsi_id: int, *, admin_status: bool, actor: str = "cli") -> models.VsiService:
+    """Reativa ou desativa o VSI (§14.1: desativado, nunca excluído).
+
+    Sem este caminho o operador não tem como desligar um VSI e o guard de
+    serviço desativado da CR ficaria inalcançável.
+    """
+    svc = _vsi(session, vsi_id)
+    antes, svc.admin_status = svc.admin_status, admin_status
+    session.flush()
+    registrar(session, tipo="mpls.vsi.status", ator=actor, objeto="vsi", objeto_id=svc.id,
+              antes={"admin_status": antes}, depois={"admin_status": admin_status})
+    session.commit()
+    return _vsi(session, svc.id)
 
 
 # ---- Serialização L2VC (padrão dashboard.py: Out explícito) ----------------
@@ -455,13 +474,15 @@ def out_l2vc(svc: models.L2vcService) -> L2vcOut:
     )
 
 
-# ---- Serviços VSI (§9.3: modelo + consulta; sem render/CR neste ciclo) --
+# ---- Serviços VSI (§9.3: SoT do multiponto, com render/CR da fase 4) ------
 
 def _vsi(session: Session, vsi_id: int) -> models.VsiService:
     svc = session.scalars(
         select(models.VsiService)
         .options(
             selectinload(models.VsiService.members).selectinload(models.VsiMember.device),
+            selectinload(models.VsiService.endpoints).selectinload(models.ServiceEndpoint.device),
+            selectinload(models.VsiService.endpoints).selectinload(models.ServiceEndpoint.vlan),
             selectinload(models.VsiService.domain),
         )
         .where(models.VsiService.id == vsi_id)
@@ -506,14 +527,17 @@ def create_vsi(session: Session, data: VsiCreate, *, actor: str = "cli") -> mode
     ).first()
     if ja_vrp is not None:
         raise ConflictError(f"Nome VRP {vrp} já usado no domínio {dom.name}.")
-    devices = [get_device(session, did) for did in dict.fromkeys(data.members)]
+    endpoints = data.endpoints
+    if len({ep.device_id for ep in endpoints}) != len(endpoints):
+        raise ValidationError("Endpoint duplicado no mesmo VSI: um por equipamento.")
+    devices = [get_device(session, ep.device_id) for ep in endpoints]
     for dev in devices:
         if _membro_loopback(session, dom.id, dev.id) is None:
             raise ValidationError(f"Equipamento {dev.name} sem loopback LDP no domínio (membro inexistente).")
     vsi = models.VsiService(
         domain_id=dom.id, vsi_id=vsi_id, name=nome, vrp_name=vrp,
         mtu=data.mtu, split_horizon=data.split_horizon, mac_learning=data.mac_learning,
-        mac_limit=data.mac_limit,
+        mac_limit=data.mac_limit, flow_label=data.flow_label, description=data.description,
     )
     session.add(vsi)
     try:
@@ -521,8 +545,29 @@ def create_vsi(session: Session, data: VsiCreate, *, actor: str = "cli") -> mode
     except IntegrityError as exc:
         session.rollback()
         raise ConflictError(f"VSI-ID ou nome já em uso no domínio {dom.name}.") from exc
-    for dev in devices:
-        session.add(models.VsiMember(vsi_id=vsi.id, device_id=dev.id))
+    for ep in endpoints:
+        vid = ep.vid if ep.vid is not None else vsi_id
+        vlan = reservar_vlan_ac(session, device_id=ep.device_id, vid=vid, actor=actor)
+        # A ponta bloqueia a VLAN de AC de QUALQUER outro serviço — inclusive a
+        # de um L2VC, cuja linha tem vsi_id NULL e por isso escaparia de um
+        # `vsi_id != <id>` (em SQL, NULL != id é NULL). A linha vem inteira
+        # porque a coluna do dono pode ser justamente a NULL.
+        dono = session.scalars(
+            select(models.ServiceEndpoint).where(
+                models.ServiceEndpoint.vlan_id == vlan.id,
+                models.ServiceEndpoint.vsi_id.is_distinct_from(vsi.id),
+            ).limit(1)
+        ).first()
+        if dono is not None:
+            session.rollback()
+            if dono.vsi_id is not None:
+                raise ConflictError(f"VLAN {vlan.vid} já pertence ao VSI {dono.vsi_id}.")
+            raise ConflictError(f"VLAN {vlan.vid} já pertence ao serviço L2VC {dono.l2vc_id}.")
+        session.add(models.ServiceEndpoint(
+            kind="vsi", vsi_id=vsi.id, device_id=ep.device_id, interface=f"Vlanif{vid}",
+            encapsulation="dot1q", vlan_id=vlan.id, mtu=ep.mtu or data.mtu,
+        ))
+        session.add(models.VsiMember(vsi_id=vsi.id, device_id=ep.device_id))
     session.flush()
     registrar(session, tipo="mpls.vsi.create", ator=actor, objeto="vsi", objeto_id=vsi.id,
               antes=None, depois={"vsi_id": vsi_id, "name": nome, "vrp_name": vrp})
@@ -533,6 +578,9 @@ def create_vsi(session: Session, data: VsiCreate, *, actor: str = "cli") -> mode
 def list_vsi(session: Session, domain_id: int | None = None, include_disabled: bool = False) -> list[models.VsiService]:
     q = select(models.VsiService).options(
         selectinload(models.VsiService.members).selectinload(models.VsiMember.device),
+        # o Out lê as pontas — mesmo padrão de list_l2vc (sem N+1 na lista)
+        selectinload(models.VsiService.endpoints).selectinload(models.ServiceEndpoint.device),
+        selectinload(models.VsiService.endpoints).selectinload(models.ServiceEndpoint.vlan),
         selectinload(models.VsiService.domain),
     ).order_by(models.VsiService.domain_id, models.VsiService.vsi_id).execution_options(populate_existing=True)
     if domain_id is not None:
@@ -548,13 +596,6 @@ def get_vsi(session: Session, vsi_id: int) -> models.VsiService:
 
 # ---- Serialização VSI (padrão dashboard.py: Out explícito) --------------
 
-def _out_vsi_membro(m: models.VsiMember) -> VsiMemberOut:
-    return VsiMemberOut(
-        device_id=m.device_id,
-        device_name=m.device.name if m.device is not None else None,
-    )
-
-
 def out_vsi(svc: models.VsiService) -> VsiOut:
     return VsiOut(
         id=svc.id,
@@ -567,11 +608,23 @@ def out_vsi(svc: models.VsiService) -> VsiOut:
         split_horizon=svc.split_horizon,
         mac_learning=svc.mac_learning,
         mac_limit=svc.mac_limit,
+        flow_label=svc.flow_label,
+        description=svc.description,
         admin_status=svc.admin_status,
         operational_status=svc.operational_status,
         last_collected_at=svc.last_collected_at,
         created_at=svc.created_at,
-        members=[_out_vsi_membro(m) for m in svc.members],
+        endpoints=[
+            VsiEndpointOut(
+                device_id=ep.device_id,
+                device_name=ep.device.name if ep.device is not None else None,
+                interface=ep.interface,
+                vid=ep.vlan.vid if ep.vlan is not None else None,
+                mtu=ep.mtu,
+                operational_status=ep.operational_status,
+            )
+            for ep in svc.endpoints
+        ],
         domain_name=svc.domain.name if svc.domain is not None else None,
     )
 
@@ -596,6 +649,11 @@ def sincronizar_mpls(session: Session, snapshot: models.DeviceSnapshot) -> None:
     Match L2VC: (vc_id, device, interface guard) sobre os endpoints do device;
     Match VSI: (vsi_id, membro do VSI no device). Linha ausente na coleta
     mantém o status anterior. Dispositivo sem MPLS: no-op.
+
+    O AC de cada ponta do VSI casa por (device, interface) do próprio
+    endpoint e recebe o `State` dele. O serviço NÃO agrega os ACs: o estado
+    dele continua sendo o `VSI State` do equipamento, então um AC caído não
+    rebaixa o VSI na SoT (as duas informações convivem).
     """
     recursos = snapshot.resources or {}
     mexeu = False
@@ -636,8 +694,20 @@ def sincronizar_mpls(session: Session, snapshot: models.DeviceSnapshot) -> None:
         if membro is None:
             continue
         vsi = membro.vsi
-        vsi.operational_status = linha.get("estado", "unknown")
+        # estado None (o merge não soube) não pode ir para a coluna NOT NULL
+        vsi.operational_status = linha.get("estado") or "unknown"
         vsi.last_collected_at = agora or vsi.last_collected_at
+        for ac in linha.get("acs", []) or []:
+            nome_if = ac.get("interface")
+            if not nome_if:
+                continue
+            dono = next(
+                (e for e in vsi.endpoints if e.device_id == snapshot.device_id
+                 and e.interface == nome_if),
+                None,
+            )
+            if dono is not None:
+                dono.operational_status = ac.get("estado") or "unknown"
         mexeu = True
     if mexeu:
         session.flush()

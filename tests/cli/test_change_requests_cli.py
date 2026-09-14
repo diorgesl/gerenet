@@ -17,13 +17,15 @@ from gerenet.domain.schemas import (
     MplsMemberIn,
     OrganizationCreate,
     SiteCreate,
+    VsiCreate,
+    VsiEndpointIn,
 )
 from gerenet.domain.services import users as usvc
 from gerenet.domain.services.bgp_sessions import create_session
 from gerenet.domain.services.circuits import create_circuit
 from gerenet.domain.services.devices import create_device
 from gerenet.domain.services.ipam import reservar_circuito
-from gerenet.domain.services.mpls import add_domain_member, create_domain, create_l2vc
+from gerenet.domain.services.mpls import add_domain_member, create_domain, create_l2vc, create_vsi
 from gerenet.domain.services.organizations import create_organization
 from gerenet.domain.services.sites import create_site, link_device
 
@@ -249,6 +251,60 @@ def _l2vc_cli(db_session: Session) -> int:
     ), actor="cli")
     db_session.commit()
     return svc.id
+
+
+def _vsi_cli(db_session: Session) -> int:
+    """VSI multiponto com dois PEs e VID default (= vsi_id) nas duas pontas."""
+    site = create_site(db_session, SiteCreate(name="pop-cr-cli-vsi"), actor="cli")
+    d1 = create_device(db_session, DeviceCreate(
+        name="sw-cr-cli-vsi-a", management_address="10.0.0.73", site_id=site.id), actor="cli")
+    d2 = create_device(db_session, DeviceCreate(
+        name="sw-cr-cli-vsi-b", management_address="10.0.0.74", site_id=site.id), actor="cli")
+    dom = create_domain(db_session, MplsDomainCreate(name="dom-cr-cli-vsi"), actor="cli")
+    add_domain_member(db_session, dom.id,
+                      MplsMemberIn(device_id=d1.id, loopback_address="10.255.9.11"), actor="cli")
+    add_domain_member(db_session, dom.id,
+                      MplsMemberIn(device_id=d2.id, loopback_address="10.255.9.12"), actor="cli")
+    svc = create_vsi(db_session, VsiCreate(
+        domain_id=dom.id, name="vsi-cr-cli", vsi_id=911,
+        endpoints=[VsiEndpointIn(device_id=d1.id), VsiEndpointIn(device_id=d2.id)],
+    ), actor="cli")
+    db_session.commit()
+    return svc.id
+
+
+def test_cli_add_escopo_vsi(db_session: Session) -> None:
+    """Despacho da T5 (concern 2 do relatório da T4): change-requests add
+    --escopo vsi --vsi-id N nasce rascunho com um step por PE, como o l2vc."""
+    vsi_id = _vsi_cli(db_session)
+    add = runner.invoke(app, [
+        "change-requests", "add", "--escopo", "vsi", "--vsi-id", str(vsi_id),
+        "--motivo", "Ativar o VSI multiponto do cliente.",
+    ])
+    assert add.exit_code == 0, add.output
+    assert "rascunho" in add.output
+    cr_id = _cr_id(add.output)
+    cr = db_session.get(models.ChangeRequest, cr_id)
+    assert cr is not None and cr.escopo == "vsi"
+    assert len(cr.steps) == 2
+    assert cr.vsi_id == vsi_id and cr.circuit_id is None and cr.l2vc_id is None
+
+    # o alvo da listagem é o VSI (como o upstream), não "circuito —"
+    filtrada = runner.invoke(app, ["change-requests", "list", "--escopo", "vsi"])
+    assert filtrada.exit_code == 0, filtrada.output
+    linha = next(l for l in filtrada.output.splitlines() if f"CR #{cr_id}" in l)
+    assert "vsi" in linha and str(vsi_id) in linha
+    assert "circuito" not in linha
+
+
+def test_cli_add_escopo_vsi_sem_id_erro_limpo(db_session: Session) -> None:
+    """--escopo vsi sem --vsi-id ⇒ erro do schema, exit 1, sem traceback."""
+    add = runner.invoke(app, [
+        "change-requests", "add", "--escopo", "vsi", "--motivo", "sem id",
+    ])
+    assert add.exit_code == 1
+    assert "Erro:" in add.output
+    assert "Traceback" not in add.output
 
 
 def test_cli_add_escopo_l2vc(db_session: Session) -> None:

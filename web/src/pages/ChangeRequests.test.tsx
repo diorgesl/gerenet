@@ -31,7 +31,15 @@ const crUpstream = {
   ticket: "TICKET-47", solicitante_id: 1, status: "rascunho", rollback_de: null,
   created_at: "2026-09-06T10:00:00Z", steps: [], approvals: [],
 };
-let listaCRs = [cr]; // mutável por teste — cobre os cenários de escopo l2vc/upstream
+// CR de escopo vsi: mesmo espelho (nome do serviço em vez de "—" na coluna Circuito)
+const crVsi = {
+  id: 8, circuit_id: null, escopo: "vsi" as string, l2vc_id: null, l2vc_name: null,
+  upstream_id: null, upstream_name: null, vsi_id: 3, vsi_name: "vsi-cliente",
+  acao: "provision", criticidade: "media", motivo: "Montar VSI multiponto",
+  ticket: "TICKET-48", solicitante_id: 1, status: "rascunho", rollback_de: null,
+  created_at: "2026-09-13T10:00:00Z", steps: [], approvals: [],
+};
+let listaCRs = [cr]; // mutável por teste — cobre os cenários de escopo l2vc/vsi/upstream
 
 beforeAll(() => {
   vi.stubGlobal(
@@ -97,6 +105,15 @@ describe("ChangeRequests", () => {
     listaCRs = [crUpstream];
     renderChangeRequests();
     expect(await screen.findByText("upstream-tier1")).toBeInTheDocument();
+    expect(screen.queryByText(/^—$/)).toBeNull();
+  });
+
+  it("exibe vsi_name na coluna Circuito para CR de escopo vsi", async () => {
+    // mesma regressão do l2vc/upstream: sem o nome do serviço a lista mostraria
+    // "—" e o operador não acharia a CR do VSI pelo serviço.
+    listaCRs = [crVsi];
+    renderChangeRequests();
+    expect(await screen.findByText("vsi-cliente")).toBeInTheDocument();
     expect(screen.queryByText(/^—$/)).toBeNull();
   });
 

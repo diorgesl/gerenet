@@ -163,20 +163,51 @@ def normaliza_l2vc(por_comando: dict[str, list[dict]]) -> list[dict]:
 
 
 def normaliza_vsi(por_comando: dict[str, list[dict]]) -> list[dict]:
-    """`display vsi` -> name, vsi_id (None quando ausente) e estado up/down.
+    """`display vsi verbose` -> um dict por VSI com peers e ACs (§9.3).
 
-    Keys: {name, vsi_id, estado}; linhas sem name são descartadas.
+    O parse devolve uma linha por nível (VSI, peer, AC); o `name` é o único
+    valor preenchido ao longo do bloco e por isso é a chave do agrupamento. O
+    `vsi_id` vem da linha do próprio VSI: grupo sem ID (bloco truncado, como o
+    `VLAN653_INTECH]` da rede real) é descartado inteiro, e com ele o AC que
+    porventura viesse depois, que não pode ser atribuído ao VSI anterior.
+
+    Keys: {name, vsi_id, estado, mtu, peers, acs}; `estado` desconhecido vira
+    None (nunca "down" por omissão) e campo ausente não inventa valor.
     """
-    saida: list[dict] = []
+    grupos: dict[str, dict] = {}
     for linha in _primeiras_linhas(por_comando):
-        if not linha.get("name"):
+        nome = linha.get("name")
+        if not nome:
             continue
-        saida.append({
-            "name": linha["name"],
-            "vsi_id": int(linha["vsi_id"]) if linha.get("vsi_id") not in (None, "") else None,
-            "estado": "up" if str(linha.get("estado", "")).lower() == "up" else "down",
+        grupo = grupos.setdefault(nome, {
+            "name": nome, "vsi_id": None, "estado": None, "mtu": None,
+            "peers": [], "acs": [],
         })
-    return saida
+        if linha.get("vsi_id"):
+            grupo["vsi_id"] = int(linha["vsi_id"])
+            grupo["estado"] = (
+                {"up": "up", "down": "down"}.get(str(linha.get("estado") or "").lower())
+            )
+            grupo["mtu"] = int(linha["mtu"]) if linha.get("mtu") else None
+        if linha.get("peer"):
+            grupo["peers"].append({
+                "peer": linha["peer"],
+                "estado": (
+                    {"up": "up", "down": "down"}.get(
+                        str(linha.get("peer_estado") or "").lower()
+                    )
+                ),
+            })
+        if linha.get("ac_if"):
+            grupo["acs"].append({
+                "interface": linha["ac_if"],
+                "estado": (
+                    {"up": "up", "down": "down"}.get(
+                        str(linha.get("ac_estado") or "").lower()
+                    )
+                ),
+            })
+    return [g for g in grupos.values() if g["vsi_id"] is not None]
 
 
 _MERGES = {
