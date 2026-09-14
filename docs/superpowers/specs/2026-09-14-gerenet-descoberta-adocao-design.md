@@ -346,9 +346,12 @@ quem decide usar é o operador.
 ## 13. Superfícies
 
 **API.** Router novo `api/routers/discovery.py`, registrado em `api/main.py`.
-`GET /api/v1/discovery/candidates?device_id=N` devolve os candidatos já com a
+`GET /api/v1/discovery?device_id=N` devolve os candidatos já com a
 proposta, o veredito e as listas de pendências e conflitos (separar em duas
-chamadas não pagaria, o cálculo é o mesmo). `POST /api/v1/discovery/adopt`
+chamadas não pagaria, o cálculo é o mesmo). A rota ficou na raiz do recurso, e
+não em `/candidates` como este design escreveu antes: a resposta já traz o
+candidato com a proposta dentro, então o segmento extra nomearia um recurso
+único dentro do próprio recurso. `POST /api/v1/discovery/adopt`
 recebe a proposta revisada mais `ciente`, e é o único caminho de escrita.
 `POST /api/v1/discovery/ignore` e `DELETE` para desfazer. `POST
 /api/v1/discovery/sugestao` existe apenas com o provedor ligado e devolve
