@@ -13,17 +13,27 @@ import { FormField } from "@/components/FormField";
 import { Modal } from "@/components/Modal";
 import { PageHeader } from "@/components/PageHeader";
 import { help } from "@/help";
-import type { DiscoveryPropostaOut } from "@/api/types";
+import type { DiscoveryOut, DiscoveryPropostaOut } from "@/api/types";
 
-// `snapshot_id` nulo é "não há coleta com a configuração salva": a lista vem
-// vazia por falta de fonte, e não por o equipamento não ter peer fora da SoT.
+// A conclusão chata ("não há peer fora da SoT") só sai quando a leitura
+// aconteceu e não sobrou aviso nenhum: sem coleta a lista está vazia por falta
+// de fonte, e com aviso a leitura pode ter deixado peer para trás. A regra é a
+// do `list` do CLI, que só conclui com `aviso is None and not propostas`.
 const VAZIO_SEM_COLETA = "Sem coleta com a configuração salva — não há o que comparar.";
+const VAZIO_LEITURA_PARCIAL = "A leitura da configuração não entendeu tudo (veja o aviso acima): a lista pode estar incompleta.";
 const VAZIO_SEM_PEER = "Nenhum peer fora da SoT neste equipamento.";
+
+function vazioDaLista(data: DiscoveryOut | undefined): string {
+  if (data === undefined) return VAZIO_SEM_PEER;
+  if (data.snapshot_id === null) return VAZIO_SEM_COLETA;
+  if (data.aviso !== null) return VAZIO_LEITURA_PARCIAL;
+  return VAZIO_SEM_PEER;
+}
 
 function textoDeIgnorados(quantidade: number): string {
   return quantidade === 1
-    ? "1 peer saiu da lista de ignorados."
-    : `${quantidade} peers saíram da lista de ignorados.`;
+    ? "1 peer foi para a lista de ignorados."
+    : `${quantidade} peers foram para a lista de ignorados.`;
 }
 
 export default function Discovery() {
@@ -86,6 +96,12 @@ export default function Discovery() {
           {error instanceof ApiError ? error.message : "Falha ao ler a configuração."}
         </p>
       )}
+      {/* As duas mensagens de escrita ficam fora dos diálogos: fechar o de
+          ignorar (Cancelar, Escape ou clique no fundo) não pode levar embora o
+          relato de uma sequência que parou no meio. */}
+      {ignorar.error && (
+        <p role="alert">{ignorar.error.message || "Falha ao ignorar os peers do enlace."}</p>
+      )}
       {/* O 404 do DELETE diz que a linha da tela já não existe no servidor; a
           mensagem fica fora da lista para não sumir com ela. */}
       {desdesignorar.error && (
@@ -135,7 +151,7 @@ export default function Discovery() {
           ]}
           linhas={propostas}
           carregando={isLoading}
-          vazio={data?.snapshot_id === null ? VAZIO_SEM_COLETA : VAZIO_SEM_PEER}
+          vazio={vazioDaLista(data)}
           acoes={(p) => (
             <>
               <button type="button" onClick={() => setDetalhe(p)}>
@@ -209,16 +225,19 @@ export default function Discovery() {
             </ul>
             <h3>Pendências</h3>
             <ul>
-              {detalhe.pendencias.map((p) => (
-                <li key={p.tipo}>
+              {detalhe.pendencias.map((p, i) => (
+                // O mesmo `tipo` pode vir duas vezes com textos diferentes (o
+                // perfil de política sai uma vez por família), então a posição
+                // entra na chave.
+                <li key={`${i}-${p.tipo}`}>
                   {p.tipo}: {p.descricao}
                 </li>
               ))}
             </ul>
             <h3>Conflitos</h3>
             <ul>
-              {detalhe.conflitos.map((c) => (
-                <li key={c.tipo}>
+              {detalhe.conflitos.map((c, i) => (
+                <li key={`${i}-${c.tipo}`}>
                   {c.tipo}: {c.descricao}
                 </li>
               ))}
@@ -250,11 +269,6 @@ export default function Discovery() {
         <FormField label="Motivo" help={help("discovery.nao_adotar")}>
           <input value={motivo} onChange={(e) => setMotivo(e.target.value)} />
         </FormField>
-        {ignorar.error && (
-          <p role="alert">
-            {ignorar.error.message || "Falha ao ignorar os peers do enlace."}
-          </p>
-        )}
         <div className="dialog-actions">
           <button type="button" onClick={() => setIgnorando(null)}>
             Cancelar
@@ -274,10 +288,10 @@ export default function Discovery() {
                   motivo: motivo || null,
                 })),
                 {
-                  onSuccess: (criadas) => {
-                    setIgnorando(null);
-                    setResultado(textoDeIgnorados(criadas.length));
-                  },
+                  // O diálogo fecha nos dois desfechos: o relato mora fora dele,
+                  // e a lista já refeita mostra o estado real do enlace.
+                  onSuccess: (criadas) => setResultado(textoDeIgnorados(criadas.length)),
+                  onSettled: () => setIgnorando(null),
                 },
               );
             }}

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -68,6 +68,13 @@ const SEM_COLETA = {
   propostas: [],
 };
 
+// Coleta que existe, mas cuja leitura não entendeu tudo: `aviso` preenchido e
+// `snapshot_id` de pé. A lista que vier daqui pode estar incompleta.
+const LEITURA_PARCIAL = {
+  ...DISCOVERY,
+  aviso: "A linha `peer 100.64.10.1 as-number` não foi reconhecida.",
+};
+
 // Candidato cujo endereço não casa com subinterface nenhuma: a proposta vem sem
 // VLAN, sem code e sem candidato — não há peer identificado para ignorar.
 const ORFA = {
@@ -98,8 +105,16 @@ const IGNORADO = {
 };
 
 function mockFetch(
-  opts: { descoberta?: unknown; ignorados?: unknown[]; deleteStatus?: number; postFalhaPara?: string } = {},
+  opts: {
+    descoberta?: unknown;
+    ignorados?: unknown[];
+    /** O que a lista devolve depois do refetch: a linha fantasma já não está lá. */
+    ignoradosApos?: unknown[];
+    deleteStatus?: number;
+    postFalhaPara?: string;
+  } = {},
 ) {
+  let leituras = 0;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
@@ -118,7 +133,8 @@ function mockFetch(
           }
           return json(IGNORADO, 201);
         }
-        return json(opts.ignorados ?? []);
+        leituras += 1;
+        return json(leituras > 1 ? (opts.ignoradosApos ?? opts.ignorados ?? []) : (opts.ignorados ?? []));
       }
       if (url.startsWith("/api/v1/discovery")) return json(opts.descoberta ?? DISCOVERY);
       return json({ detail: "Não encontrado." }, 404);
@@ -187,7 +203,7 @@ describe("Discovery", () => {
       remote_address: "100.64.10.1",
       motivo: "cliente saiu",
     });
-    expect(await screen.findByRole("status")).toHaveTextContent("1 peer saiu da lista de ignorados.");
+    expect(await screen.findByRole("status")).toHaveTextContent("1 peer foi para a lista de ignorados.");
   });
 
   it("no enlace dual o botão retira os dois peers e o diálogo nomeia os dois", async () => {
@@ -198,7 +214,7 @@ describe("Discovery", () => {
       screen.getByText("Saem da lista: 100.64.10.1 (ipv4), 2804:194c::1 (ipv6)."),
     ).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Confirmar" }));
-    expect(await screen.findByRole("status")).toHaveTextContent("2 peers saíram da lista de ignorados.");
+    expect(await screen.findByRole("status")).toHaveTextContent("2 peers foram para a lista de ignorados.");
     const posts = chamadas().filter((c) => c[1]?.method === "POST");
     expect(posts).toHaveLength(2);
     expect(corpoDoPost(0)).toMatchObject({ afi: "ipv4", remote_address: "100.64.10.1" });
@@ -218,11 +234,49 @@ describe("Discovery", () => {
     expect(chamadas().filter((c) => c[1]?.method === "POST")).toHaveLength(2);
   });
 
+  it("fechar o diálogo não leva o relato da falha embora", async () => {
+    mockFetch({ descoberta: DUAS_FAMILIAS, postFalhaPara: "2804:194c::1" });
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Não adotar" }));
+    await userEvent.click(screen.getByRole("button", { name: "Confirmar" }));
+    // Escape durante a sequência (o pedido ainda não voltou) e depois o desfecho:
+    await userEvent.keyboard("{Escape}");
+    expect(await screen.findByRole("alert")).toHaveTextContent(/1 de 2 peers foram ignorados/);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("a falha no primeiro POST diz que nenhum peer saiu", async () => {
+    mockFetch({ descoberta: DUAS_FAMILIAS, postFalhaPara: "100.64.10.1" });
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Não adotar" }));
+    await userEvent.click(screen.getByRole("button", { name: "Confirmar" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /Nenhum peer saiu da lista: .*100\.64\.10\.1 não pôde ser ignorado\./,
+    );
+    // A sequência para no primeiro erro: o segundo candidato nem é tentado.
+    expect(chamadas().filter((c) => c[1]?.method === "POST")).toHaveLength(1);
+  });
+
   it("sem coleta não afirma que não há peer", async () => {
     mockFetch({ descoberta: SEM_COLETA });
     renderDiscovery("/discovery?device_id=1");
     expect(await screen.findByText(SEM_COLETA.aviso)).toBeInTheDocument();
     expect(screen.getByText("Sem coleta com a configuração salva — não há o que comparar.")).toBeInTheDocument();
+    expect(screen.queryByText("Nenhum peer fora da SoT neste equipamento.")).not.toBeInTheDocument();
+  });
+
+  it("leitura parcial mostra o aviso sem esconder a lista", async () => {
+    mockFetch({ descoberta: LEITURA_PARCIAL });
+    renderDiscovery("/discovery?device_id=1");
+    expect(await screen.findByText(LEITURA_PARCIAL.aviso)).toBeInTheDocument();
+    expect(screen.getByText("100.64.10.1")).toBeInTheDocument();
+  });
+
+  it("leitura parcial sem proposta não conclui que não há peer", async () => {
+    mockFetch({ descoberta: { ...LEITURA_PARCIAL, propostas: [] } });
+    renderDiscovery("/discovery?device_id=1");
+    expect(await screen.findByText(LEITURA_PARCIAL.aviso)).toBeInTheDocument();
+    expect(screen.getByText(/pode estar incompleta/)).toBeInTheDocument();
     expect(screen.queryByText("Nenhum peer fora da SoT neste equipamento.")).not.toBeInTheDocument();
   });
 
@@ -235,14 +289,19 @@ describe("Discovery", () => {
     expect(screen.getByText(/endereco_sem_subinterface/)).toBeInTheDocument();
   });
 
-  it("voltar a considerar manda a quádrupla e o 404 do DELETE aparece", async () => {
-    mockFetch({ ignorados: [IGNORADO], deleteStatus: 404 });
+  it("voltar a considerar manda a quádrupla e não fica com mensagem órfã", async () => {
+    // O 404 diz que a linha da tela já não existe no servidor; a lista refeita
+    // prova isso, e o alerta sai junto com ela.
+    mockFetch({ ignorados: [IGNORADO], ignoradosApos: [], deleteStatus: 404 });
     renderDiscovery("/discovery?device_id=1");
     await userEvent.click(await screen.findByRole("button", { name: "Voltar a considerar" }));
     const del = chamadas().find((c) => c[1]?.method === "DELETE");
     expect(String(del?.[0])).toContain("device_id=1");
     expect(String(del?.[0])).toContain("afi=ipv4");
     expect(String(del?.[0])).toContain("remote_address=100.64.10.1");
-    expect(await screen.findByRole("alert")).toHaveTextContent(/não está na lista de ignorados/);
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Voltar a considerar" })).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });

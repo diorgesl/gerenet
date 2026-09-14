@@ -804,7 +804,7 @@ export function useDiscoveryIgnorar() {
 
 export function useDiscoveryDesdesignorar() {
   const qc = useQueryClient();
-  return useMutation({
+  const mutation = useMutation({
     // A quádrupla (device, VRF, família, endereço) é a identidade do peer: o
     // DELETE que não a encontra responde 404 desde a Task 10, em vez do 204 que
     // dizia ter apagado o que não existia.
@@ -828,9 +828,13 @@ export function useDiscoveryDesdesignorar() {
       void qc.invalidateQueries({ queryKey: ["discovery-ignorados", v.device_id] });
     },
     onError: (_e, v) => {
-      // O 404 diz que a linha que a tela mostra já não existe no servidor: sem
-      // refazer a lista, o botão que falhou continua ali para falhar de novo.
-      void qc.invalidateQueries({ queryKey: ["discovery-ignorados", v.device_id] });
+      // O 404 diz que a linha da tela já não existe no servidor: refazer a
+      // lista é o que faz a linha fantasma sair. O `reset` espera essa lista,
+      // porque a mensagem não deve sobreviver ao motivo dela.
+      void qc
+        .invalidateQueries({ queryKey: ["discovery-ignorados", v.device_id] })
+        .then(() => mutation.reset());
     },
   });
+  return mutation;
 }
