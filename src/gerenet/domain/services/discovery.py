@@ -5,10 +5,12 @@ operador decidiu não adotar. O candidato adotado não precisa de linha aqui: el
 entra na SoT e sai da lista por consequência.
 """
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from gerenet.domain import models
 from gerenet.domain.audit import registrar
+from gerenet.domain.services.errors import ConflictError
 
 
 def listar_ignorados(session: Session, device_id: int) -> list[models.DiscoveryIgnoredPeer]:
@@ -46,12 +48,25 @@ def ignorar_candidato(
         motivo=motivo, autor=actor,
     )
     session.add(linha)
-    session.flush()
-    registrar(session, tipo="discovery.ignore", ator=actor, objeto="discovery_ignored_peer",
-              objeto_id=linha.id, antes=None,
-              depois={"device_id": device_id, "vrf": vrf, "afi": afi,
-                      "remote_address": remote_address, "motivo": motivo})
-    session.commit()
+    try:
+        # O `flush` é quem valida: a chave estrangeira do equipamento e os dois
+        # índices únicos parciais da quádrupla. A `_busca` acima cobre o caso
+        # comum do re-ignorar; o que sobra para o banco recusar é corrida (o
+        # equipamento apagado entre a conferência e o insert, ou duas
+        # requisições simultâneas) — e o operador recebe o conflito, não um 500
+        # com a sessão quebrada.
+        session.flush()
+        registrar(session, tipo="discovery.ignore", ator=actor,
+                  objeto="discovery_ignored_peer", objeto_id=linha.id, antes=None,
+                  depois={"device_id": device_id, "vrf": vrf, "afi": afi,
+                          "remote_address": remote_address, "motivo": motivo})
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise ConflictError(
+            f"O peer {remote_address} não pôde ser ignorado: o equipamento "
+            f"{device_id} não existe mais ou a linha acabou de ser criada."
+        ) from exc
     session.refresh(linha)
     return linha
 

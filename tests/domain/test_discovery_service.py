@@ -9,6 +9,7 @@ from gerenet.domain.services.discovery import (
     ignorar_candidato,
     listar_ignorados,
 )
+from gerenet.domain.services.errors import ConflictError
 
 
 def test_ignora_e_lista(db_session, edge_device) -> None:
@@ -66,6 +67,20 @@ def test_esquecer_o_que_nao_existe_e_no_op(db_session, edge_device) -> None:
     esquecer_ignorado(db_session, device_id=edge_device.id, vrf=None, afi="ipv4",
                       remote_address="10.0.0.9", actor="cli")
     assert listar_ignorados(db_session, edge_device.id) == []
+
+
+def test_ignorar_equipamento_inexistente_e_conflito(db_session) -> None:
+    """Equipamento que não existe: quem recusa é a chave estrangeira do banco, e
+    o serviço responde por ela com `ConflictError` — 409 na API, como todo
+    caminho de escrita do repositório — em vez de `IntegrityError` cru (500).
+
+    A segunda metade é a que importa tanto quanto a primeira: sem o `rollback`,
+    a sessão fica numa transação falhada e o 500 seguinte vem da mesma chamada.
+    """
+    with pytest.raises(ConflictError):
+        ignorar_candidato(db_session, device_id=9999, vrf=None, afi="ipv4",
+                          remote_address="10.0.0.9", motivo=None, actor="cli")
+    assert listar_ignorados(db_session, 9999) == []
 
 
 def test_audita_ignorar_e_esquecer(db_session, edge_device) -> None:
