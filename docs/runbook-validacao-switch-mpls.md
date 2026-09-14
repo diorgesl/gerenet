@@ -52,6 +52,7 @@ vsi <vrp-name> static
 vlan <vid>
 interface Vlanif<vid>
  description <description>          # apenas quando definida
+ mtu <mtu>                          # MTU da ponta, ou o do serviço quando ela não tem
  l2 binding vsi <vrp-name>          # indentado: é sub-comando da Vlanif
 ```
 
@@ -144,7 +145,7 @@ aceite; a capability `mpls_flow_label` é o gate do template, mas o gate vale na
 - [ ] `display vsi verbose`: um bloco por VSI com `VSI Name`/`VSI State`/`VSI ID`/`MTU` (VSI sem ID é descartado, como o bloco quebrado da fixture real).
 - [ ] `display current-configuration configuration vsi`: a forma é `vsi <nome> static` com `vsi-id`, `flow-label` e `peer` dentro de `pwsignal ldp`, e `mtu`/`description` no nível do VSI.
 - [ ] `display vsi verbose` nos três níveis: `VSI State` do serviço, `Session` de cada peer e `Interface Name`/`State` de cada AC. O `**PW Information` aparece só em alguns VSIs e repete o `Session`, por isso não é parseado.
-- [ ] `display current-configuration interface Vlanif<vid>` do AC: confirma o `l2 binding vsi <nome>` e a `description`.
+- [ ] `display current-configuration interface Vlanif<vid>` do AC: confirma o `l2 binding vsi <nome>`, o `mtu` e a `description`. Atenção: o `mtu` do AC é linha nova (2026-09-14) e **não** está no `display vsi verbose` — esta conferência é a única que o enxerga, e ela é manual (o pós-check do VSI só confere o MTU do serviço).
 - [ ] Templates TextFSM e fixtures atualizados e `test_parsers_mpls.py` verde.
 - [ ] Sintaxe do AC confirmada no `display this` da interface de teste (não conectada).
 - [ ] Suporte a flow-label/control-word confirmado (ou flags desligadas na SoT).

@@ -62,6 +62,7 @@ def render_vsi(session: Session, service: models.VsiService) -> dict[int, list[B
             "vid": vlan.vid,
             "description": service.description,
             "vrp_name": service.vrp_name,
+            "mtu": ep.mtu or service.mtu,
         }).splitlines()
         por_device.setdefault(ep.device_id, []).extend([
             BlocoRender(tipo="vsi", objeto="vsi", objeto_id=service.id, comandos=comandos_vsi),
@@ -170,11 +171,19 @@ def plan_remocao_vsi(session: Session, service: models.VsiService) -> list[chang
                 # `undo vsi` roda na visão de sistema: sem linha de contexto
                 item["comandos"] = [f"undo vsi {service.vrp_name}"]
             else:
-                # o binding mora dentro da interface: contexto + undo
-                item["comandos"] = [
-                    bloco.comandos[1],
-                    f"undo l2 binding vsi {service.vrp_name}",
-                ]
+                # o binding mora dentro da interface: contexto + undo. A linha de
+                # contexto sai por âncora de conteúdo, não por índice: inserir um
+                # comando antes da `interface` na criação deslocaria um índice
+                # fixo em silêncio, e o `undo` iria para a visão de sistema.
+                contexto = next(
+                    (c for c in bloco.comandos if c.startswith("interface ")), None
+                )
+                if contexto is None:
+                    raise ValidationError(
+                        f"Bloco do AC do VSI {service.name} sem a linha 'interface' — "
+                        "revalide o render antes de gerar a remoção."
+                    )
+                item["comandos"] = [contexto, f"undo l2 binding vsi {service.vrp_name}"]
             if estado_bloco_vsi(item, recursos) == "consta":
                 a_remover.append(item)
         plano.append(changes.PlanoDevice(
@@ -194,9 +203,11 @@ def valida_pre_checks_vsi(
     antes, com um erro de outra natureza.
     """
     # simetria (SoT §6): todo membro do serviço tem a sua ponta, e são pelo
-    # menos dois. O MTU fica fora da comparação: no VSI ele é campo do serviço
-    # (um só, não um por ponta) e o AC não o renderiza, então não há o par de
-    # MTUs do L2VC — quem compara com o coletado é o pós-check.
+    # menos dois. O MTU fica fora da comparação: o AC o renderiza, mas o
+    # `display vsi verbose` não traz MTU por AC (só o do serviço), então não há
+    # o par de MTUs do L2VC para comparar aqui — quem confere MTU é o pós-check,
+    # e no nível do serviço (`vsi.mtu`). Conferir o MTU do AC exige coletar a
+    # config da Vlanif: dívida registrada.
     if len(service.members) < 2:
         return "VSI com menos de dois membros — revalide o serviço."
     if len(service.endpoints) != len(service.members):

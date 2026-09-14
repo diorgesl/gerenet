@@ -243,7 +243,8 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   serviço: `vsi <nome> static`, `description`, `pwsignal ldp` com `vsi-id`,
   `flow-label` só com a capability `mpls_flow_label` e uma linha `peer` por
   membro restante, e `mtu`) e `vsi_ac.j2` (`vlan` + `interface Vlanif<vid>` +
-  ` l2 binding vsi <vrp_name>`, indentado por ser sub-comando); dois blocos por
+  `description`, ` mtu` (o da ponta, ou o do serviço quando ela não tem) e
+  ` l2 binding vsi <vrp_name>`, indentados por serem sub-comandos); dois blocos por
   PE e **um step por PE** na CR de **escopo `vsi`** (o provisionamento exige 2+
   endpoints; o cadastro aceita um). Pré-check `valida_pre_checks_vsi` (simetria
   de membros, par LDP **UP** de cada peer e Vlanif sem binding alheio — `None`,
@@ -261,13 +262,23 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   remoção desfaz **só** o binding e o VSI (`undo l2 binding vsi <nome>` no
   contexto da Vlanif e depois `undo vsi <nome>`, nessa ordem porque o VRP
   recusa remover VSI com AC ligado): a `Vlanif` e a `vlan` **ficam** no
-  equipamento. Web: `/mpls/vsi` e `/mpls/vsi/:id` com ACs, "Solicitar mudança"
-  e desativar/reativar; CLI `gerenet mpls vsi add --endpoint DEVICE:VID`
+  equipamento. Web: `/mpls/vsi` com "Novo VSI" (domínio, nome, VSI-ID, MTU,
+  descrição, flow-label e uma linha por PE com VID/MTU) e `/mpls/vsi/:id` com
+  ACs, "Solicitar mudança" e desativar/reativar; CLI
+  `gerenet mpls vsi add --endpoint DEVICE:VID`
   (repetível, `--flow-label`) e `change-requests add --escopo vsi --vsi-id`.
+  `split_horizon`/`mac_learning`/`mac_limit` ficam de fora do formulário e do
+  CLI: existem na SoT mas o template não os emite.
   Dívidas registradas (design §12): aprendizado de MAC (exige
   `display mac-address` e item de pós-check próprios), `tnl-policy` fora do
   modelo e do render, e a limpeza da `Vlanif`/`vlan` na remoção (a sobra é
-  decisão registrada, visível na divergência).
+  decisão registrada, visível na divergência). O cadastro de VSI pela web
+  (2026-09-14) expôs o MTU por ponta e o render passou a emiti-lo no AC;
+  como o re-diff identifica o AC pela `Vlanif`, serviços já provisionados
+  **não** ganham a linha até um re-provisionamento (remoção + provisionamento)
+  — uma CR de provisionamento nova apenas pula o bloco, sem aplicar nada —, e
+  conferi-la exige a config da Vlanif (o `display vsi verbose` não traz MTU
+  por AC) — o pós-check do AC fica como dívida.
 - Fase 5 (upstreams): organizações com `kind='operadora'` (ASN + IRR AS-SET)
   e upstreams com tipo (`transito`/`ix`/`pni`/`contingencia`), capacidade,
   prioridade/custo, prefixos esperados v4/v6 e margem do maximum-prefix;
