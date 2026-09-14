@@ -27,11 +27,14 @@ const SEVERIDADES_DASH = ["critica", "atencao", "aviso", "alerta"] as const;
 // "alerta" (anomalia de prefixos, Fase 5) compartilha o vermelho de "critica":
 // é o mesmo critério do SeverityBadge, e o LED segue a faixa de saúde do topo.
 // Verde só vale com a comparação inteira feita: "sem divergência" em quem não
-// foi comparado por completo (snapshot sem resumo ou coleta parcial) é o zero
-// enganoso que a frente evita, e o agregado da API não sabe dizer isso sozinho.
-function ledDivergencias(dv: DivergenciasAggOut, parciais: number): string {
+// foi comparado por completo (snapshot sem resumo, coleta parcial) ou nunca foi
+// coletado é o zero enganoso que a frente evita. O agregado da API só não conta
+// os dois últimos casos — daí os parâmetros.
+function ledDivergencias(dv: DivergenciasAggOut, parciais: number, nuncaColetados: number): string {
   if (dv.critica + dv.alerta > 0) return "red";
-  if (dv.atencao + dv.aviso > 0 || dv.devices_sem_resumo > 0 || parciais > 0) return "amber";
+  if (dv.atencao + dv.aviso > 0 || dv.devices_sem_resumo > 0 || parciais > 0 || nuncaColetados > 0) {
+    return "amber";
+  }
   return "green";
 }
 
@@ -60,6 +63,10 @@ export default function Dashboard() {
   // cliente, para o card não ler uma comparação incompleta como "sem
   // divergências".
   const parciais = (data?.per_device ?? []).filter((d) => d.divergencias?.parcial ?? false).length;
+  // Nunca coletado também não entra em contagem nenhuma do agregado (o
+  // `devices_sem_resumo` conta só quem tem snapshot): sem isso, instalação nova
+  // — equipamentos cadastrados, nenhum coletado — leria "0 divergências" verde.
+  const nuncaColetados = Math.max(0, (data?.devices.total ?? 0) - (data?.devices.with_snapshot ?? 0));
 
   return (
     <main>
@@ -122,7 +129,10 @@ export default function Dashboard() {
               <span className="label">upstreams<br />ativos</span>
             </div>
             <div className="metric">
-              <span className={`led ${ledDivergencias(data.divergencias, parciais)}`} aria-hidden="true" />
+              <span
+                className={`led ${ledDivergencias(data.divergencias, parciais, nuncaColetados)}`}
+                aria-hidden="true"
+              />
               <span className="val">{data.divergencias.total}</span>
               <span className="label">divergências<br />na última coleta</span>
             </div>
@@ -142,6 +152,8 @@ export default function Dashboard() {
                 ` ${data.divergencias.devices_sem_resumo} equipamento(s) sem resumo (coleta anterior a esta versão ou coleta sem snapshot).`}
               {parciais > 0 &&
                 ` ${parciais} equipamento(s) com comparação parcial (a coleta não trouxe tudo que a comparação precisa).`}
+              {nuncaColetados > 0 &&
+                ` ${nuncaColetados} equipamento(s) sem coleta (nunca coletados, sem dado para comparar).`}
             </p>
             <p className="severidades">
               {SEVERIDADES_DASH.map((s) => (

@@ -42,25 +42,27 @@ def enqueue_collect(device_id: int, *, actor: str, origin: str) -> dict:
             }
 
     settings = get_settings()
-    r = _redis(settings)
     chave_lock = f"gerenet:lock:device:{device_id}"
-    if r.get(chave_lock):
-        return {"queued": False, "message": "Já existe uma coleta em andamento para este equipamento."}
+    # `with` porque a varredura chama esta função uma vez por equipamento a cada
+    # ciclo: cliente solto deixaria uma conexão aberta por chamada até o GC.
+    with _redis(settings) as r:
+        if r.get(chave_lock):
+            return {"queued": False, "message": "Já existe uma coleta em andamento para este equipamento."}
 
-    q = Queue("gerenet-collect", connection=r)
-    pendentes = list(q.job_ids) + list(q.started_job_registry.get_job_ids())
-    for job_id in pendentes:
-        job = q.fetch_job(job_id)
-        if job is not None and job.args and job.args[0] == device_id:
-            return {"queued": False, "message": "Já existe uma coleta pendente para este equipamento."}
+        q = Queue("gerenet-collect", connection=r)
+        pendentes = list(q.job_ids) + list(q.started_job_registry.get_job_ids())
+        for job_id in pendentes:
+            job = q.fetch_job(job_id)
+            if job is not None and job.args and job.args[0] == device_id:
+                return {"queued": False, "message": "Já existe uma coleta pendente para este equipamento."}
 
-    job = q.enqueue(
-        collect_task,
-        device_id,
-        job_timeout=600,
-        result_ttl=3600,
-        meta={"actor": actor, "origin": origin},
-    )
+        job = q.enqueue(
+            collect_task,
+            device_id,
+            job_timeout=600,
+            result_ttl=3600,
+            meta={"actor": actor, "origin": origin},
+        )
     # job_id = id do job RQ; o job_runs no banco é criado pelo runner ao executar
     return {"queued": True, "job_id": job.id, "message": "Coleta enfileirada."}
 

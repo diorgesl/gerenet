@@ -96,6 +96,10 @@ services:
     environment:
       <<: *app-env
       RUN_MIGRATIONS: "false"
+      # Dev: liga a coleta periódica (design §3) — o worker arma uma varredura na
+      # subida e coleta, a cada hora, os equipamentos cadastrados no banco dev.
+      # Desligar: "0".
+      GERENET_COLLECT_INTERVAL_MINUTES: "60"
     volumes:
       - ./src:/srv/app/src
       - uv-cache:/root/.cache/uv

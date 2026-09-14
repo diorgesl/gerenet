@@ -8,6 +8,7 @@ por aplicação, e não o global do prometheus_client, porque a suíte chama
 Sem `ProcessCollector`/`PlatformCollector`: o §20.1 não pede métrica de processo
 e elas dependem de /proc, que não existe no macOS onde os testes rodam.
 """
+import logging
 import secrets
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -24,6 +25,8 @@ from gerenet.config import Settings
 from gerenet.db import get_session
 from gerenet.domain import models
 from gerenet.domain.models import COMM_STATUS
+
+logger = logging.getLogger(__name__)
 
 SEVERIDADES = ("critica", "atencao", "aviso", "alerta")
 FILAS = ("gerenet-collect", "gerenet-change")
@@ -245,8 +248,9 @@ class ColetorGerenet:
                 fila = Queue(nome, connection=r)
                 jobs.add_metric([nome], fila.count)
                 iniciados.add_metric([nome], len(fila.started_job_registry.get_job_ids()))
-        except Exception:  # noqa: BLE001, S110 — Redis fora do ar não derruba o scrape inteiro
-            pass
+        except Exception as exc:  # noqa: BLE001 — Redis fora do ar não derruba o scrape inteiro
+            # Só o tipo: a mensagem do redis-py pode carregar a URL (com senha).
+            logger.warning("metrics.filas_indisponiveis: %s", type(exc).__name__)
         finally:
             r.close()
         return [jobs, iniciados]

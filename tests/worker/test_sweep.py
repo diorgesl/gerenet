@@ -68,16 +68,16 @@ def _dev(
     return dev
 
 
-def _com_snapshot(db_session: Session, dev, *, minutos_atras: int) -> None:
+def _com_snapshot_em(db_session: Session, dev, *, quando: datetime) -> None:
+    """Snapshot com a data dada — o teste do `agora` injetado fixa o seu próprio."""
     db_session.add(
-        DeviceSnapshot(
-            device_id=dev.id,
-            status="success",
-            resources={},
-            started_at=datetime.now(UTC) - timedelta(minutes=minutos_atras),
-        )
+        DeviceSnapshot(device_id=dev.id, status="success", resources={}, started_at=quando)
     )
     db_session.commit()
+
+
+def _com_snapshot(db_session: Session, dev, *, minutos_atras: int) -> None:
+    _com_snapshot_em(db_session, dev, quando=datetime.now(UTC) - timedelta(minutes=minutos_atras))
 
 
 def _jobs_visiveis(fila: Queue) -> list:
@@ -147,6 +147,32 @@ def test_varredura_enfileira_quem_esta_fora_do_intervalo(fila_limpa: Redis, db_s
 
     assert resultado["pulados_idade"] == 0
     assert resultado["enfileirados"] == 1
+
+
+def test_varredura_com_agora_injetado_respeita_a_borda_do_intervalo(
+    fila_limpa: Redis, db_session: Session
+) -> None:
+    """A idade é medida contra o `agora` recebido, com comparação estrita.
+
+    Quem foi coletado exatamente no limite (`agora - intervalo`) ainda entra: o
+    corte é `ultimo > limite`, não `>=`. Uma coleta dentro do intervalo fica de
+    fora. O `agora` fixo tira a dependência do relógio da execução.
+    """
+    set_settings(Settings(_env_file=None, collect_interval_minutes=60))
+    grupo = _grupo(db_session)
+    na_borda = _dev(db_session, "na-borda", "10.12.0.1", grupo=grupo)
+    dentro = _dev(db_session, "dentro-do-intervalo", "10.12.0.2", grupo=grupo)
+    agora = datetime(2026, 9, 14, 12, 0, tzinfo=UTC)
+    _com_snapshot_em(db_session, na_borda, quando=agora - timedelta(minutes=60))
+    _com_snapshot_em(db_session, dentro, quando=agora - timedelta(minutes=30))
+
+    resultado = varredura_coletas(agora=agora)
+
+    assert resultado["pulados_idade"] == 1
+    assert resultado["enfileirados"] == 1
+    fila = Queue("gerenet-collect", connection=fila_limpa)
+    assert len(_jobs_do_device(fila, na_borda.id)) == 1
+    assert _jobs_do_device(fila, dentro.id) == []
 
 
 def test_varredura_conta_recusa_do_enqueue(fila_limpa: Redis, db_session: Session) -> None:

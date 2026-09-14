@@ -234,6 +234,32 @@ describe("Dashboard", () => {
     expect(metricDaFaixa("divergências").querySelector(".led.amber")).toBeTruthy();
   });
 
+  it("mostra o LED âmbar e a nota quando há equipamento nunca coletado", async () => {
+    // Instalação nova: dois equipamentos cadastrados, um com snapshot. O
+    // `devices_sem_resumo` não conta quem nunca foi coletado, então sem esta
+    // contagem o card leria "0 divergências" verde para a frota inteira.
+    mockDashboard({
+      ...DASH,
+      devices: { ...DASH.devices, total: 2, with_snapshot: 1 },
+      divergencias: {
+        ...DASH.divergencias,
+        total: 0,
+        critica: 0,
+        devices_com_critica: 0,
+        devices_sem_resumo: 0,
+        idade_max_seconds: null,
+      },
+      per_device: [
+        { ...DASH.per_device[0], divergencias: { ...DASH.per_device[0].divergencias, total: 0, critica: 0 } },
+      ],
+    });
+    renderDashboard();
+
+    expect(await screen.findByRole("heading", { name: "Divergências da última coleta" })).toBeTruthy();
+    expect(screen.getByText(/1 equipamento\(s\) sem coleta/)).toBeTruthy();
+    expect(metricDaFaixa("divergências").querySelector(".led.amber")).toBeTruthy();
+  });
+
   it("lista no card o equipamento cujo único sinal vermelho é alerta", async () => {
     mockDashboard({
       ...DASH,
