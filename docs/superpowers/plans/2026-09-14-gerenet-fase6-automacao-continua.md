@@ -34,7 +34,12 @@ Playwright, Prometheus e Grafana no compose de dev.
 - Comandos de verificação: `uv run pytest -q`, `uv run ruff check src tests`,
   `cd web && npm run test`, `cd web && npm run build`, `cd web && npm run lint`.
 - Os fumos e2e exigem o compose **parado** (porta 8000) e o banco `gerenet_e2e`;
-  rodam só na Task 6, e o run-book é `web/e2e/README.md`.
+  rodam só na Task 6, e o run-book é `web/e2e/README.md`. **De dentro da
+  worktree**, `docker compose stop api worker web` é no-op: o nome do projeto do
+  compose vem do diretório, então não existe projeto da worktree no ar para
+  parar. Pare e restaure **por nome de container** (`docker stop gerenet-api
+  gerenet-worker gerenet-web` e, no fim, `docker start` dos três) — quem ocupa a
+  porta 8000 é o stack do checkout principal.
 - **Worktree**: esta é a única árvore onde se commita. O hook de isolamento
   recusa comando git composto, então rode `git add`, `git commit` e `git log`
   como comandos simples e separados, sempre da raiz da worktree.
@@ -426,7 +431,8 @@ git commit -m "feat(worker): varredura de coletas do intervalo configurado"
 - [ ] **Step 1: Escrever os testes que falham**
 
 Acrescente ao fim de `tests/worker/test_sweep.py`, com os imports
-`from rq import Job, Queue` (já está) e
+`from rq import Queue` e `from rq.job import Job` (o pacote `rq` do RQ 2.12 não
+reexporta `Job`; o arquivo de teste já importa assim) e
 `from gerenet.worker.tasks import armar_varredura`:
 
 ```python
@@ -496,7 +502,8 @@ def armar_varredura(r: Redis, settings: Settings | None = None) -> bool:
     fila = Queue("gerenet-collect", connection=r)
     alvo = f"{varredura_coletas.__module__}.{varredura_coletas.__name__}"
     for job_id in fila.scheduled_job_registry.get_job_ids():
-        job = Job.fetch(job_id, connection=r)
+        # fetch_job (e não Job.fetch) tolera id órfão no registry: devolve None.
+        job = fila.fetch_job(job_id)
         if job is not None and job.func_name == alvo:
             return False
     fila.enqueue_in(
@@ -507,11 +514,11 @@ def armar_varredura(r: Redis, settings: Settings | None = None) -> bool:
     return True
 ```
 
-No import do `rq`, inclua `Job`:
-
-```python
-from rq import Job, Queue, get_current_job
-```
+`armar_varredura` **não** importa `Job`: usa `fila.fetch_job(job_id)`, que devolve
+`None` para id órfão no registry em vez de levantar `NoSuchJobError` — a mesma
+tolerância que o `if job is not None` acima busca, e o idioma que o
+`enqueue_collect` já usa no arquivo. Um id órfão (job apagado à mão, por exemplo)
+não derruba o boot do worker.
 
 E, dentro de `varredura_coletas`, imediatamente antes do `return {"status": "ok", ...}`,
 o reagendamento (releitura do intervalo: desligar vale já na execução seguinte):
@@ -558,7 +565,8 @@ WORKER_PID=$!
 sleep 6
 uv run python -c "
 from redis import Redis
-from rq import Job, Queue
+from rq import Queue
+from rq.job import Job
 from gerenet.config import Settings
 r = Redis.from_url(Settings(_env_file=None).redis_url)
 ids = Queue('gerenet-collect', connection=r).scheduled_job_registry.get_job_ids()
@@ -1684,7 +1692,12 @@ Expected: build limpo (`tsc -b && vite build`) e lint sem avisos.
 Pare o compose (a porta 8000 é do uvicorn do Playwright e o banco é o
 `gerenet_e2e`, ver `web/e2e/README.md`):
 
-Run: `docker compose stop api worker web`
+Run: `docker stop gerenet-api gerenet-worker gerenet-web`
+
+(O `docker compose stop api worker web` do plano original é no-op quando se está
+numa worktree, porque o nome do projeto vem do diretório; a parada por nome de
+container atinge o stack que realmente ocupa a porta. Restaure com
+`docker start` dos três no fim do fumo.)
 
 Em `web/e2e/smoke.spec.ts`, no primeiro teste, depois de `await entrar(page);`:
 
@@ -1954,12 +1967,17 @@ Em `compose.yaml`, antes de `volumes:`:
 Run:
 ```bash
 docker compose config -q
-docker run --rm -v "$PWD/docker/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro" prom/prometheus:v2.55.1 promtool check config /etc/prometheus/prometheus.yml
-python -m json.tool docker/observability/grafana/dashboards/gerenet.json > /dev/null && echo "json ok"
+docker run --rm --entrypoint /bin/promtool -v "$PWD/docker/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro" prom/prometheus:v2.55.1 check config /etc/prometheus/prometheus.yml
+python3 -m json.tool docker/observability/grafana/dashboards/gerenet.json > /dev/null && echo "json ok"
 ```
 Expected: `docker compose config -q` sem saída, `promtool` com
 `SUCCESS: /etc/prometheus/prometheus.yml is valid prometheus config file` e
 `json ok`. Nada disso toca os containers que já estão no ar.
+
+O `--entrypoint /bin/promtool` é obrigatório: o entrypoint da imagem
+`prom/prometheus` é o próprio `/bin/prometheus`, que trata `promtool` como
+argumento seu e sai com `Error parsing command line arguments: unexpected
+promtool`. E o JSON vai com `python3`, que é o que existe no PATH do macOS.
 
 - [ ] **Step 6: Conferir a coleta de ponta a ponta (manual, no fim da frente)**
 
