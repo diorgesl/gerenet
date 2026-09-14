@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { ApiError } from "@/api/client";
 import { useDevices, useReconcile } from "@/api/hooks";
 import { DataTable } from "@/components/DataTable";
@@ -31,7 +31,10 @@ export default function Reconcile() {
 
   return (
     <main>
-      <PageHeader titulo="Reconciliação" />
+      <PageHeader
+        titulo="Reconciliação"
+        acoes={deviceSel > 0 ? <Link to={`/discovery?device_id=${deviceSel}`}>Migrar</Link> : undefined}
+      />
       <FormField label="Modo">
         <select value={modo} onChange={(e) => setModo(e.target.value as "device" | "snapshot")}>
           <option value="device">Equipamento</option>

@@ -16,6 +16,8 @@ import type {
   DashboardOut,
   DesiredConfigOut,
   DeviceOut,
+  DiscoveryIgnoradoOut,
+  DiscoveryOut,
   HostkeyScanOut,
   JobRunOut,
   L2vcCreateIn,
@@ -717,5 +719,75 @@ export function useWikiPagina(slug: string | undefined) {
     queryKey: ["wiki-pagina", slug],
     queryFn: () => apiFetch<WikiPagina>(`/api/v1/wiki/${slug}`),
     enabled: Boolean(slug),
+  });
+}
+
+// ---- Descoberta de peers (§4–§5) ------------------------------------------
+// `retry: false` como no reconcile: a falha de leitura (equipamento sem coleta,
+// 404) é resposta, não instabilidade — repetir só atrasa o aviso.
+export function useDiscovery(deviceId: number) {
+  return useQuery({
+    queryKey: ["discovery", deviceId],
+    queryFn: () => apiFetch<DiscoveryOut>(`/api/v1/discovery?device_id=${deviceId}`),
+    enabled: deviceId > 0,
+    retry: false,
+  });
+}
+
+export const useDiscoveryIgnorados = (deviceId: number) =>
+  useQuery({
+    queryKey: ["discovery-ignorados", deviceId],
+    queryFn: () =>
+      apiFetch<DiscoveryIgnoradoOut[]>(`/api/v1/discovery/ignore?device_id=${deviceId}`),
+    enabled: deviceId > 0,
+  });
+
+export function useDiscoveryIgnorar() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      device_id: number;
+      vrf: string | null;
+      afi: string;
+      remote_address: string;
+      motivo: string | null;
+    }) => apiFetch<DiscoveryIgnoradoOut>("/api/v1/discovery/ignore", { method: "POST", body }),
+    onSuccess: (_d, v) => {
+      void qc.invalidateQueries({ queryKey: ["discovery", v.device_id] });
+      void qc.invalidateQueries({ queryKey: ["discovery-ignorados", v.device_id] });
+    },
+  });
+}
+
+export function useDiscoveryDesdesignorar() {
+  const qc = useQueryClient();
+  return useMutation({
+    // A quádrupla (device, VRF, família, endereço) é a identidade do peer: o
+    // DELETE que não a encontra responde 404 desde a Task 10, em vez do 204 que
+    // dizia ter apagado o que não existia.
+    mutationFn: ({
+      device_id,
+      vrf,
+      afi,
+      remote_address,
+    }: {
+      device_id: number;
+      vrf: string | null;
+      afi: string;
+      remote_address: string;
+    }) => {
+      const qs = new URLSearchParams({ device_id: String(device_id), afi, remote_address });
+      if (vrf) qs.set("vrf", vrf);
+      return apiFetch<void>(`/api/v1/discovery/ignore?${qs.toString()}`, { method: "DELETE" });
+    },
+    onSuccess: (_d, v) => {
+      void qc.invalidateQueries({ queryKey: ["discovery", v.device_id] });
+      void qc.invalidateQueries({ queryKey: ["discovery-ignorados", v.device_id] });
+    },
+    onError: (_e, v) => {
+      // O 404 diz que a linha que a tela mostra já não existe no servidor: sem
+      // refazer a lista, o botão que falhou continua ali para falhar de novo.
+      void qc.invalidateQueries({ queryKey: ["discovery-ignorados", v.device_id] });
+    },
   });
 }

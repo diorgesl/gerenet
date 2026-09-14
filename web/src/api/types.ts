@@ -543,3 +543,69 @@ export type UpstreamCommunityCreateIn = {
   bloquear?: boolean;
   notes?: string | null;
 };
+
+// Descoberta de peers (§4–§5): leitura da proposta de adoção. Os itens de
+// pendência e de conflito são genéricos de propósito — `tipo` é o rótulo e
+// `descricao` o que fazer; tipo novo não exige tela nova.
+export interface DiscoveryCandidatoOut {
+  device_id: number;
+  vrf: string | null;
+  afi: string;
+  remote_address: string;
+  asn_remote: number | null;
+  descricao: string | null;
+  snapshot_id: number;
+  classificacao: string;
+  motivo: string;
+}
+
+export interface DiscoveryPendenciaOut {
+  tipo: string;
+  descricao: string;
+}
+
+export interface DiscoveryConflitoOut {
+  tipo: string;
+  descricao: string;
+}
+
+export interface DiscoveryPropostaOut {
+  device_id: number;
+  vrf: string | null;
+  subinterface: string | null;
+  vid: number | null;
+  stack: string;
+  vlan_mode: string;
+  p2p_v4_len: number | null;
+  qinq: boolean;
+  organizacao_id: number | null;
+  organizacao_sugerida: string | null;
+  site_id: number | null;
+  circuit_code_sugerido: string | null;
+  vlans: { vid: number; kind: string; family: string | null }[];
+  prefixos: { network: string; ponta_local: string }[];
+  sessoes: Record<string, unknown>[];
+  candidatos: DiscoveryCandidatoOut[];
+  pendencias: DiscoveryPendenciaOut[];
+  conflitos: DiscoveryConflitoOut[];
+  veredito: string;
+}
+
+export interface DiscoveryOut {
+  device_id: number;
+  /** null = nenhuma coleta com a configuração salva; a lista vazia não é "não há peer". */
+  snapshot_id: number | null;
+  aviso: string | null;
+  gerado_em: string;
+  propostas: DiscoveryPropostaOut[];
+}
+
+export interface DiscoveryIgnoradoOut {
+  id: number;
+  device_id: number;
+  vrf: string | null;
+  afi: string;
+  remote_address: string;
+  motivo: string | null;
+  autor: string;
+}

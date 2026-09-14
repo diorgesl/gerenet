@@ -137,6 +137,10 @@ export const HELP = {
   "user.username": "Nome de login (1–64), único.",
   "user.password": "Senha com mínimo de 8 caracteres — jamais registrada em log ou auditoria.",
   "user.role": "Perfil de permissão: visualizador, operador, aprovador, executor ou administrador.",
+
+  // Discovery
+  "discovery.equipamento": "A leitura sai do snapshot mais recente que tenha a configuração salva.",
+  "discovery.veredito": "adotavel, adotavel_com_pendencias ou nao_adotavel — sempre com o motivo ao lado.",
 } as const;
 
 export type HelpKey = keyof typeof HELP;

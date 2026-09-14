@@ -22,6 +22,7 @@ import PrefixAuthorizations from "@/pages/PrefixAuthorizations";
 import AuditEvents from "@/pages/AuditEvents";
 import Snapshots from "@/pages/Snapshots";
 import DesiredConfig from "@/pages/DesiredConfig";
+import Discovery from "@/pages/Discovery";
 import Reconcile from "@/pages/Reconcile";
 import Jobs from "@/pages/Jobs";
 import JobDetail from "@/pages/JobDetail";
@@ -73,6 +74,7 @@ export default function App() {
         <Route path="/snapshots" element={<Snapshots />} />
         <Route path="/desired-config" element={<DesiredConfig />} />
         <Route path="/reconcile" element={<Reconcile />} />
+        <Route path="/discovery" element={<Discovery />} />
         <Route path="/jobs" element={<Jobs />} />
         <Route path="/jobs/:id" element={<JobDetail />} />
         <Route path="/wiki/:slug?" element={<Wiki />} />

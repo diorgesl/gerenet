@@ -165,6 +165,13 @@ export const ICONES_NAV: Record<string, ReactNode> = {
       {R("M8 16H3v5")}
     </Svg>
   ),
+  "/discovery": (
+    <Svg>
+      {R("M12 3v12")}
+      {R("m7 10 5 5 5-5")}
+      {R("M5 21h14")}
+    </Svg>
+  ),
   "/jobs": (
     <Svg>
       {R("m3 17 2 2 4-4")}
