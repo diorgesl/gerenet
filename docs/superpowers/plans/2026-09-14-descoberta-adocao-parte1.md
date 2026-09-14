@@ -343,41 +343,64 @@ A coluna existe mas ninguém a lê, então um circuito com a ponta superior aind
 
 - [ ] **Step 1: Write the failing tests**
 
+Os dois testes abaixo reaproveitam os helpers que **cada arquivo já tem** para montar ambiente (site, device, organização) e circuito reservado. Antes de escrever, leia o topo de `tests/automation/test_rendering.py` e de `tests/api/test_circuits_api.py` e use os helpers que estiverem lá, com os nomes e as assinaturas reais deles: os nomes citados aqui (`_ambiente`, `_circuito`, `_ambiente_dual`) são o que os arquivos costumam ter, não um contrato. O assert importante é sempre o mesmo, e não depende do helper: **o endereço emitido tem que ser a ponta de cima do bloco p2p que o helper reservou**, e não a de baixo. Descubra qual é lendo o bloco do site usado pelo helper (o `p2p_ipv4_block` dele) e escreva o endereço literal na asserção.
+
 Acrescente a `tests/automation/test_rendering.py` um teste que reserva um circuito e depois força a orientação para `superior`, conferindo que o endereço emitido é o de cima:
 
 ```python
 def test_subinterface_usa_a_ponta_superior_quando_a_linha_diz(db_session) -> None:
-    """Circuito adotado com o roteador no endereço de cima (spec §7)."""
-    ambiente = _ambiente(db_session)          # helper já existente no arquivo
-    circ = _circuito(db_session, ambiente)    # helper já existente no arquivo
+    """Circuito adotado com o roteador no endereço de cima (spec §7).
+
+    O helper do arquivo devolve o circuito reservado e o device; o endereço
+    esperado sai do banco, não de um literal escrito à mão.
+    """
+    circ_id, device_id = _circuito_dual(db_session)   # helper do próprio arquivo
     db_session.execute(
-        update(models.IpPrefix).where(models.IpPrefix.circuit_id == circ.id).values(
+        update(models.IpPrefix).where(models.IpPrefix.circuit_id == circ_id).values(
             ponta_local="superior"
         )
     )
     db_session.commit()
-    resultado = render_desejado(db_session, ambiente["dev"].id)
-    linhas = [linha for bloco in resultado.blocos for linha in bloco.comandos]
-    assert any(linha.startswith("ip address 10.0.0.1 ") for linha in linhas)
-    assert not any(linha.startswith("ip address 10.0.0.0 ") for linha in linhas)
+    redes = {
+        ipaddress.ip_network(n).version: n
+        for n in db_session.scalars(
+            select(models.IpPrefix.network).where(models.IpPrefix.circuit_id == circ_id)
+        )
+    }
+    esperado = pontas_v4(redes[4], "superior")[0]
+    inferior = pontas_v4(redes[4], "inferior")[0]
+    linhas = [
+        linha for bloco in render_desejado(db_session, device_id).blocos
+        for linha in bloco.comandos
+    ]
+    assert any(linha.startswith(f"ip address {esperado} ") for linha in linhas)
+    assert not any(linha.startswith(f"ip address {inferior} ") for linha in linhas)
 ```
 
-O bloco p2p do `_ambiente` de `test_rendering.py` é o que decide o endereço esperado; confira o valor real lendo o helper antes de escrever o assert, e use o endereço de cima do bloco que ele cria. Acrescente `from sqlalchemy import update` se faltar.
+Acrescente `from sqlalchemy import select, update` e `import ipaddress` ao topo do arquivo se faltarem.
 
 Acrescente a `tests/api/test_circuits_api.py`:
 
 ```python
 def test_detail_expoe_pontas_na_orientacao_da_linha(client, db_session) -> None:
-    ambiente = _ambiente_dual(db_session)     # helper já existente no arquivo
+    # Use o helper de circuito reservado dual que o próprio arquivo já tem e
+    # guarde só o id dele: as redes saem do banco, não do retorno do helper.
+    circ_id = _circuito_reservado_dual(db_session)
     db_session.execute(
-        update(models.IpPrefix).where(models.IpPrefix.circuit_id == ambiente["circ_id"]).values(
+        update(models.IpPrefix).where(models.IpPrefix.circuit_id == circ_id).values(
             ponta_local="superior"
         )
     )
     db_session.commit()
-    corpo = client.get(f"/api/v1/circuits/{ambiente['circ_id']}", headers=_auth()).json()
-    assert corpo["ipv4_local"] == pontas_v4(ambiente["rede_v4"], "superior")[0]
-    assert corpo["ipv6_local"] == pontas_v6(ambiente["rede_v6"], "superior")[0]
+    redes = {
+        int(ipaddress.ip_network(linha.network).version): linha.network
+        for linha in db_session.scalars(
+            select(models.IpPrefix).where(models.IpPrefix.circuit_id == circ_id)
+        )
+    }
+    corpo = client.get(f"/api/v1/circuits/{circ_id}", headers=_auth()).json()
+    assert corpo["ipv4_local"] == pontas_v4(redes[4], "superior")[0]
+    assert corpo["ipv6_local"] == pontas_v6(redes[6], "superior")[0]
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -901,7 +924,7 @@ Crie `tests/domain/test_discovery_service.py`:
 
 ```python
 """Lista de ignorados da descoberta (spec §11) — a única escrita da parte 1."""
-import pytest
+from sqlalchemy import select
 
 from gerenet.domain import models
 from gerenet.domain.services.discovery import (
@@ -962,7 +985,7 @@ def test_audita_ignorar_e_esquecer(db_session, edge_device) -> None:
     esquecer_ignorado(db_session, device_id=edge_device.id, vrf=None, afi="ipv4",
                       remote_address="10.0.0.9", actor="cli")
     tipos = [e.tipo for e in db_session.scalars(
-        __import__("sqlalchemy").select(models.AuditEvent).order_by(models.AuditEvent.id)
+        select(models.AuditEvent).order_by(models.AuditEvent.id)
     )]
     assert "discovery.ignore" in tipos
     assert "discovery.unignore" in tipos
@@ -1823,26 +1846,31 @@ class ResultadoPropostas:
 
 
 def _enlace(subs, afi: str, endereco_remoto: str):
-    """(subinterface, rede, endereço local) do enlace que contém o peer.
+    """(subinterface, rede, endereço local) da interface que contém o peer.
 
-    Só par p2p serve: v4 em /30 ou /31 e v6 em /126. Uma sub-rede compartilhada
-    (IX, por exemplo) não tem representação no IPAM, que só conhece `p2p`.
+    Devolve a primeira que contenha o endereço, qualquer que seja o prefixo. A
+    decisão de servir como par p2p é do chamador, que precisa separar "não achei
+    o enlace" de "achei, mas não é par p2p".
     """
     alvo = ipaddress.ip_address(endereco_remoto)
     for sub in subs:
-        if afi == "ipv4":
-            candidatos = [(e, m) for e, m in sub.enderecos_v4]
-        else:
-            candidatos = [(e, p) for e, p in sub.enderecos_v6]
-        for endereco, comprimento in candidatos:
+        pares = sub.enderecos_v4 if afi == "ipv4" else sub.enderecos_v6
+        for endereco, comprimento in pares:
             rede = ipaddress.ip_network(f"{endereco}/{comprimento}", strict=False)
-            if afi == "ipv4" and rede.prefixlen not in _ENLACES_V4:
-                continue
-            if afi == "ipv6" and rede.prefixlen != 126:
-                continue
             if alvo in rede:
                 return sub, rede, endereco
     return None
+
+
+def _eh_par_p2p(rede) -> bool:
+    """O IPAM só conhece enlace p2p: v4 em /30 ou /31 e v6 em /126.
+
+    Uma sub-rede compartilhada (IX, por exemplo) não tem representação, e o
+    operador precisa ver isso como conflito em vez de proposta incompleta.
+    """
+    if rede.version == 4:
+        return rede.prefixlen in _ENLACES_V4
+    return rede.prefixlen == 126
 
 
 def _orientacao(rede, endereco_local: str) -> str:
@@ -2112,12 +2140,13 @@ def listar_propostas(session: Session, device_id: int) -> ResultadoPropostas:
             orfas.append(proposta)
         else:
             sub, rede, local = enlace
+            par_p2p = _eh_par_p2p(rede)
             proposta = por_enlace.get((candidato.vrf, sub.vid))
             if proposta is None:
                 proposta = Proposta(
                     device_id=device.id, vrf=candidato.vrf, subinterface=sub.nome,
                     vid=sub.vid, stack=candidato.afi, vlan_mode="unica",
-                    p2p_v4_len=rede.prefixlen if rede.version == 4 else None,
+                    p2p_v4_len=rede.prefixlen if (rede.version == 4 and par_p2p) else None,
                     site_id=device.site_id,
                     circuit_code_sugerido=f"ADOC-{candidato.asn_remote}-{sub.vid}",
                 )
@@ -2126,17 +2155,26 @@ def listar_propostas(session: Session, device_id: int) -> ResultadoPropostas:
                 por_enlace[(candidato.vrf, sub.vid)] = proposta
             elif proposta.stack != candidato.afi:
                 proposta.stack = "dual"
-            orientacao = _orientacao(rede, local)
-            proposta.prefixos.append({"network": str(rede), "ponta_local": orientacao})
-            sessao = _sessao_de(peer, candidato, rede, orientacao)
-            proposta.sessoes.append(sessao)
-            _acrescenta(proposta.conflitos, _conflitos_de(
-                session, site_id=device.site_id, vid=sub.vid, rede=rede,
-                local=sessao["local_address"], remoto=candidato.remote_address,
-            ))
-            _acrescenta(proposta.conflitos, _conflitos_de_coleta(
-                snap, sub, sessao["local_address"], candidato.vrf,
-            ))
+            if par_p2p:
+                orientacao = _orientacao(rede, local)
+                proposta.prefixos.append({"network": str(rede), "ponta_local": orientacao})
+                sessao = _sessao_de(peer, candidato, rede, orientacao)
+                proposta.sessoes.append(sessao)
+                _acrescenta(proposta.conflitos, _conflitos_de(
+                    session, site_id=device.site_id, vid=sub.vid, rede=rede,
+                    local=sessao["local_address"], remoto=candidato.remote_address,
+                ))
+                _acrescenta(proposta.conflitos, _conflitos_de_coleta(
+                    snap, sub, sessao["local_address"], candidato.vrf,
+                ))
+            else:
+                # A proposta continua na lista, com a VLAN que existe, mas sem
+                # reserva de prefixo: não há par p2p a reservar.
+                _acrescenta(proposta.conflitos, [Conflito(
+                    "enlace_nao_p2p",
+                    f"O endereço {local} está em {rede}, que não é um par p2p "
+                    "(/30, /31 ou /126): o IPAM não representa sub-rede compartilhada.",
+                )])
 
         proposta.candidatos.append(candidato)
         _acrescenta(proposta.pendencias, _pendencias_de(
@@ -2398,7 +2436,6 @@ def conferir_fidelidade(session: Session, proposta: Proposta) -> list[Diferenca]
         for endereco in sorted(_enderecos_da(proposta)):
             esperado = _normaliza_linhas(
                 [linha for linha in comando_peer if f"peer {endereco} " in f" {linha} "]
-                or comando_peer
             )
             encontrado = _contexto_peer(texto, endereco)
             resultado.append(Diferenca(
@@ -3282,7 +3319,6 @@ import { DataTable } from "@/components/DataTable";
 import { FormField } from "@/components/FormField";
 import { Modal } from "@/components/Modal";
 import { PageHeader } from "@/components/PageHeader";
-import { StatusBadge } from "@/components/StatusBadge";
 import type { DiscoveryPropostaOut } from "@/api/types";
 
 export default function Discovery() {
@@ -3347,7 +3383,25 @@ export default function Discovery() {
             render: (p) => p.candidatos.map((c) => c.remote_address).join(", "),
           },
           { key: "circuit_code_sugerido", title: "Código sugerido", render: (p) => p.circuit_code_sugerido ?? "—" },
-          { key: "veredito", title: "Veredito", render: (p) => <StatusBadge estado={p.veredito} /> },
+          {
+            key: "veredito",
+            title: "Veredito",
+            // Cores próprias: o StatusBadge deixaria os três vereditos no cinza
+            // de "unknown", e `nao_adotavel` de cinza lê como "não sei".
+            render: (p) => (
+              <span
+                className={
+                  p.veredito === "adotavel"
+                    ? "badge badge-ok"
+                    : p.veredito === "nao_adotavel"
+                      ? "badge badge-fail"
+                      : "badge badge-warn"
+                }
+              >
+                {p.veredito}
+              </span>
+            ),
+          },
         ]}
         linhas={propostas}
         carregando={isLoading}
