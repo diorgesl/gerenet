@@ -313,8 +313,8 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   o `l2vc` ganhou os dois na Fase 4, parte 2, e o `vsi` na parte 3); desfazer
   uma remoção já **aplicada** exige reativar o upstream antes — a remoção
   aplicada o desativa na SoT e a API responde 409 ("reative antes de planejar
-  a mudança") até a
-  reativação, manual de propósito (sem reativação automática). Web: `/upstreams`
+  a mudança") até a reativação, manual de propósito (sem reativação
+  automática). Web: `/upstreams`
   + `/upstreams/:id` (detalhe com a matriz principal × contingência e
   "Solicitar mudança") e fumo `web/e2e/upstream.spec.ts` (org operadora pela
   UI, upstream, community, vínculo e CR aprovada pelo `e2e-aprovador`;

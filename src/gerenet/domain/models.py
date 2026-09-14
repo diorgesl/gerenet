@@ -725,7 +725,7 @@ class ServiceEndpoint(Base):
 
 
 class VsiService(Base):
-    """VSI multiponto (§9.3) — somente modelo + consulta neste ciclo (§11.3)."""
+    """VSI multiponto (§9.3) — membros, ACs e CR de escopo `vsi` por PE."""
 
     __tablename__ = "vsi_services"
 

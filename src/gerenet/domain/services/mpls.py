@@ -474,7 +474,7 @@ def out_l2vc(svc: models.L2vcService) -> L2vcOut:
     )
 
 
-# ---- Serviços VSI (§9.3: modelo + consulta; sem render/CR neste ciclo) --
+# ---- Serviços VSI (§9.3: SoT do multiponto, com render/CR da fase 4) ------
 
 def _vsi(session: Session, vsi_id: int) -> models.VsiService:
     svc = session.scalars(

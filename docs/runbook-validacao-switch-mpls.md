@@ -343,6 +343,12 @@ Vlanif sem binding alheio), re-diff do plano congelado, aplicação bloco a bloc
 Uma ponta que falha deixa a CR em `parcial` — o serviço fica parcialmente provisionado, que é
 o caso que o §9.3 manda reconciliar (`uv run gerenet change-requests reconcile <cr>`).
 
+O `mpls_ldp_peer` **não** entra no gate de coleta do escopo (que é `interfaces`, `vsi` e
+`config_backup`): coleta em que o comando da sessão LDP falhou passa pelo gate e quem barra a
+execução é o `valida_pre_checks_vsi` ("Coleta sem 'mpls_ldp_peer'") — a mesma leitura da **Nota
+de coleta** da §3.3, aqui no pré-check do VSI. Se a execução parar pedindo a coleta do LDP,
+olhe primeiro os erros do snapshot.
+
 Conferência nos **três níveis** (na web, o detalhe da CR mostra o `post_check_json` de cada
 step):
 
