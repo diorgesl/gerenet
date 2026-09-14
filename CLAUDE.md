@@ -261,9 +261,13 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   remoção desfaz **só** o binding e o VSI (`undo l2 binding vsi <nome>` no
   contexto da Vlanif e depois `undo vsi <nome>`, nessa ordem porque o VRP
   recusa remover VSI com AC ligado): a `Vlanif` e a `vlan` **ficam** no
-  equipamento. Web: `/mpls/vsi` e `/mpls/vsi/:id` com ACs, "Solicitar mudança"
-  e desativar/reativar; CLI `gerenet mpls vsi add --endpoint DEVICE:VID`
+  equipamento. Web: `/mpls/vsi` com "Novo VSI" (domínio, nome, VSI-ID, MTU,
+  descrição, flow-label e uma linha por PE com VID/MTU) e `/mpls/vsi/:id` com
+  ACs, "Solicitar mudança" e desativar/reativar; CLI
+  `gerenet mpls vsi add --endpoint DEVICE:VID`
   (repetível, `--flow-label`) e `change-requests add --escopo vsi --vsi-id`.
+  `split_horizon`/`mac_learning`/`mac_limit` ficam de fora do formulário e do
+  CLI: existem na SoT mas o template não os emite.
   Dívidas registradas (design §12): aprendizado de MAC (exige
   `display mac-address` e item de pós-check próprios), `tnl-policy` fora do
   modelo e do render, e a limpeza da `Vlanif`/`vlan` na remoção (a sobra é

@@ -30,10 +30,14 @@ pós-validação. Os dois mundos têm um ponto comum: o tráfego de downstreams.
 
 ## VSI (multiponto)
 
-- **Cadastro** (página `/mpls/vsi`): um **AC por PE participante**, com VLAN reservada por
-  equipamento e a interface derivada do VID (`Vlanif<vid>` — o VID omitido assume o VSI-ID,
-  que é a convenção da operação), mais sinalização LDP, split-horizon, limite de MAC
-  aprendido e flow-label (requer a capability `mpls_flow_label` no equipamento).
+- **Cadastro** (página `/mpls/vsi`, botão "Novo VSI"): domínio, nome, VSI-ID (vazio assume o
+  próximo livre), MTU, descrição e flow-label (requer a capability `mpls_flow_label` no
+  equipamento), mais um **AC por PE participante** — VLAN reservada por equipamento e a
+  interface derivada do VID (`Vlanif<vid>` — o VID omitido assume o VSI-ID, que é a convenção
+  da operação), com MTU opcional por ponta. O formulário aceita um PE; o provisionamento exige
+  dois ou mais. O equivalente na CLI é `gerenet mpls vsi add --endpoint DEVICE:VID`. Os campos
+  `split_horizon`, `mac_learning` e `mac_limit` existem na SoT mas **não entram no render** (o
+  template não os emite), então ficam fora do formulário e do CLI.
 - **Mudança controlada**: o provisionamento é uma change request de **escopo `vsi`**, com
   um step por PE — o bloco do VSI (com uma linha `peer` por membro) e o do AC —, **pré-check**
   do par LDP de cada peer e da Vlanif sem binding alheio, **pós-check nos três níveis**

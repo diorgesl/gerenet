@@ -122,6 +122,17 @@ export const HELP = {
   "upstream.contingencia_prepend": "Prepend no AS-PATH quando o upstream é contingência (0–10) — desvaloriza os anúncios.",
   "upstream.contingencia_notes": "Observações livres sobre o contexto de contingência.",
 
+  // VSI (multiponto, §9.3)
+  "vsi.domain": "Domínio MPLS do serviço; o VSI-ID é único dentro dele.",
+  "vsi.name": "Nome lógico do serviço (1–64); o nome VRP derivado é o que vai ao equipamento.",
+  "vsi.vsi_id": "VSI-ID único no domínio; vazio assume o próximo livre.",
+  "vsi.mtu": "MTU do serviço (576–9216; default 1500).",
+  "vsi.description": "Descrição opcional do serviço (até 255 caracteres) — sai no bloco do VSI.",
+  "vsi.flow_label": "Só tem efeito em equipamento com a capability mpls_flow_label; sem ela o flow-label é omitido do comando, sem erro.",
+  "vsi.endpoint.device": "PE participante do VSI.",
+  "vsi.endpoint.vid": "VLAN de AC no PE; vazio assume o VSI-ID. A interface Vlanif<vid> é derivada daqui.",
+  "vsi.endpoint.mtu": "MTU do AC; vazio herda o do serviço.",
+
   // Users
   "user.username": "Nome de login (1–64), único.",
   "user.password": "Senha com mínimo de 8 caracteres — jamais registrada em log ou auditoria.",
