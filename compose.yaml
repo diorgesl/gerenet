@@ -121,6 +121,31 @@ services:
     depends_on:
       - api
 
+  # Observabilidade de dev (§20): raspa o /metrics da API e abre o dashboard
+  # provisionado. Em produção, o Prometheus/Grafana são os de quem instala.
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: gerenet-prometheus
+    volumes:
+      - ./docker/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports: ["9090:9090"]
+    depends_on:
+      - api
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: gerenet-grafana
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./docker/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["3000:3000"]
+    depends_on:
+      - prometheus
+
 volumes:
   db-data:
   node_modules:
