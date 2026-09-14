@@ -245,3 +245,305 @@ def test_vrf_faz_parte_da_identidade(db_session, tmp_path) -> None:
     assert "10.99.0.1" not in {
         p.remote_address for p in listar_candidatos(db_session, dev.id).candidatos
     }
+
+
+from gerenet.automation.discovery import listar_propostas
+
+
+def _propostas(db_session, dev):
+    return {p.vid: p for p in listar_propostas(db_session, dev.id).propostas}
+
+
+def test_proposta_do_downstream_dual_monta_a_cadeia(db_session, tmp_path) -> None:
+    dev = _ambiente(db_session)
+    create_organization(db_session, OrganizationCreate(name="Cliente Alfa", asn=64512),
+                        actor="cli")
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+    assert alfa.stack == "dual"
+    assert alfa.p2p_v4_len == 31
+    assert alfa.vid == 1001
+    assert alfa.vlans == [{"vid": 1001, "kind": "vlan", "family": None}]
+    assert alfa.prefixos == [
+        {"network": "100.64.10.0/31", "ponta_local": "inferior"},
+        {"network": "2804:194C:1000::1100:73:0/126", "ponta_local": "inferior"},
+    ]
+    assert {s["afi"] for s in alfa.sessoes} == {"ipv4", "ipv6"}
+    assert alfa.site_id is not None
+
+
+def test_ponta_superior_do_cliente_beta(db_session, tmp_path) -> None:
+    """`100.64.10.5` é a ponta de cima do /31 `100.64.10.4/31` (spec §7)."""
+    dev = _ambiente(db_session)
+    _com_config(db_session, dev, tmp_path)
+    beta = _propostas(db_session, dev)[2001]
+    assert beta.stack == "ipv4"
+    assert beta.prefixos[0]["ponta_local"] == "superior"
+
+
+def test_pendencias_obrigatorias_do_downstream(db_session, tmp_path) -> None:
+    dev = _ambiente(db_session)
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+    tipos = {p.tipo for p in alfa.pendencias}
+    assert "organizacao_ausente" in tipos
+    assert "acesso_desconhecido" in tipos
+    assert "senha_nao_legivel" in tipos
+    assert "perfil_indeterminado" in tipos
+    assert alfa.organizacao_id is None
+    assert alfa.organizacao_sugerida == "CLIENTE-ALFA"
+
+
+def test_com_organizacao_cadastrada_a_pendencia_some(db_session, tmp_path) -> None:
+    dev = _ambiente(db_session)
+    org = create_organization(db_session, OrganizationCreate(name="Cliente Alfa", asn=64512),
+                              actor="cli")
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+    assert alfa.organizacao_id == org.id
+    assert "organizacao_ausente" not in {p.tipo for p in alfa.pendencias}
+
+
+def test_veredito_com_pendencia_e_nao_adotavel_com_conflito(db_session, tmp_path) -> None:
+    dev = _ambiente(db_session)
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+    assert alfa.veredito == "adotavel_com_pendencias"
+
+
+def test_vlan_tomada_e_conflito(db_session, tmp_path) -> None:
+    from gerenet.domain.schemas import CircuitCreate
+    from gerenet.domain.services.circuits import create_circuit
+
+    dev = _ambiente(db_session)
+    org = create_organization(db_session, OrganizationCreate(name="Outro Cliente", asn=64999),
+                              actor="cli")
+    site = db_session.scalar(select(models.Site))
+    outro = create_circuit(db_session, CircuitCreate(
+        code="CIRC-TOMADO", organization_id=org.id, site_id=site.id,
+        access_device_id=dev.id, access_port="GE0/0/9", edge_device_id=dev.id,
+    ), actor="cli")
+    db_session.add(models.Vlan(site_id=site.id, vid=1001, kind="vlan", circuit_id=outro.id))
+    db_session.commit()
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+    assert "vlan_tomada" in {c.tipo for c in alfa.conflitos}
+    assert alfa.veredito == "nao_adotavel"
+
+
+def test_endereco_fora_de_par_p2p_e_conflito(db_session, tmp_path) -> None:
+    """IX com sub-rede compartilhada não cabe no IPAM, que só conhece p2p."""
+    dev = _ambiente(db_session)
+    arquivo = tmp_path / "current.txt"
+    arquivo.write_text(
+        "interface Eth-Trunk127.4001\n"
+        " vlan-type dot1q 4001\n"
+        " ip address 200.219.0.1 255.255.255.240\n"
+        "#\n"
+        "bgp 65001\n"
+        " peer 200.219.0.2 as-number 64999\n"
+        " peer 200.219.0.2 description PEER-IX\n",
+        encoding="utf-8",
+    )
+    db_session.add(models.DeviceSnapshot(device_id=dev.id, status="success",
+                                        raw_files={"config_backup": [str(arquivo)]}))
+    db_session.commit()
+    (prop,) = listar_propostas(db_session, dev.id).propostas
+    assert "enlace_nao_p2p" in {c.tipo for c in prop.conflitos}
+
+
+def test_endereco_sem_subinterface_e_conflito(db_session, tmp_path) -> None:
+    dev = _ambiente(db_session)
+    arquivo = tmp_path / "current.txt"
+    arquivo.write_text(
+        "bgp 65001\n peer 100.64.99.1 as-number 64999\n",
+        encoding="utf-8",
+    )
+    db_session.add(models.DeviceSnapshot(device_id=dev.id, status="success",
+                                        raw_files={"config_backup": [str(arquivo)]}))
+    db_session.commit()
+    (prop,) = listar_propostas(db_session, dev.id).propostas
+    assert "endereco_sem_subinterface" in {c.tipo for c in prop.conflitos}
+
+
+def test_leitura_parcial_ainda_propoe(db_session, tmp_path) -> None:
+    """Aviso de leitura parcial não pode zerar a lista: o que foi lido vale.
+
+    Um cabeçalho de família fora do escopo faz o parser avisar e seguir; os peers
+    da instância pública foram lidos inteiros e viram proposta normalmente.
+    """
+    dev = _ambiente(db_session)
+    arquivo = tmp_path / "current.txt"
+    arquivo.write_text(
+        "interface Eth-Trunk127.6001\n"
+        " vlan-type dot1q 6001\n"
+        " ip address 100.64.10.0 255.255.255.254\n"
+        "#\n"
+        "bgp 65001\n"
+        " peer 100.64.10.1 as-number 64512\n"
+        " ipv4-family unicast\n"
+        "  peer 100.64.10.1 enable\n"
+        " ipv4-family multicast\n"
+        "  peer 10.0.0.9 enable\n",
+        encoding="utf-8",
+    )
+    db_session.add(models.DeviceSnapshot(device_id=dev.id, status="success",
+                                        raw_files={"config_backup": [str(arquivo)]}))
+    db_session.commit()
+    resultado = listar_propostas(db_session, dev.id)
+    assert resultado.aviso is not None
+    assert resultado.snapshot_id is not None
+    assert [c.remote_address for p in resultado.propostas for c in p.candidatos] == [
+        "100.64.10.1",
+    ]
+
+
+def test_asn_divergente_do_cadastro_vira_pendencia(db_session, tmp_path) -> None:
+    """A configuração diz `bgp 65001` e o cadastro do equipamento diz outro ASN."""
+    dev = _ambiente(db_session, asn=65002)
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+    assert "asn_do_equipamento" in {p.tipo for p in alfa.pendencias}
+
+
+def test_mesmo_asn_em_enlaces_diferentes_vira_pendencia(db_session, tmp_path) -> None:
+    """Dois enlaces com o mesmo ASN podem ser um dual stack com VLAN separada
+    (um circuito) ou dois circuitos: o sistema não decide, ele avisa."""
+    dev = _ambiente(db_session)
+    arquivo = tmp_path / "current.txt"
+    arquivo.write_text(
+        "interface Eth-Trunk127.5001\n"
+        " vlan-type dot1q 5001\n"
+        " ip address 100.64.10.0 255.255.255.254\n"
+        "#\n"
+        "interface Eth-Trunk127.5002\n"
+        " vlan-type dot1q 5002\n"
+        " ipv6 address 2804:194C:1000::1100:73:1 126\n"
+        "#\n"
+        "bgp 65001\n"
+        " peer 100.64.10.1 as-number 64512\n"
+        " peer 2804:194C:1000::1100:73:2 as-number 64512\n",
+        encoding="utf-8",
+    )
+    db_session.add(models.DeviceSnapshot(device_id=dev.id, status="success",
+                                        raw_files={"config_backup": [str(arquivo)]}))
+    db_session.commit()
+    por_vid = _propostas(db_session, dev)
+    assert "mesmo_asn_em_outro_enlace" in {p.tipo for p in por_vid[5001].pendencias}
+    assert "mesmo_asn_em_outro_enlace" in {p.tipo for p in por_vid[5002].pendencias}
+
+
+def _com_config_e_interfaces(db_session, dev, tmp_path: Path, *, vpn: str | None = None):
+    """Snapshot com a config da fixture e o recurso `interfaces` correspondente.
+
+    O `display ip interface brief` já vai em toda coleta (collectors.py) e é a
+    única fonte da VRF a que o endereço pertence.
+    """
+    arquivo = tmp_path / "current.txt"
+    arquivo.write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    snap = models.DeviceSnapshot(
+        device_id=dev.id, status="success",
+        raw_files={"config_backup": [str(arquivo)]},
+        resources={"interfaces": [
+            {"nome": "Eth-Trunk127.1001", "phy": "up", "protocolo": "up",
+             "enderecos_v4": ["100.64.10.0/31"],
+             "enderecos_v6": ["2804:194C:1000::1100:73:1/126"], "vpn": vpn},
+            {"nome": "Eth-Trunk127.2001", "phy": "up", "protocolo": "up",
+             "enderecos_v4": ["100.64.10.5/31"], "enderecos_v6": [], "vpn": vpn},
+            {"nome": "Eth-Trunk127.3001", "phy": "up", "protocolo": "up",
+             "enderecos_v4": ["100.64.10.2/31"], "enderecos_v6": [], "vpn": vpn},
+        ]},
+    )
+    db_session.add(snap)
+    db_session.commit()
+    return snap
+
+
+def test_coleta_concordando_nao_gera_conflito(db_session, tmp_path) -> None:
+    dev = _ambiente(db_session)
+    _com_config_e_interfaces(db_session, dev, tmp_path)
+    tipos = {c.tipo for p in listar_propostas(db_session, dev.id).propostas
+             for c in p.conflitos}
+    assert "endereco_fora_da_coleta" not in tipos
+    assert "vrf_do_enlace_divergente" not in tipos
+
+
+def test_vrf_divergente_entre_config_e_coleta_e_conflito(db_session, tmp_path) -> None:
+    dev = _ambiente(db_session)
+    _com_config_e_interfaces(db_session, dev, tmp_path, vpn="VPNA")
+    alfa = _propostas(db_session, dev)[1001]
+    assert "vrf_do_enlace_divergente" in {c.tipo for c in alfa.conflitos}
+
+
+def test_sem_o_recurso_de_interfaces_nada_e_conferido(db_session, tmp_path) -> None:
+    """Ausência de dado não é divergência: coleta antiga sem o recurso passa."""
+    dev = _ambiente(db_session)
+    _com_config(db_session, dev, tmp_path)
+    tipos = {c.tipo for p in listar_propostas(db_session, dev.id).propostas
+             for c in p.conflitos}
+    assert "interface_ausente_na_coleta" not in tipos
+
+
+def test_interface_ausente_na_coleta_e_conflito(db_session, tmp_path) -> None:
+    dev = _ambiente(db_session)
+    arquivo = tmp_path / "current.txt"
+    arquivo.write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    db_session.add(models.DeviceSnapshot(
+        device_id=dev.id, status="success",
+        raw_files={"config_backup": [str(arquivo)]},
+        resources={"interfaces": [{"nome": "LoopBack0", "phy": "up", "protocolo": "up",
+                                   "enderecos_v4": ["10.0.0.1/32"],
+                                   "enderecos_v6": [], "vpn": None}]},
+    ))
+    db_session.commit()
+    tipos = {c.tipo for p in listar_propostas(db_session, dev.id).propostas
+             for c in p.conflitos}
+    assert "interface_ausente_na_coleta" in tipos
+
+
+def test_enlace_sem_vlan_e_a_propria_interface(db_session, tmp_path) -> None:
+    """Sem VLAN o enlace é a porta: dois `/31` em portas diferentes são dois
+    circuitos, e não um agrupado pelo `vid` que não existe."""
+    dev = _ambiente(db_session)
+    arquivo = tmp_path / "current.txt"
+    arquivo.write_text(
+        "interface GE0/0/1\n"
+        " ip address 100.64.20.0 255.255.255.254\n"
+        "#\n"
+        "interface GE0/0/2\n"
+        " ip address 100.64.21.0 255.255.255.254\n"
+        "#\n"
+        "bgp 65001\n"
+        " peer 100.64.20.1 as-number 64512\n"
+        " peer 100.64.21.1 as-number 64513\n",
+        encoding="utf-8",
+    )
+    db_session.add(models.DeviceSnapshot(device_id=dev.id, status="success",
+                                        raw_files={"config_backup": [str(arquivo)]}))
+    db_session.commit()
+    propostas = listar_propostas(db_session, dev.id).propostas
+    assert [p.subinterface for p in propostas] == ["GE0/0/1", "GE0/0/2"]
+    assert [p.circuit_code_sugerido for p in propostas] == [None, None]
+
+
+def test_prefixo_tomado_na_caixa_do_equipamento_e_conflito(db_session, tmp_path) -> None:
+    """O IPAM grava o /126 com a caixa do bloco do site (`2804:194C:1000::/48`,
+    o default dos settings): a conferência não pode depender da caixa."""
+    from gerenet.domain.schemas import CircuitCreate
+    from gerenet.domain.services.circuits import create_circuit
+
+    dev = _ambiente(db_session)
+    org = create_organization(db_session, OrganizationCreate(name="Outro Cliente", asn=64999),
+                              actor="cli")
+    site = db_session.scalar(select(models.Site))
+    outro = create_circuit(db_session, CircuitCreate(
+        code="CIRC-V6-TOMADO", organization_id=org.id, site_id=site.id,
+        access_device_id=dev.id, access_port="GE0/0/9", edge_device_id=dev.id,
+    ), actor="cli")
+    db_session.add(models.IpPrefix(site_id=site.id, network="2804:194C:1000::1100:73:0/126",
+                                   kind="p2p", circuit_id=outro.id))
+    db_session.commit()
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+    assert "prefixo_tomado" in {c.tipo for c in alfa.conflitos}
+    assert alfa.veredito == "nao_adotavel"
