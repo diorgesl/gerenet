@@ -82,6 +82,7 @@ export default function MplsVsi() {
           type="button"
           onClick={() => {
             setForm(formVazio());
+            setErro(null);
             setCriando(true);
           }}
         >
@@ -122,12 +123,15 @@ export default function MplsVsi() {
               <input
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
+                maxLength={64}
                 required
               />
             </FormField>
             <FormField label="VSI-ID" help={help("vsi.vsi_id")}>
               <input
                 type="number"
+                min={1}
+                max={4294967295}
                 value={form.vsi_id}
                 onChange={(e) => setForm({ ...form, vsi_id: e.target.value })}
                 placeholder="vazio = próximo VSI-ID do domínio"
@@ -136,6 +140,8 @@ export default function MplsVsi() {
             <FormField label="MTU do serviço" help={help("vsi.mtu")}>
               <input
                 type="number"
+                min={576}
+                max={9216}
                 value={form.mtu}
                 onChange={(e) => setForm({ ...form, mtu: e.target.value })}
               />
@@ -172,6 +178,8 @@ export default function MplsVsi() {
                 <FormField label="VID" help={help("vsi.endpoint.vid")}>
                   <input
                     type="number"
+                    min={2}
+                    max={4094}
                     value={pe.vid}
                     onChange={(e) => setPe(idx, "vid", e.target.value)}
                     placeholder="vazio = assume o VSI-ID"
@@ -180,6 +188,8 @@ export default function MplsVsi() {
                 <FormField label="MTU" help={help("vsi.endpoint.mtu")}>
                   <input
                     type="number"
+                    min={576}
+                    max={9216}
                     value={pe.mtu}
                     onChange={(e) => setPe(idx, "mtu", e.target.value)}
                     placeholder="vazio = herda do serviço"
@@ -189,6 +199,7 @@ export default function MplsVsi() {
                   type="button"
                   disabled={form.pes.length === 1}
                   onClick={() => setForm({ ...form, pes: form.pes.filter((_, i) => i !== idx) })}
+                  aria-label={`Remover PE ${idx + 1}`}
                 >
                   Remover PE
                 </button>

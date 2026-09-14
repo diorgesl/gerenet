@@ -126,6 +126,12 @@ describe("MplsVsi", () => {
         endpoints: [{ device_id: 1, vid: 600 }],
       });
     });
+
+    // O cadastro bem-sucedido fecha o modal e limpa o formulário.
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: "Novo VSI" }));
+    expect(screen.getByLabelText(/^Nome/, { selector: "input" })).toHaveValue("");
+    expect(screen.getByLabelText(/^VSI-ID/, { selector: "input" })).toHaveValue(null);
   });
 
   it("cadastra com mais de um PE quando se adiciona uma ponta", async () => {
@@ -170,11 +176,25 @@ describe("MplsVsi", () => {
   it("não deixa remover a última ponta", async () => {
     renderVsi();
     await userEvent.click(await screen.findByRole("button", { name: "Novo VSI" }));
-    expect(screen.getByRole("button", { name: "Remover PE" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Remover PE 1" })).toBeDisabled();
   });
 
-  it("avisa que o provisionamento exige dois PEs", async () => {
+  it("não reaproveita o erro da tentativa anterior ao reabrir o modal", async () => {
+    erroNoPost = 409;
     renderVsi();
+    await userEvent.click(await screen.findByRole("button", { name: "Novo VSI" }));
+    await userEvent.selectOptions(screen.getByLabelText(/^Domínio/, { selector: "select" }), "7");
+    await userEvent.type(screen.getByLabelText(/^Nome/, { selector: "input" }), "VSI-DUP");
+    await userEvent.selectOptions(screen.getByLabelText(/^Equipamento/, { selector: "select" }), "1");
+    await userEvent.click(screen.getByRole("button", { name: "Criar" }));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    await userEvent.click(screen.getByRole("button", { name: "Novo VSI" }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("avisa que o provisionamento exige dois PEs", async () => {    renderVsi();
     await userEvent.click(await screen.findByRole("button", { name: "Novo VSI" }));
     expect(
       screen.getByText("O cadastro aceita um PE; o provisionamento exige dois ou mais."),
@@ -190,7 +210,7 @@ describe("MplsVsi", () => {
     await userEvent.click(screen.getByRole("button", { name: "Adicionar PE" }));
     await userEvent.selectOptions(screen.getAllByLabelText(/^Equipamento/, { selector: "select" })[1], "2");
 
-    await userEvent.click(screen.getAllByRole("button", { name: "Remover PE" })[1]);
+    await userEvent.click(screen.getAllByRole("button", { name: /^Remover PE/ })[1]);
     expect(screen.getAllByLabelText(/^Equipamento/, { selector: "select" })).toHaveLength(1);
     await userEvent.click(screen.getByRole("button", { name: "Criar" }));
 

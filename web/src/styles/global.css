@@ -833,6 +833,14 @@ td button { min-height: 36px; margin: 2px 4px 2px 0; padding: 0.45rem 0.75rem; }
   border-radius: 0;
   background: transparent;
 }
+/* Aviso em texto corrido dentro da grade: ocupa a linha inteira. Sem isso ele
+   cai numa célula de ~17rem e o texto quebra em 3–4 linhas, parecendo campo. */
+.dialog .grid-form > .aviso {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--paper-dim);
+  font-size: 0.86rem;
+}
 .dialog:has(.grid-form) > h2 {
   margin: 0 0 1.5rem;
   padding: 0 0 1rem;

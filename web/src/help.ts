@@ -130,8 +130,8 @@ export const HELP = {
   "vsi.description": "Descrição opcional do serviço (até 255 caracteres) — sai no bloco do VSI.",
   "vsi.flow_label": "Só tem efeito em equipamento com a capability mpls_flow_label; sem ela o flow-label é omitido do comando, sem erro.",
   "vsi.endpoint.device": "PE participante do VSI.",
-  "vsi.endpoint.vid": "VLAN de AC no PE; vazio assume o VSI-ID. A interface Vlanif<vid> é derivada daqui.",
-  "vsi.endpoint.mtu": "MTU do AC; vazio herda o do serviço.",
+  "vsi.endpoint.vid": "VLAN de AC no PE (2–4094); vazio assume o VSI-ID. A interface Vlanif<vid> é derivada daqui.",
+  "vsi.endpoint.mtu": "MTU do AC (576–9216); vazio herda o do serviço.",
 
   // Users
   "user.username": "Nome de login (1–64), único.",
