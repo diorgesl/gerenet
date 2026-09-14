@@ -3,6 +3,10 @@
 Redis real, o mesmo dos testes de `tasks`: a varredura usa lock e fila de
 verdade. A limpeza cobre a fila `gerenet-collect`, o registry de agendados e o
 lock da varredura.
+
+A suíte divide o Redis com o stack de dev, então o worker do compose consome os
+jobs destes testes: por isso as contagens incluem os jobs já iniciados, e uma
+suíte determinística pede o worker parado (`docker compose stop worker`).
 """
 from datetime import UTC, datetime, timedelta
 
@@ -75,6 +79,26 @@ def _com_snapshot(db_session: Session, dev, *, minutos_atras: int) -> None:
     db_session.commit()
 
 
+def _jobs_visiveis(fila: Queue) -> list:
+    """Jobs da fila mais os que o worker já retirou (registry de iniciados).
+
+    O worker do stack de dev compartilha o Redis: um job enfileirado pode já
+    estar em execução quando a asserção roda (padrão do `test_nao_duplica_job_pendente`).
+    `fetch_job` devolve None para job já apagado pelo `empty()`, que só limpa a
+    fila, não o registry.
+    """
+    jobs = list(fila.get_jobs())
+    for job_id in fila.started_job_registry.get_job_ids():
+        job = fila.fetch_job(job_id)
+        if job is not None:
+            jobs.append(job)
+    return jobs
+
+
+def _jobs_do_device(fila: Queue, device_id: int) -> list:
+    return [job for job in _jobs_visiveis(fila) if job.args and job.args[0] == device_id]
+
+
 def test_varredura_enfileira_so_ativos_com_credencial(fila_limpa: Redis, db_session: Session) -> None:
     set_settings(Settings(_env_file=None, collect_interval_minutes=60))
     grupo = _grupo(db_session)
@@ -88,9 +112,9 @@ def test_varredura_enfileira_so_ativos_com_credencial(fila_limpa: Redis, db_sess
     assert resultado["enfileirados"] == 1
     assert resultado["pulados_idade"] == 0
     assert resultado["recusados"] == []
-    jobs = list(Queue("gerenet-collect", connection=fila_limpa).get_jobs())
-    assert [job.args[0] for job in jobs] == [alvo.id]
-    assert jobs[0].meta["origin"] == "scheduler"
+    do_alvo = _jobs_do_device(Queue("gerenet-collect", connection=fila_limpa), alvo.id)
+    assert len(do_alvo) == 1
+    assert do_alvo[0].meta["origin"] == "scheduler"
 
     evento = db_session.query(AuditEvent).filter_by(type="collect.sweep").one()
     assert evento.actor == "scheduler"
@@ -109,7 +133,7 @@ def test_varredura_pula_coletado_dentro_do_intervalo(fila_limpa: Redis, db_sessi
 
     assert resultado["pulados_idade"] == 1
     assert resultado["enfileirados"] == 0
-    assert Queue("gerenet-collect", connection=fila_limpa).count == 0
+    assert _jobs_do_device(Queue("gerenet-collect", connection=fila_limpa), dev.id) == []
 
 
 def test_varredura_enfileira_quem_esta_fora_do_intervalo(fila_limpa: Redis, db_session: Session) -> None:
@@ -141,22 +165,22 @@ def test_varredura_conta_recusa_do_enqueue(fila_limpa: Redis, db_session: Sessio
 def test_varredura_desligada_nao_faz_nada(fila_limpa: Redis, db_session: Session) -> None:
     set_settings(Settings(_env_file=None, collect_interval_minutes=0))
     grupo = _grupo(db_session)
-    _dev(db_session, "ativo", "10.10.2.1", grupo=grupo)
+    dev = _dev(db_session, "ativo", "10.10.2.1", grupo=grupo)
 
     resultado = varredura_coletas()
 
     assert resultado == {"status": "skipped", "message": "Coleta periódica desligada."}
-    assert Queue("gerenet-collect", connection=fila_limpa).count == 0
+    assert _jobs_do_device(Queue("gerenet-collect", connection=fila_limpa), dev.id) == []
     assert db_session.query(AuditEvent).filter_by(type="collect.sweep").count() == 0
 
 
 def test_varredura_com_lock_tomado_nao_enfileira(fila_limpa: Redis, db_session: Session) -> None:
     set_settings(Settings(_env_file=None, collect_interval_minutes=60))
     grupo = _grupo(db_session)
-    _dev(db_session, "ativo", "10.10.3.1", grupo=grupo)
+    dev = _dev(db_session, "ativo", "10.10.3.1", grupo=grupo)
     fila_limpa.set(SWEEP_LOCK, "outra-varredura")
 
     resultado = varredura_coletas()
 
     assert resultado == {"status": "skipped", "message": "Varredura já em andamento."}
-    assert Queue("gerenet-collect", connection=fila_limpa).count == 0
+    assert _jobs_do_device(Queue("gerenet-collect", connection=fila_limpa), dev.id) == []
