@@ -1,4 +1,5 @@
 vlan {{ vid }}
 interface Vlanif{{ vid }}
 {% if description %} description {{ description }}
+{% endif %}{% if mtu %} mtu {{ mtu }}
 {% endif %} l2 binding vsi {{ vrp_name }}

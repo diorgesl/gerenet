@@ -66,12 +66,39 @@ def test_render_vsi_ac_com_vlan_e_binding(servico, db_session):
     d1, _, _, svc = servico
     blocos = vsi_auto.render_vsi(db_session, svc)[d1.id]
     ac = next(b for b in blocos if b.tipo == "vsi_ac")
-    # `l2 binding` sai indentado como no `display` do equipamento (o comando é
-    # sub-comando da Vlanif), igual ao `description` da mesma interface.
+    # `l2 binding` e `mtu` saem indentados como no `display` do equipamento (são
+    # sub-comandos da Vlanif), igual ao `description` da mesma interface.
     assert ac.comandos == [
-        "vlan 700", "interface Vlanif700", " l2 binding vsi VSI-CLIENTE-ACME-700",
+        "vlan 700", "interface Vlanif700", " mtu 1500",
+        " l2 binding vsi VSI-CLIENTE-ACME-700",
     ]
     assert [b.tipo for b in blocos] == ["vsi", "vsi_ac"]
+
+
+def test_render_vsi_ac_emite_o_mtu_da_ponta(servico, db_session):
+    """A ponta sem MTU próprio herda o do serviço (§9.3).
+
+    É o que faz o `endpoints[].mtu` do formulário ter efeito no equipamento — a
+    Vlanif sem a linha fica com o default do switch. A forma completa do bloco
+    está no teste acima; aqui o que importa é a herança.
+    """
+    d1, _, _, svc = servico
+    ac = next(b for b in vsi_auto.render_vsi(db_session, svc)[d1.id] if b.tipo == "vsi_ac")
+    assert " mtu 1500" in ac.comandos
+
+
+def test_render_vsi_ac_usa_o_mtu_proprio_da_ponta(servico, db_session):
+    d1, d2, _, svc = servico
+    outro = create_vsi(db_session, VsiCreate(
+        domain_id=svc.domain_id, name="cliente mtu", vsi_id=800, mtu=1500,
+        endpoints=[VsiEndpointIn(device_id=d1.id, vid=800, mtu=9000),
+                   VsiEndpointIn(device_id=d2.id, vid=800)],
+    ), actor="cli")
+    blocos = vsi_auto.render_vsi(db_session, outro)
+    ac_d1 = next(b for b in blocos[d1.id] if b.tipo == "vsi_ac")
+    ac_d2 = next(b for b in blocos[d2.id] if b.tipo == "vsi_ac")
+    assert " mtu 9000" in ac_d1.comandos
+    assert " mtu 1500" in ac_d2.comandos
 
 
 def test_plan_remocao_vsi_desfaz_binding_antes_do_vsi(servico, db_session):

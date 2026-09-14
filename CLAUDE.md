@@ -243,7 +243,8 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   serviço: `vsi <nome> static`, `description`, `pwsignal ldp` com `vsi-id`,
   `flow-label` só com a capability `mpls_flow_label` e uma linha `peer` por
   membro restante, e `mtu`) e `vsi_ac.j2` (`vlan` + `interface Vlanif<vid>` +
-  ` l2 binding vsi <vrp_name>`, indentado por ser sub-comando); dois blocos por
+  `description`, ` mtu` (o da ponta, ou o do serviço quando ela não tem) e
+  ` l2 binding vsi <vrp_name>`, indentados por serem sub-comandos); dois blocos por
   PE e **um step por PE** na CR de **escopo `vsi`** (o provisionamento exige 2+
   endpoints; o cadastro aceita um). Pré-check `valida_pre_checks_vsi` (simetria
   de membros, par LDP **UP** de cada peer e Vlanif sem binding alheio — `None`,
@@ -271,7 +272,12 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   Dívidas registradas (design §12): aprendizado de MAC (exige
   `display mac-address` e item de pós-check próprios), `tnl-policy` fora do
   modelo e do render, e a limpeza da `Vlanif`/`vlan` na remoção (a sobra é
-  decisão registrada, visível na divergência).
+  decisão registrada, visível na divergência). O cadastro de VSI pela web
+  (2026-09-14) expôs o MTU por ponta e o render passou a emiti-lo no AC;
+  como o re-diff identifica o AC pela `Vlanif`, serviços já provisionados
+  **não** ganham a linha até um re-provisionamento, e conferi-la exige a
+  config da Vlanif (o `display vsi verbose` não traz MTU por AC) — o
+  pós-check do AC fica como dívida.
 - Fase 5 (upstreams): organizações com `kind='operadora'` (ASN + IRR AS-SET)
   e upstreams com tipo (`transito`/`ix`/`pni`/`contingencia`), capacidade,
   prioridade/custo, prefixos esperados v4/v6 e margem do maximum-prefix;
