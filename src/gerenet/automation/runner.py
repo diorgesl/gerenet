@@ -56,7 +56,7 @@ return 0
 """
 
 
-def _liberta_lock(redis: Redis, chave_lock: str, token: str) -> None:
+def liberta_lock(redis: Redis, chave_lock: str, token: str) -> None:
     """Libera o lock via compare-and-delete: só apaga se o valor ainda for o nosso token.
 
     Se o TTL expirou e outro worker readquiriu, o lock dele não é tocado. Falha de
@@ -217,7 +217,7 @@ def run_collection(
                 session.commit()
             return {"status": "error", "snapshot_id": snapshot.id if snapshot else None, "error": str(exc)}
         finally:
-            _liberta_lock(redis, chave_lock, token)
+            liberta_lock(redis, chave_lock, token)
     except Exception as exc:  # noqa: BLE001 — falha pré-lock mantém contrato dict
         # Falha ANTES de adquirir o lock (Redis fora do ar etc.): o contrato dict
         # é mantido; sessão e client são fechados no finally externo.
@@ -922,7 +922,7 @@ def run_change(
                     )
                     resultados.append(resultado_do_step)
                 finally:
-                    _liberta_lock(redis, chave_dev, token)
+                    liberta_lock(redis, chave_dev, token)
 
             if resultados:
                 status_cr = _classifica(cr, resultados)
@@ -959,7 +959,7 @@ def run_change(
                 session.commit()
             return {"status": "error", "error": _mascarar_texto(str(exc))}
         finally:
-            _liberta_lock(redis, chave_cr, token)
+            liberta_lock(redis, chave_cr, token)
     except Exception as exc:  # noqa: BLE001 — falha pré-lock
         return {"status": "error", "error": _mascarar_texto(str(exc))}
     finally:

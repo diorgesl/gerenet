@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     bgp_anomalia_janela: int = 2
     bgp_anomalia_pct: int = 50
 
+    # F6: coleta periódica no worker (varredura). 0 = desligada; ligar é decisão
+    # explícita de quem instala, e mudar o valor pede restart do worker (o arm
+    # da varredura acontece na subida).
+    collect_interval_minutes: int = 0
+
     # IPAM p2p (§25.8): bloco privado de enlaces v4 e base v6 por padrão;
     # cada site pode sobrescrever.
     p2p_ipv4_block: str = "100.64.0.0/10"

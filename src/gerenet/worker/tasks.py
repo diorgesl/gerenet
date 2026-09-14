@@ -1,12 +1,19 @@
+import secrets
+from datetime import UTC, datetime, timedelta
+
 from redis import Redis
 from rq import Queue, get_current_job
+from sqlalchemy import select
 
-from gerenet.automation.runner import run_change, run_collection
+from gerenet.automation.runner import liberta_lock, run_change, run_collection
 from gerenet.config import Settings, get_settings
 from gerenet.db import get_session
+from gerenet.domain import models
 from gerenet.domain.services import change_requests as change_svc
 from gerenet.domain.services import devices as device_svc
 from gerenet.domain.services.errors import NotFoundError
+
+SWEEP_LOCK = "gerenet:lock:sweep"
 
 
 def _redis(settings: Settings) -> Redis:
@@ -116,6 +123,76 @@ def change_task(change_request_id: int) -> None:
         actor=meta.get("actor", "worker"),
         origin=meta.get("origin", "rq"),
     )
+
+
+def varredura_coletas(agora: datetime | None = None) -> dict:
+    """Enfileira a coleta dos equipamentos ativos com credencial (§10, F6).
+
+    Chamada pelo agendador do worker (e pelos testes). Não levanta por recusa:
+    quem não entra na fila (coleta em andamento, job pendente, equipamento
+    desativado desde a consulta) conta em `recusados` e fica auditado. O lock
+    `gerenet:lock:sweep` impede duas varreduras sobrepostas.
+    """
+    settings = get_settings()
+    if settings.collect_interval_minutes <= 0:
+        return {"status": "skipped", "message": "Coleta periódica desligada."}
+
+    agora = agora or datetime.now(UTC)
+    limite = agora - timedelta(minutes=settings.collect_interval_minutes)
+    r = _redis(settings)
+    token = secrets.token_hex(16)
+    try:
+        if not r.set(SWEEP_LOCK, token, nx=True, ex=settings.lock_ttl_seconds):
+            return {"status": "skipped", "message": "Varredura já em andamento."}
+        enfileirados: list[str] = []
+        recusados: list[dict] = []
+        pulados_idade = 0
+        with get_session() as session:
+            devices = list(
+                session.scalars(
+                    select(models.Device)
+                    .where(
+                        models.Device.admin_status.is_(True),
+                        models.Device.credential_group_id.isnot(None),
+                    )
+                    .order_by(models.Device.name)
+                )
+            )
+            for dev in devices:
+                ultimo = session.scalar(
+                    select(models.DeviceSnapshot.started_at)
+                    .where(models.DeviceSnapshot.device_id == dev.id)
+                    .order_by(models.DeviceSnapshot.id.desc())
+                    .limit(1)
+                )
+                if ultimo is not None and ultimo > limite:
+                    pulados_idade += 1
+                    continue
+                enfileirado = enqueue_collect(dev.id, actor="scheduler", origin="scheduler")
+                if enfileirado["queued"]:
+                    enfileirados.append(dev.name)
+                else:
+                    recusados.append({"device": dev.name, "motivo": enfileirado["message"]})
+            session.add(
+                models.AuditEvent(
+                    type="collect.sweep",
+                    actor="scheduler",
+                    details={
+                        "enfileirados": len(enfileirados),
+                        "pulados_idade": pulados_idade,
+                        "recusados": recusados,
+                    },
+                )
+            )
+        return {
+            "status": "ok",
+            "enfileirados": len(enfileirados),
+            "pulados_idade": pulados_idade,
+            "recusados": recusados,
+        }
+    finally:
+        liberta_lock(r, SWEEP_LOCK, token)
+        r.close()
 
 
 def worker_main() -> None:
