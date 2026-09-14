@@ -1017,7 +1017,12 @@ class DiscoveryOut(BaseModel):
 
 class IgnorarIn(BaseModel):
     device_id: int
-    vrf: str | None = None
+    # Limites das colunas, como em `CircuitCreate.vrf`/`CircuitUpdate.vrf`: a
+    # coluna é `String(64)`, e o valor longo não chega ao cliente como 422 — o
+    # Postgres recusa no insert com `value too long for type character
+    # varying(64)`, que o SQLAlchemy embrulha como `DataError` (não
+    # `IntegrityError`), ou seja um 500 opaco.
+    vrf: str | None = Field(default=None, max_length=64)
     # Fechado como nas sessões BGP: um valor fora das famílias do banco chegaria
     # ao Postgres e voltaria como `DataError` — um 500 no caminho de escrita.
     afi: Literal["ipv4", "ipv6"]

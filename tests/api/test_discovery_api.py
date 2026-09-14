@@ -113,6 +113,58 @@ def test_familia_invalida_e_422(client, db_session, tmp_path) -> None:
     ).status_code == 422
 
 
+def test_vrf_longo_e_422(client, db_session, tmp_path) -> None:
+    """VRF maior que a coluna (`String(64)`) é recusado antes do insert: o
+    Postgres responderia `value too long for type character varying(64)`, que
+    chega como `DataError` — um 500 que o handler de `IntegrityError` não pega.
+    `CircuitCreate.vrf` limita do mesmo jeito."""
+    ambiente = _ambiente(db_session, tmp_path)
+    assert client.post("/api/v1/discovery/ignore", headers=_auth(), json={
+        "device_id": ambiente["dev"].id, "vrf": "V" * 65, "afi": "ipv4",
+        "remote_address": "100.64.10.3",
+    }).status_code == 422
+
+
+def test_leitura_parcial_ainda_lista_propostas(client, db_session, tmp_path) -> None:
+    """`aviso` carrega dois estados, e o teste do equipamento sem coleta cobre
+    um só. O outro — cabeçalho de família fora do escopo, leitura parcial — não
+    pode zerar a lista: quem manda parar é a ausência de coleta
+    (`snapshot_id is None`), não o aviso. Sem esta prova, um
+    `propostas=[] if aviso else ...` passaria nos outros testes."""
+    site = create_site(db_session, SiteCreate(name="pop-desc-parcial",
+                                              p2p_ipv4_block="100.64.10.0/24"), actor="cli")
+    dev = create_device(db_session, DeviceCreate(name="ne8000-desc-parcial",
+                                                 management_address="10.0.0.6", asn=65001),
+                        actor="cli")
+    link_device(db_session, site.id, dev.id, actor="cli")
+    arquivo = tmp_path / "parcial.txt"
+    arquivo.write_text(
+        "interface Eth-Trunk127.6001\n"
+        " vlan-type dot1q 6001\n"
+        " ip address 100.64.10.0 255.255.255.254\n"
+        "#\n"
+        "bgp 65001\n"
+        " peer 100.64.10.1 as-number 64512\n"
+        " ipv4-family unicast\n"
+        "  peer 100.64.10.1 enable\n"
+        " ipv4-family multicast\n"
+        "  peer 10.0.0.9 enable\n",
+        encoding="utf-8",
+    )
+    db_session.add(models.DeviceSnapshot(device_id=dev.id, status="success",
+                                        raw_files={"config_backup": [str(arquivo)]}))
+    db_session.commit()
+
+    resposta = client.get(f"/api/v1/discovery?device_id={dev.id}", headers=_auth())
+    assert resposta.status_code == 200
+    corpo = resposta.json()
+    assert corpo["aviso"] is not None
+    assert corpo["snapshot_id"] is not None
+    assert [c["remote_address"] for p in corpo["propostas"] for c in p["candidatos"]] == [
+        "100.64.10.1"
+    ]
+
+
 def test_conflito_ao_ignorar_e_409(client, db_session, tmp_path, monkeypatch) -> None:
     """A corrida que o `get_device` não pega (equipamento apagado entre a
     conferência e o insert) chega ao cliente como 409, e não como 500.
