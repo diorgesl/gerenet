@@ -50,9 +50,9 @@ somente leitura — o plano de correção com aprovação e execução chega com
 ### Divergências da última coleta
 
 Cada coleta grava, no próprio snapshot, a contagem do desejado × encontrado por
-severidade (`resources["divergencias"]`). O **card do dashboard** mostra essa
-contagem sem recalcular nada, e o detalhe item a item continua nesta página, sob
-demanda.
+severidade (`resources["divergencias"]`). O **card do dashboard** lê essa contagem
+sem refazer a comparação (nenhum reconcile na leitura), e o detalhe item a item
+continua nesta página, sob demanda.
 
 Além das contagens por severidade, o card lista os equipamentos **com divergência
 crítica ou alerta** (cada nome abre a reconciliação daquele equipamento) e diz no

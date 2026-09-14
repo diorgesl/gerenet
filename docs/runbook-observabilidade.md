@@ -20,11 +20,23 @@ métricas em memória morreriam com ele. As métricas de job vêm do `job_runs`,
 
 ### Ligar o token
 
-São duas edições, com o mesmo valor:
+O valor vai no `.env` da raiz, que é gitignored (o mesmo arranjo dos segredos do
+Vault):
 
-1. a variável `GERENET_METRICS_TOKEN` no serviço `api` do `compose.yaml` (ou no
-   ambiente da plataforma, em produção);
-2. o bloco `authorization` no job do `docker/observability/prometheus.yml`:
+```
+GERENET_METRICS_TOKEN=<token>
+```
+
+O serviço `api` do `compose.yaml` lê a variável do ambiente
+
+```yaml
+  api:
+    environment:
+      <<: *app-env
+      GERENET_METRICS_TOKEN: ${GERENET_METRICS_TOKEN}
+```
+
+e o scrape manda o mesmo valor:
 
 ```yaml
   - job_name: gerenet
@@ -35,10 +47,17 @@ São duas edições, com o mesmo valor:
       - targets: ["api:8000"]
 ```
 
-Não use `${GERENET_METRICS_TOKEN:-}` no compose para preencher o valor: sem a
-variável no ambiente, o default vazio derruba a API na subida, porque o
-`Settings` recusa token vazio de propósito (é o que impede "token vazio = endpoint
-aberto"). Para manter o endpoint sem autenticação, deixe a variável ausente.
+O **valor** nunca vai para o `compose.yaml` nem para qualquer arquivo
+versionado: o compose interpola a variável a partir do ambiente. Em produção, ela
+vem do ambiente da plataforma.
+
+Deixar a variável ausente derruba a API na subida, de propósito: o compose
+substitui `GERENET_METRICS_TOKEN: ${GERENET_METRICS_TOKEN}` por string vazia, e o
+`Settings` recusa token vazio (é o que impede "token vazio = endpoint aberto").
+Vale igual para a forma com default vazio, `${GERENET_METRICS_TOKEN:-}`, que só
+escreve o mesmo vazio de outro jeito. Por isso o valor tem de estar no `.env`
+**antes** do `docker compose up` — e para manter o endpoint sem autenticação,
+basta não acrescentar a linha ao serviço `api`.
 
 Conferência, com o token ligado:
 
