@@ -168,13 +168,19 @@ motivo não é revisável. Os sinais, do mais forte para o mais fraco:
 2. **Existe organização com aquele ASN.** O `kind` dela decide: `operadora` dá
    upstream, `downstream` dá downstream. É o sinal mais forte porque é
    informação que o operador já afirmou no cadastro.
-3. **Nome de route-policy reconhecível.** Os produtos de upstream que o próprio
-   sistema gera (`up-full`, `up-parcial`, `up-default`) e o export
-   `IP-PFX-<ASN>-EXPORT-<AFI>` são reversíveis. Reconhecer um deles no import ou
-   no export indica trânsito, mesmo sem organização cadastrada.
-4. **Nada disso.** Downstream, com o motivo escrito como não confirmado. É o
-   caso mais comum numa borda legada e o mais fraco dos sinais, então a
-   proposta nasce marcada.
+3. **Nada disso.** Downstream, com o motivo escrito como não confirmado. É o
+   caso mais comum numa borda legada, e a proposta nasce marcada.
+
+**Um sinal que foi descartado, e por quê.** Cheguei a prever um terceiro sinal,
+o de reconhecer no texto um nome de produto de upstream. Ele não existe: `up-full`
+e `up-parcial` são nomes de **perfil do catálogo**, não nomes que aparecem em
+linha de peer. O render monta o nome da route-policy com `naming.rp_import` e
+`naming.rp_export`, que dependem só do ASN do par e da família, e usa a mesma
+função para downstream e para upstream. As duas pontas ficam textualmente
+idênticas na linha do peer, e o que as distingue (as-path-filter de rotas
+próprias, communities de ação, prefix-list de produto) vive dentro do bloco da
+route-policy, não no peer. Sem organização cadastrada, a leitura honesta é que
+não dá para saber: a classificação fica como não confirmada e o operador decide.
 
 O operador corrige a classificação na revisão. Como nada é gravado sem aceite,
 um palpite errado custa um clique, e não um registro errado.
