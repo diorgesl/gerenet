@@ -77,6 +77,11 @@ services:
       # Páginas do wiki operacional (ciclo E) — o código usa docs/wiki relativo
       # ao CWD (/srv/app); sem o mount, o índice vem vazio e toda página 404.
       - ./docs:/srv/app/docs:ro
+      # Brutos da coleta: o worker grava em `data/backups`, relativo ao CWD
+      # (/srv/app), e a descoberta lê daqui. São containers diferentes, então
+      # sem o mesmo diretório montado nos dois a página Migrar responde "sem
+      # coleta com a configuração salva" com o arquivo existindo no worker.
+      - ./data/backups:/srv/app/data/backups
       - uv-cache:/root/.cache/uv
     depends_on:
       db:
@@ -102,6 +107,10 @@ services:
       GERENET_COLLECT_INTERVAL_MINUTES: "60"
     volumes:
       - ./src:/srv/app/src
+      # Mesmo diretório do api, e fora do container: é aqui que a coleta grava
+      # os brutos, e assim eles sobrevivem à recriação do worker (sem o mount,
+      # cada `up --build` levava junto o backup de pré-mudança).
+      - ./data/backups:/srv/app/data/backups
       - uv-cache:/root/.cache/uv
     depends_on:
       db:
