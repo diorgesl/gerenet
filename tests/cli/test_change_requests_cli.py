@@ -289,6 +289,13 @@ def test_cli_add_escopo_vsi(db_session: Session) -> None:
     assert len(cr.steps) == 2
     assert cr.vsi_id == vsi_id and cr.circuit_id is None and cr.l2vc_id is None
 
+    # o alvo da listagem é o VSI (como o upstream), não "circuito —"
+    filtrada = runner.invoke(app, ["change-requests", "list", "--escopo", "vsi"])
+    assert filtrada.exit_code == 0, filtrada.output
+    linha = next(l for l in filtrada.output.splitlines() if f"CR #{cr_id}" in l)
+    assert "vsi" in linha and str(vsi_id) in linha
+    assert "circuito" not in linha
+
 
 def test_cli_add_escopo_vsi_sem_id_erro_limpo(db_session: Session) -> None:
     """--escopo vsi sem --vsi-id ⇒ erro do schema, exit 1, sem traceback."""

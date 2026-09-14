@@ -97,8 +97,10 @@ def listar(
         ):
             if cr.escopo == "upstream":
                 alvo = f"upstream {cr.upstream_id:>4}"
+            elif cr.escopo == "vsi":
+                alvo = f"vsi {cr.vsi_id:>4}"
             else:
-                # guarda: CR l2vc/vsi tem circuit_id None e f"{None:>4}" quebra
+                # guarda: CR l2vc tem circuit_id None e f"{None:>4}" quebra
                 alvo = f"circuito {cr.circuit_id:>4}" if cr.circuit_id is not None else "circuito —"
             typer.echo(
                 f"CR #{cr.id}  {cr.acao:<9} {cr.status:<18} {cr.escopo:<9} "

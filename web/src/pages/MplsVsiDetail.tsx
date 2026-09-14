@@ -18,7 +18,6 @@ export default function MplsVsiDetail() {
   const atualizarStatus = useVsiStatus();
   // null = sem diálogo; false = desativando; true = reativando
   const [confirmandoStatus, setConfirmandoStatus] = useState<boolean | null>(null);
-  const [erro, setErro] = useState<string | null>(null);
 
   if (isLoading) return <p aria-busy="true">Carregando…</p>;
   if (!data) {
@@ -34,11 +33,12 @@ export default function MplsVsiDetail() {
   const confirmarStatus = () => {
     if (confirmandoStatus === null) return;
     const valor = confirmandoStatus;
-    setErro(null);
-    atualizarStatus
+    // Fecha o diálogo nos dois casos: na falha a mensagem sai pelo
+    // `atualizarStatus.error` (senão ela ficaria escondida sob o backdrop).
+    void atualizarStatus
       .mutateAsync({ id: data.id, admin_status: valor })
       .then(() => setConfirmandoStatus(null))
-      .catch((err) => setErro(err instanceof ApiError ? err.message : "Falha ao atualizar o VSI."));
+      .catch(() => setConfirmandoStatus(null));
   };
 
   return (
@@ -61,7 +61,11 @@ export default function MplsVsiDetail() {
           </>
         }
       />
-      {erro && <p role="alert">{erro}</p>}
+      {atualizarStatus.error && (
+        <p role="alert">
+          {String(atualizarStatus.error.message ?? "Falha ao atualizar o VSI.")}
+        </p>
+      )}
       <table>
         <tbody>
           <tr><th>Domínio</th><td>{data.domain_name ?? `#${data.domain_id}`}</td></tr>

@@ -49,7 +49,7 @@ const VSI = {
   ],
 };
 
-function mockFetch(vsi = VSI) {
+function mockFetch(vsi = VSI, falhaStatus = false) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
@@ -57,6 +57,12 @@ function mockFetch(vsi = VSI) {
         return new Response(JSON.stringify(ME), { status: 200, headers: { "Content-Type": "application/json" } });
       }
       if (url === `/api/v1/mpls/vsi/${vsi.id}/status` && init?.method === "PATCH") {
+        if (falhaStatus) {
+          return new Response(
+            JSON.stringify({ detail: "VSI desativado não pode ser provisionado." }),
+            { status: 409, headers: { "Content-Type": "application/json" } },
+          );
+        }
         const body = JSON.parse(String(init.body));
         return new Response(JSON.stringify({ ...vsi, admin_status: body.admin_status }), {
           status: 200,
@@ -111,18 +117,26 @@ describe("MplsVsiDetail", () => {
     renderDetail();
 
     expect(await screen.findByText("VSI vsi-cliente")).toBeInTheDocument();
-    // cada AC na sua linha, com os valores da própria ponta
+    // Cada AC na sua linha, afirmando por CÉLULA: `toHaveTextContent` com
+    // string é `includes`, então no escopo da linha a Vlanif ("Vlanif550") já
+    // satisfaria a asserção da VLAN e uma coluna ausente (ou VLAN↔MTU
+    // trocadas) passaria batido. Ordem das colunas: Equipamento, Vlanif,
+    // VLAN, MTU, Estado.
     const linha01 = screen.getByText("sw-01").closest("tr");
-    expect(linha01).toHaveTextContent("Vlanif550");
-    expect(linha01).toHaveTextContent("550");
-    expect(linha01).toHaveTextContent("1500");
-    const linha02 = screen.getByText("sw-02").closest("tr");
-    expect(linha02).toHaveTextContent("Vlanif551");
-    expect(linha02).toHaveTextContent("551");
-    expect(linha02).toHaveTextContent("1400");
+    const cels01 = linha01!.querySelectorAll("td");
+    expect(cels01).toHaveLength(5);
+    expect(cels01[0]).toHaveTextContent("sw-01");
+    expect(cels01[1]).toHaveTextContent("Vlanif550");
+    expect(cels01[2]).toHaveTextContent("550");
+    expect(cels01[3]).toHaveTextContent("1500");
+    expect(cels01[4]).toHaveTextContent("up");
     // estado por AC: o down de uma ponta convive com o up do VSI e da outra
-    expect(linha01).toHaveTextContent("up");
-    expect(linha02).toHaveTextContent("down");
+    const linha02 = screen.getByText("sw-02").closest("tr");
+    const cels02 = linha02!.querySelectorAll("td");
+    expect(cels02[1]).toHaveTextContent("Vlanif551");
+    expect(cels02[2]).toHaveTextContent("551");
+    expect(cels02[3]).toHaveTextContent("1400");
+    expect(cels02[4]).toHaveTextContent("down");
   });
 
   it("mostra flow-label e descrição do serviço", async () => {
@@ -190,6 +204,19 @@ describe("MplsVsiDetail", () => {
       expect(patch).toBeTruthy();
       expect(String(patch?.[1]?.body)).toContain('"admin_status":true');
     });
+  });
+
+  it("fecha o diálogo e mostra o erro da página quando o PATCH de status falha", async () => {
+    // A mensagem não pode ficar escondida sob o backdrop: o diálogo fecha nos
+    // dois caminhos e o erro sai no corpo da página (convenção do CircuitDetail).
+    mockFetch(VSI, true);
+    renderDetail();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Desativar" }));
+    await userEvent.click(screen.getByRole("button", { name: "Confirmar" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("VSI desativado não pode ser provisionado.");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
   it("oculta as ações de escrita para o visualizador", async () => {
