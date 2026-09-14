@@ -1703,6 +1703,29 @@ def test_leitura_parcial_ainda_propoe(db_session, tmp_path) -> None:
     ]
 
 
+def test_peer_sem_as_number_e_conflito(db_session, tmp_path) -> None:
+    """A leitura pegou o peer mas não a definição dele: sem `as-number` não há
+    sessão a criar, porque a coluna é NOT NULL."""
+    dev = _ambiente(db_session)
+    arquivo = tmp_path / "current.txt"
+    arquivo.write_text(
+        "interface Eth-Trunk127.7001\n"
+        " vlan-type dot1q 7001\n"
+        " ip address 100.64.10.0 255.255.255.254\n"
+        "#\n"
+        "bgp 65001\n"
+        " ipv4-family unicast\n"
+        "  peer 100.64.10.1 enable\n",
+        encoding="utf-8",
+    )
+    db_session.add(models.DeviceSnapshot(device_id=dev.id, status="success",
+                                        raw_files={"config_backup": [str(arquivo)]}))
+    db_session.commit()
+    (prop,) = listar_propostas(db_session, dev.id).propostas
+    assert "asn_remoto_ausente" in {c.tipo for c in prop.conflitos}
+    assert prop.veredito == "nao_adotavel"
+
+
 def test_asn_divergente_do_cadastro_vira_pendencia(db_session, tmp_path) -> None:
     """A configuração diz `bgp 65001` e o cadastro do equipamento diz outro ASN."""
     dev = _ambiente(db_session, asn=65002)
@@ -2200,6 +2223,15 @@ def listar_propostas(session: Session, device_id: int) -> ResultadoPropostas:
                 proposta.prefixos.append({"network": str(rede), "ponta_local": orientacao})
                 sessao = _sessao_de(peer, candidato, rede, orientacao)
                 proposta.sessoes.append(sessao)
+                if peer.asn_remote is None:
+                    # A leitura pegou o peer mas não a definição dele: `as-number`
+                    # é NOT NULL em `bgp_sessions`, então não há o que adotar.
+                    _acrescenta(proposta.conflitos, [Conflito(
+                        "asn_remoto_ausente",
+                        f"O peer {candidato.remote_address} aparece na configuração sem "
+                        "`as-number`: a definição dele não foi lida, e a sessão na SoT "
+                        "exige o ASN remoto.",
+                    )])
                 _acrescenta(proposta.conflitos, _conflitos_de(
                     session, site_id=device.site_id, vid=sub.vid, rede=rede,
                     local=sessao["local_address"], remoto=candidato.remote_address,
@@ -2423,6 +2455,7 @@ def _ensaio(session: Session, proposta: Proposta) -> dict:
         code=f"ENSAIO-{device.name}-{proposta.vid}", organization_id=org_id,
         site_id=proposta.site_id or device.site_id, access_port="ensaio",
         edge_device_id=device.id, stack=proposta.stack, vlan_mode=proposta.vlan_mode,
+        qinq=proposta.qinq,          # sem isto a fidelidade acusa diferença em todo QinQ
         p2p_v4_len=proposta.p2p_v4_len or 31,
     )
     session.add(circ)
@@ -2437,6 +2470,10 @@ def _ensaio(session: Session, proposta: Proposta) -> dict:
     session.flush()
     sessoes = []
     for dados in proposta.sessoes:
+        # `asn_remote` é NOT NULL em `bgp_sessions`, e a adoção também não
+        # conseguiria criá-la: o ensaio espelha apenas o que nasceria de verdade.
+        if dados.get("asn_remote") is None:
+            continue
         sessao = models.BgpSession(circuit_id=circ.id, device_id=device.id, **dados)
         session.add(sessao)
         sessoes.append(sessao)
