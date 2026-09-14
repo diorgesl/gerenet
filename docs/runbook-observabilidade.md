@@ -18,6 +18,11 @@ O worker **não** expõe `/metrics`: cada job roda num processo filho (`os.fork`
 métricas em memória morreriam com ele. As métricas de job vêm do `job_runs`, que
 é durável.
 
+As séries de divergência **não** distinguem comparação parcial: o campo `parcial`
+do resumo aparece no card do dashboard, não em painel. Publicá-lo como série hoje
+viraria ruído — todo equipamento sem sessão no SoT tem comparação parcial, porque
+a coleta pula o recurso verbose nesse caso.
+
 ### Ligar o token
 
 O valor vai no `.env` da raiz, que é gitignored (o mesmo arranjo dos segredos do
@@ -27,7 +32,7 @@ Vault):
 GERENET_METRICS_TOKEN=<token>
 ```
 
-O serviço `api` do `compose.yaml` lê a variável do ambiente
+Acrescente ao serviço `api` do `compose.yaml` (ou ao ambiente de quem instala):
 
 ```yaml
   api:
@@ -36,20 +41,23 @@ O serviço `api` do `compose.yaml` lê a variável do ambiente
       GERENET_METRICS_TOKEN: ${GERENET_METRICS_TOKEN}
 ```
 
-e o scrape manda o mesmo valor:
+Em produção, o scrape lê o token de um **arquivo montado de fora do Git** — o
+`prometheus.yml` do repositório é o de dev e não leva token:
 
 ```yaml
   - job_name: gerenet
     metrics_path: /metrics
     authorization:
-      credentials: <mesmo-token>
+      credentials_file: /etc/prometheus/gerenet-metrics-token
     static_configs:
       - targets: ["api:8000"]
 ```
 
-O **valor** nunca vai para o `compose.yaml` nem para qualquer arquivo
-versionado: o compose interpola a variável a partir do ambiente. Em produção, ela
-vem do ambiente da plataforma.
+O arquivo vem do `.env`/secret do orquestrador, e é o caminho que evita colar o
+valor num arquivo versionado. O **valor** do token nunca vai para nenhum arquivo
+**do repositório**: no dev o compose interpola a variável a partir do ambiente
+(o mesmo `.env` gitignored); em produção, ela vem do ambiente da plataforma e o
+Prometheus lê o arquivo montado.
 
 Deixar a variável ausente derruba a API na subida, de propósito: o compose
 substitui `GERENET_METRICS_TOKEN: ${GERENET_METRICS_TOKEN}` por string vazia, e o
@@ -77,8 +85,9 @@ docker compose up -d prometheus grafana
   `gerenet — operação` já provisionado (arquivos em `docker/observability/`).
 
 Sem dado nos painéis: confira primeiro `/targets` (alvo UP) e depois
-`curl -s localhost:8000/metrics | head`. Com o token ligado, o job do
-`prometheus.yml` precisa do bloco `authorization`.
+`curl -s localhost:8000/metrics | head`. Com o token ligado, o scrape de dev
+também precisa do bloco `authorization` — via `credentials_file` apontando para
+um arquivo **fora do repositório**, nunca com o valor no `prometheus.yml`.
 
 Os dois painéis de idade (**Coleta mais antiga** e **Idade da coleta por
 equipamento**) aparecem "No data" até o primeiro snapshot de algum equipamento: a
@@ -104,9 +113,16 @@ middleware do grupo `/api` responderia 401 antes disso).
 ## Produção
 
 Aponte o Prometheus de casa para o `/metrics` da plataforma, pela rede de
-gerência. Os dois arquivos que importam são os do repo (`prometheus.yml` e o JSON
-do dashboard), e o resto é ajuste local. Se a API estiver atrás de proxy, o
+gerência. O `prometheus.yml` e o JSON do dashboard do repo servem de ponto de
+partida (o job de dev, sem token); o resto é ajuste local — inclusive o token,
+pelo arquivo montado da seção anterior. Se a API estiver atrás de proxy, o
 `/metrics` precisa ser roteado como o resto.
+
+**Alerta é de quem instala.** A plataforma entrega as séries para isso
+(`gerenet_devices_comm_status`, `gerenet_device_consecutive_failures`,
+`gerenet_snapshot_age_seconds`, `gerenet_divergences`); nenhuma alert rule
+acompanha o repositório, e o §20.1 não pede nenhuma. O dashboard provisionado é
+leitura, não alerta — quem opera monta as regras no próprio Prometheus/Grafana.
 
 ## Coleta periódica
 

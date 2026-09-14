@@ -102,6 +102,9 @@ cada execução.
   fila).
 - A coleta agendada aparece nos jobs com `origin = scheduler`, o que a distingue
   da coleta manual.
+- Com um worker só (o do compose atende as duas filas, `gerenet-collect` antes de
+  `gerenet-change`), as coletas passam na frente de uma mudança já aprovada.
+  Separar as filas em dois workers é frente futura.
 
 Veja também [Reconciliação, config desejada, jobs e auditoria](/wiki/operacao)
 para o que fazer com o resultado de cada coleta.
