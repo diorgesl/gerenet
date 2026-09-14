@@ -825,6 +825,29 @@ def test_fidelidade_aponta_a_politica_que_o_render_nao_reproduz(db_session, tmp_
     assert any("route-policy RP-64512-IMPORT-V4" in linha for linha in peer.faltando)
 
 
+def test_fidelidade_ignora_comentario_dentro_da_interface(db_session, tmp_path) -> None:
+    """Comentário com texto na coluna 0 dentro do bloco da interface (a forma que
+    o próprio render emite, `# second-dot1q ...`) some da comparação nos dois
+    lados. Sem a regra, ele zerava o `dentro` e as linhas de endereço escritas
+    depois dele ficavam de fora — o render as produzia e a conferência acusava
+    sobra nelas."""
+    dev = _ambiente(db_session)
+    _com_texto(db_session, dev, tmp_path,
+               "interface Eth-Trunk127.6001\n"
+               " vlan-type dot1q 6001\n"
+               "# second-dot1q: encapsulamento interno duplo\n"
+               " ip address 100.64.10.0 255.255.255.254\n"
+               "#\n"
+               "bgp 65001\n"
+               " peer 100.64.10.1 as-number 64512\n"
+               " ipv4-family unicast\n"
+               "  peer 100.64.10.1 enable\n")
+    (prop,) = listar_propostas(db_session, dev.id).propostas
+    sub = next(d for d in conferir_fidelidade(db_session, prop) if d.contexto == "subinterface")
+    assert sub.sobrando == ()
+    assert sub.faltando == ()
+
+
 def test_fidelidade_do_peer_que_casa_com_o_render(db_session, tmp_path) -> None:
     dev = _ambiente(db_session)
     arquivo = tmp_path / "current.txt"

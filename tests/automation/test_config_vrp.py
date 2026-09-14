@@ -262,3 +262,29 @@ def test_valor_que_nao_converte_vira_aviso_derivado() -> None:
     assert beta.asn_remote == 64512
     assert beta.shutdown is True
     assert len(config.avisos) == 3
+
+
+def test_comentario_com_texto_nao_fecha_o_bloco_derivado() -> None:
+    """O render deste projeto emite comentário com texto na coluna 0 dentro do
+    bloco (`# password no Vault ...` no `bgp`, `# second-dot1q ...` na
+    `interface`). Tratado como bloco de topo, ele fechava o bloco ali mesmo: os
+    peers e os endereços escritos depois dele saíam da leitura."""
+    texto = (
+        "interface Eth-Trunk127.1001\n"
+        " vlan-type dot1q 1001\n"
+        "# second-dot1q: encapsulamento interno duplo — dívida do ciclo C\n"
+        " ip address 100.64.10.0 255.255.255.254\n"
+        "#\n"
+        "bgp 65001\n"
+        " peer 10.0.0.9 as-number 65001\n"
+        "# password no Vault (secret/ne8000/peer-100.64.10.1)\n"
+        " peer 100.64.10.1 as-number 64512\n"
+        " ipv4-family unicast\n"
+        "  peer 100.64.10.1 enable\n"
+    )
+    config = parse_config_vrp(texto)
+    (sub,) = config.subinterfaces
+    assert sub.enderecos_v4 == (("100.64.10.0", "255.255.255.254"),)
+    assert {p.address for p in config.peers} == {"10.0.0.9", "100.64.10.1"}
+    assert _por_endereco(config, "100.64.10.1").habilitado is True
+    assert config.avisos == ()

@@ -802,12 +802,18 @@ def _contexto_interface(texto: str, nome: str) -> set[str]:
     O cabeçalho fica de fora: ele abre o contexto, não é linha dele — e o lado
     do render o descarta pelo mesmo motivo (`conferir_fidelidade`), para a
     comparação não começar com o cabeçalho presente de um lado só.
+
+    Comentário (`#`, com ou sem texto) também fica de fora, e antes da regra de
+    contexto: o `_normaliza_linhas` já descarta os dois do lado do render, e um
+    comentário com texto na coluna 0 zerava o `dentro` aqui — as linhas de
+    endereço que vinham depois ficavam de fora da comparação e o render as
+    acusava como sobra.
     """
     linhas: set[str] = set()
     dentro = False
     for bruta in texto.splitlines():
         linha = bruta.strip()
-        if not linha or linha == "#":
+        if not linha or linha.startswith("#"):
             continue
         if not bruta[:1].isspace():
             dentro = linha == f"interface {nome}"

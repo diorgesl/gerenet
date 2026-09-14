@@ -270,7 +270,13 @@ def parse_config_vrp(texto: str) -> ConfigVrp:
 
     for bruta in texto.splitlines():
         linha = bruta.strip()
-        if not linha or linha == "#":
+        # Qualquer linha começando com `#` é comentário e some antes da regra de
+        # contexto — e não só a linha `#` sozinha, que é o separador de blocos do
+        # VRP. O render deste projeto emite comentário com texto na coluna 0
+        # dentro do bloco (`# password no Vault ...`, `# second-dot1q ...`), e
+        # tratá-lo como bloco de topo fechava o `bgp` ali mesmo: os peers
+        # seguintes saíam da leitura.
+        if not linha or linha.startswith("#"):
             continue
         indentado = bruta[:1] in (" ", "\t")
 
