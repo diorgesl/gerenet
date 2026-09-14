@@ -1671,6 +1671,38 @@ def test_endereco_sem_subinterface_e_conflito(db_session, tmp_path) -> None:
     assert "endereco_sem_subinterface" in {c.tipo for c in prop.conflitos}
 
 
+def test_leitura_parcial_ainda_propoe(db_session, tmp_path) -> None:
+    """Aviso de leitura parcial não pode zerar a lista: o que foi lido vale.
+
+    Um cabeçalho de família fora do escopo faz o parser avisar e seguir; os peers
+    da instância pública foram lidos inteiros e viram proposta normalmente.
+    """
+    dev = _ambiente(db_session)
+    arquivo = tmp_path / "current.txt"
+    arquivo.write_text(
+        "interface Eth-Trunk127.6001\n"
+        " vlan-type dot1q 6001\n"
+        " ip address 100.64.10.0 255.255.255.254\n"
+        "#\n"
+        "bgp 65001\n"
+        " peer 100.64.10.1 as-number 64512\n"
+        " ipv4-family unicast\n"
+        "  peer 100.64.10.1 enable\n"
+        " ipv4-family multicast\n"
+        "  peer 10.0.0.9 enable\n",
+        encoding="utf-8",
+    )
+    db_session.add(models.DeviceSnapshot(device_id=dev.id, status="success",
+                                        raw_files={"config_backup": [str(arquivo)]}))
+    db_session.commit()
+    resultado = listar_propostas(db_session, dev.id)
+    assert resultado.aviso is not None
+    assert resultado.snapshot_id is not None
+    assert [c.remote_address for p in resultado.propostas for c in p.candidatos] == [
+        "100.64.10.1",
+    ]
+
+
 def test_asn_divergente_do_cadastro_vira_pendencia(db_session, tmp_path) -> None:
     """A configuração diz `bgp 65001` e o cadastro do equipamento diz outro ASN."""
     dev = _ambiente(db_session, asn=65002)
@@ -2113,7 +2145,12 @@ def listar_propostas(session: Session, device_id: int) -> ResultadoPropostas:
         device_id=descoberta.device_id, snapshot_id=descoberta.snapshot_id,
         aviso=descoberta.aviso,
     )
-    if descoberta.aviso is not None:
+    # Quem manda parar é a AUSÊNCIA de coleta, não a presença de aviso: `aviso`
+    # carrega dois estados (sem coleta e leitura parcial), e abortar por leitura
+    # parcial devolveria zero propostas num equipamento cujos peers foram lidos
+    # perfeitamente. O aviso segue no resultado e as superfícies o mostram ao
+    # lado da lista.
+    if descoberta.snapshot_id is None:
         return resultado
 
     device = get_device(session, descoberta.device_id)
