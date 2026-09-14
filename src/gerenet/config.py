@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -36,6 +37,17 @@ class Settings(BaseSettings):
     # F6: token opcional do /metrics (Bearer). None = sem autenticação, como o
     # /healthz — o endpoint pertence à rede de gerência (§19).
     metrics_token: str | None = None
+
+    @field_validator("metrics_token")
+    @classmethod
+    def _token_nao_vazio(cls, v: str | None) -> str | None:
+        """'' é falsy: sem isto o /metrics ficaria aberto com quem instalou achando que autenticou."""
+        if v is not None and not v.strip():
+            raise ValueError(
+                "GERENET_METRICS_TOKEN vazio: deixe a variável ausente para desligar "
+                "a autenticação do /metrics."
+            )
+        return v
 
     # IPAM p2p (§25.8): bloco privado de enlaces v4 e base v6 por padrão;
     # cada site pode sobrescrever.

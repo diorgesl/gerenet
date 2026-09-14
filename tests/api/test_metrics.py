@@ -39,12 +39,18 @@ def ambiente(db_session: Session) -> models.Device:
             started_at=datetime.now(UTC) - timedelta(minutes=5),
         )
     )
-    db_session.add(
+    db_session.add_all([
         models.JobRun(
             device_id=dev.id, origin="cli", actor="cli", kind="collect", status="success",
             duration_ms=1500,
-        )
-    )
+        ),
+        # Linha sem duração (o caminho de falha do runner grava sem medir): entra na
+        # contagem de execuções, mas não pode puxar o p50/p95 para baixo.
+        models.JobRun(
+            device_id=dev.id, origin="cli", actor="cli", kind="collect", status="error",
+            duration_ms=0,
+        ),
+    ])
     dominio = models.MplsDomain(name="dom-metrics")
     db_session.add(dominio)
     db_session.flush()

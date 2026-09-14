@@ -8,6 +8,7 @@ por aplicação, e não o global do prometheus_client, porque a suíte chama
 Sem `ProcessCollector`/`PlatformCollector`: o §20.1 não pede métrica de processo
 e elas dependem de /proc, que não existe no macOS onde os testes rodam.
 """
+import secrets
 from collections.abc import Iterator
 from datetime import UTC, datetime
 
@@ -29,13 +30,22 @@ FILAS = ("gerenet-collect", "gerenet-change")
 JANELA_DURACAO = 200  # jobs considerados no p50/p95 por tipo
 
 
-def _ultimo_snapshot(session: Session, device_id: int) -> models.DeviceSnapshot | None:
-    return session.scalars(
-        select(models.DeviceSnapshot)
-        .where(models.DeviceSnapshot.device_id == device_id)
-        .order_by(models.DeviceSnapshot.id.desc())
-        .limit(1)
-    ).first()
+def _ultimos_snapshots(session: Session) -> dict[int, models.DeviceSnapshot]:
+    """Snapshot mais recente de cada equipamento, em uma consulta (max(id))."""
+    ultimos = (
+        select(
+            models.DeviceSnapshot.device_id,
+            func.max(models.DeviceSnapshot.id).label("snapshot_id"),
+        )
+        .group_by(models.DeviceSnapshot.device_id)
+        .subquery()
+    )
+    snapshots = session.scalars(
+        select(models.DeviceSnapshot).join(
+            ultimos, models.DeviceSnapshot.id == ultimos.c.snapshot_id
+        )
+    )
+    return {snap.device_id: snap for snap in snapshots}
 
 
 def _por_status(session: Session, coluna) -> list[tuple[str, int]]:
@@ -53,35 +63,38 @@ class ColetorGerenet:
         agora = datetime.now(UTC)
         amostras: list[GaugeMetricFamily] = []
         with get_session() as session:
-            amostras.extend(self._devices(session, agora))
-            amostras.extend(self._divergencias(session))
-            amostras.extend(self._peers(session))
+            # Duas consultas fixas (equipamentos e o último snapshot de cada um), o
+            # resto em agregações: o custo do scrape não cresce com o parque.
+            devices = list(session.scalars(select(models.Device).order_by(models.Device.name)))
+            por_device = _ultimos_snapshots(session)
+            amostras.extend(self._devices(devices, por_device, agora))
+            amostras.extend(self._divergencias(devices, por_device))
+            amostras.extend(self._peers(devices, por_device))
             amostras.extend(self._mpls(session))
             amostras.extend(self._mudancas(session))
             amostras.extend(self._jobs(session))
         amostras.extend(self._filas())
         yield from amostras
 
-    def _devices(self, session: Session, agora: datetime) -> list[GaugeMetricFamily]:
+    def _devices(
+        self,
+        devices: list[models.Device],
+        por_device: dict[int, models.DeviceSnapshot],
+        agora: datetime,
+    ) -> list[GaugeMetricFamily]:
         comm = GaugeMetricFamily(
             "gerenet_devices_comm_status",
             "Equipamentos por estado de comunicação (§20.1).",
             labels=["status"],
         )
         contagem = {status: 0 for status in COMM_STATUS}
-        for status in session.scalars(select(models.Device.comm_status)):
-            contagem[status] = contagem.get(status, 0) + 1
+        for dev in devices:
+            contagem[dev.comm_status] = contagem.get(dev.comm_status, 0) + 1
         for status, total in sorted(contagem.items()):
             comm.add_metric([status], total)
 
         ativos = GaugeMetricFamily("gerenet_devices_active", "Equipamentos com admin_status ligado.")
-        ativos.add_metric(
-            [],
-            session.scalar(
-                select(func.count()).select_from(models.Device).where(models.Device.admin_status.is_(True))
-            )
-            or 0,
-        )
+        ativos.add_metric([], sum(1 for dev in devices if dev.admin_status))
 
         idade = GaugeMetricFamily(
             "gerenet_snapshot_age_seconds",
@@ -93,14 +106,16 @@ class ColetorGerenet:
             "Falhas consecutivas de coleta, por equipamento.",
             labels=["device"],
         )
-        for dev in session.scalars(select(models.Device).order_by(models.Device.name)):
+        for dev in devices:
             falhas.add_metric([dev.name], dev.consecutive_failures)
-            snap = _ultimo_snapshot(session, dev.id)
+            snap = por_device.get(dev.id)
             if snap is not None:
                 idade.add_metric([dev.name], (agora - snap.started_at).total_seconds())
         return [comm, ativos, idade, falhas]
 
-    def _divergencias(self, session: Session) -> list[GaugeMetricFamily]:
+    def _divergencias(
+        self, devices: list[models.Device], por_device: dict[int, models.DeviceSnapshot]
+    ) -> list[GaugeMetricFamily]:
         divergencias = GaugeMetricFamily(
             "gerenet_divergencias",
             "Divergências da última coleta, por severidade (§10).",
@@ -112,8 +127,8 @@ class ColetorGerenet:
         )
         totais = {severidade: 0 for severidade in SEVERIDADES}
         contagem_sem = 0
-        for dev in session.scalars(select(models.Device)):
-            snap = _ultimo_snapshot(session, dev.id)
+        for dev in devices:
+            snap = por_device.get(dev.id)
             if snap is None:
                 continue
             resumo = (snap.resources or {}).get("divergencias")
@@ -127,15 +142,17 @@ class ColetorGerenet:
         sem_resumo.add_metric([], contagem_sem)
         return [divergencias, sem_resumo]
 
-    def _peers(self, session: Session) -> list[GaugeMetricFamily]:
+    def _peers(
+        self, devices: list[models.Device], por_device: dict[int, models.DeviceSnapshot]
+    ) -> list[GaugeMetricFamily]:
         peers = GaugeMetricFamily(
             "gerenet_peers_bgp",
             "Peers BGP do snapshot mais recente, por estado (§13.1).",
             labels=["estado"],
         )
         estados: dict[str, int] = {}
-        for dev in session.scalars(select(models.Device)):
-            snap = _ultimo_snapshot(session, dev.id)
+        for dev in devices:
+            snap = por_device.get(dev.id)
             if snap is None:
                 continue
             for linha in (snap.resources or {}).get("bgp_peers") or []:
@@ -190,6 +207,7 @@ class ColetorGerenet:
             "p50 e p95 da duração por tipo de job (últimos 200 de cada tipo).",
             labels=["kind", "quantil"],
         )
+
         janela = (
             select(
                 models.JobRun.kind.label("kind"),
@@ -206,7 +224,9 @@ class ColetorGerenet:
                 func.percentile_cont(0.5).within_group(janela.c.duration_ms),
                 func.percentile_cont(0.95).within_group(janela.c.duration_ms),
             )
-            .where(janela.c.rn <= JANELA_DURACAO)
+            # duration_ms = 0 é linha sem medição (queued/running e o erro gravado no
+            # caminho de falha do runner): como duração, puxaria o quantil para baixo.
+            .where(janela.c.rn <= JANELA_DURACAO, janela.c.duration_ms > 0)
             .group_by(janela.c.kind)
         ).all()
         for kind, p50, p95 in quantis:
@@ -240,6 +260,10 @@ def montar_metrics(app: FastAPI, settings: Settings) -> None:
     @app.get("/metrics", include_in_schema=False)
     def metrics(request: Request) -> Response:
         token = settings.metrics_token
-        if token and request.headers.get("Authorization") != f"Bearer {token}":
-            raise HTTPException(status_code=401, detail="Token de métricas inválido.")
+        if token:
+            # Em bytes: compare_digest com str levanta TypeError em caractere
+            # não-ASCII, e o header do cliente viraria 500 em vez de 401.
+            apresentado = (request.headers.get("Authorization") or "").encode()
+            if not secrets.compare_digest(apresentado, f"Bearer {token}".encode()):
+                raise HTTPException(status_code=401, detail="Token de métricas inválido.")
         return Response(content=generate_latest(registry), media_type=CONTENT_TYPE_LATEST)
