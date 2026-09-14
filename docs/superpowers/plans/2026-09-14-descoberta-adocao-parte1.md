@@ -2261,6 +2261,7 @@ def listar_propostas(session: Session, device_id: int) -> ResultadoPropostas:
     _marca_mesmo_asn(por_enlace)
     resultado.propostas = list(por_enlace.values()) + orfas
     return resultado
+```
 
 - [ ] **Step 4: Run tests to verify they pass**
 
