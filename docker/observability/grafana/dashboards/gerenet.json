@@ -133,6 +133,21 @@
         { "refId": "A", "expr": "gerenet_device_consecutive_failures", "legendFormat": "{{device}}" }
       ],
       "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "id": 12,
+      "type": "stat",
+      "title": "Execuções de coleta por status",
+      "datasource": { "type": "prometheus", "uid": "gerenet-prom" },
+      "gridPos": { "h": 5, "w": 12, "x": 0, "y": 29 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (status) (gerenet_job_runs{kind=\"collect\"})",
+          "legendFormat": "{{status}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
     }
   ]
 }

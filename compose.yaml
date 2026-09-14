@@ -135,10 +135,11 @@ services:
   grafana:
     image: grafana/grafana:11.3.0
     container_name: gerenet-grafana
+    # Dev: anônimo para ver (viewer, sem senha) e o login de admin do primeiro
+    # boot fica disponível para editar os painéis e exportar de volta.
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
-      GF_AUTH_DISABLE_LOGIN_FORM: "true"
     volumes:
       - ./docker/observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./docker/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
