@@ -146,6 +146,12 @@ interface Vlanif{{ vid }}
 {% endif %} l2 binding vsi {{ vrp_name }}
 ```
 
+O `l2 binding` sai com **um espaço à esquerda**, como o `description` da mesma
+interface: é sub-comando da `Vlanif`, e o espaço vem do literal que segue o
+`{% endif %}` (o snippet acima é o template entregue, não uma simplificação).
+É o que a captura real do switch mostra e o que o teste
+`test_render_vsi_ac_com_vlan_e_binding` pina.
+
 **Blocos fora do render, de propósito.** `tnl-policy`, `statistic enable` e os
 comandos de MAC learning e limite de MAC ficam de fora: os VSIs medidos usam o
 default do VRP, os campos correspondentes seguem no modelo para consulta, e
@@ -252,9 +258,12 @@ dele (diferente do `local VC MTU` do L2VC, que vem `0` com o VC caído).
 ## 8. Web e CLI
 
 - **Detalhe do VSI** (`/mpls/vsi/:id`): lista de ACs com equipamento, Vlanif,
-  VLAN e estado, a divergência por pseudowire e por AC da última coleta, e o
-  botão "Solicitar mudança" (a página de CR já trata o escopo `vsi` depois da
-  §5).
+  VLAN e estado, e o botão "Solicitar mudança" (a página de CR já trata o
+  escopo `vsi` depois da §5). O `VsiOut` é visão da SoT, como o `out_l2vc`:
+  a página mostra o estado do VSI (o `VSI State` da última coleta, que o
+  `sincronizar_mpls` propaga) e o de cada AC, **não** o estado por pseudowire —
+  esse aparece no `post_check_json` de uma CR de escopo `vsi` (item `vsi.peer`)
+  e no snapshot cru (dívida na §12).
 - **Lista de VSIs**: badge de estado operacional e a contagem de PEs.
 - **`escopoComFluxo`** na página de CR passa a incluir `vsi`, que era o último
   escopo bloqueado.
@@ -316,7 +325,7 @@ da operação, e verifica o estado por pseudowire e por AC depois da execução.
 6. **Render enxuto**: `tnl-policy`, `statistic enable` e comandos de MAC ficam
    de fora, porque os VSIs medidos usam default do VRP.
 
-## 12. Dívidas registradas
+## 12. Dívidas registradas e notas de desenho
 
 - **Aprendizado de MAC** (§13.2, "quando aplicável"): exige `display mac-address`
   ou equivalente, com parser e item de pós-check próprios. Fica para uma frente
@@ -327,3 +336,19 @@ da operação, e verifica o estado por pseudowire e por AC depois da execução.
   não modela o campo e o render não o emite. Se a operação quiser padronizar
   política de túnel por serviço, é um campo novo com o seu próprio gate de
   capacidade.
+- **Estado por pseudowire na página do VSI**: a §8 prometia "a divergência por
+  pseudowire e por AC da última coleta", mas o `VsiOut` é visão da SoT (como o
+  `out_l2vc`) e a página mostra o estado do VSI e o de cada AC. O estado por
+  pseudowire existe só no `post_check_json` de uma CR de escopo `vsi` (item
+  `vsi.peer`) e no snapshot cru; levar dado de snapshot para o Out misturaria
+  as duas visões, então fica como dívida (a §8 diz o que existe hoje).
+
+Notas de desenho (comportamento deliberado, não dívida):
+
+- **`plan_remocao_vsi` exige coleta com `vsi` em todas as pontas**: ponta sem
+  snapshot levanta `ValidationError` e aborta o filho inteiro, em vez de pular
+  aquela ponta — espelha o L2VC e evita um plano de remoção otimista (§5.2);
+  com 3+ PEs a mensagem nomeia o equipamento a coletar.
+- **O pré-check do escopo `vsi` também roda no caminho de remoção** e exige o
+  par LDP **UP**: remover um VSI com o peer caído (ou sem a sessão coletada)
+  espera a coleta, como no provisionamento.

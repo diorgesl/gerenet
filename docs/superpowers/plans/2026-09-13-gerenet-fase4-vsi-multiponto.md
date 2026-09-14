@@ -274,15 +274,21 @@ Em `create_vsi`, troque o bloco que valida e cria os membros por:
     for ep in endpoints:
         vid = ep.vid if ep.vid is not None else vsi_id
         vlan = reservar_vlan_ac(session, device_id=ep.device_id, vid=vid, actor=actor)
+        # A ponta bloqueia a VLAN de AC de QUALQUER outro serviço — inclusive a
+        # de um L2VC, cuja linha tem vsi_id NULL e por isso escaparia de um
+        # `vsi_id != <id>` (em SQL, NULL != id é NULL). A linha vem inteira
+        # porque a coluna do dono pode ser justamente a NULL.
         dono = session.scalars(
-            select(models.ServiceEndpoint.vsi_id).where(
+            select(models.ServiceEndpoint).where(
                 models.ServiceEndpoint.vlan_id == vlan.id,
-                models.ServiceEndpoint.vsi_id != vsi.id,
+                models.ServiceEndpoint.vsi_id.is_distinct_from(vsi.id),
             ).limit(1)
         ).first()
         if dono is not None:
             session.rollback()
-            raise ConflictError(f"VLAN {vlan.vid} já pertence ao VSI {dono}.")
+            if dono.vsi_id is not None:
+                raise ConflictError(f"VLAN {vlan.vid} já pertence ao VSI {dono.vsi_id}.")
+            raise ConflictError(f"VLAN {vlan.vid} já pertence ao serviço L2VC {dono.l2vc_id}.")
         session.add(models.ServiceEndpoint(
             kind="vsi", vsi_id=vsi.id, device_id=ep.device_id, interface=f"Vlanif{vid}",
             encapsulation="dot1q", vlan_id=vlan.id, mtu=ep.mtu or data.mtu,
@@ -662,8 +668,10 @@ def test_render_vsi_ac_com_vlan_e_binding(servico, db_session):
     d1, _, _, svc = servico
     blocos = vsi_auto.render_vsi(db_session, svc)[d1.id]
     ac = next(b for b in blocos if b.tipo == "vsi_ac")
+    # `l2 binding` sai indentado como no `display` do equipamento (é
+    # sub-comando da Vlanif), com o espaço que o template entrega.
     assert ac.comandos == [
-        "vlan 700", "interface Vlanif700", "l2 binding vsi VSI-CLIENTE-ACME-700",
+        "vlan 700", "interface Vlanif700", " l2 binding vsi VSI-CLIENTE-ACME-700",
     ]
     assert [b.tipo for b in blocos] == ["vsi", "vsi_ac"]
 
