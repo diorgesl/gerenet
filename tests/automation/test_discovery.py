@@ -547,3 +547,239 @@ def test_prefixo_tomado_na_caixa_do_equipamento_e_conflito(db_session, tmp_path)
     alfa = _propostas(db_session, dev)[1001]
     assert "prefixo_tomado" in {c.tipo for c in alfa.conflitos}
     assert alfa.veredito == "nao_adotavel"
+
+
+def _com_texto(db_session, dev, tmp_path: Path, texto: str):
+    """Snapshot com a configuração escrita no próprio teste."""
+    arquivo = tmp_path / "current.txt"
+    arquivo.write_text(texto, encoding="utf-8")
+    snap = models.DeviceSnapshot(device_id=dev.id, status="success",
+                                 raw_files={"config_backup": [str(arquivo)]})
+    db_session.add(snap)
+    db_session.commit()
+    return snap
+
+
+def _circuito_tomado(db_session, dev, *, code: str, vrf: str | None = None):
+    """Circuito de outro cliente no mesmo site (o código já está em uso)."""
+    from gerenet.domain.schemas import CircuitCreate
+    from gerenet.domain.services.circuits import create_circuit
+
+    org = create_organization(db_session, OrganizationCreate(name="Outro Cliente", asn=64999),
+                              actor="cli")
+    site = db_session.scalar(select(models.Site))
+    return create_circuit(db_session, CircuitCreate(
+        code=code, organization_id=org.id, site_id=site.id, vrf=vrf,
+        access_device_id=dev.id, access_port="GE0/0/9", edge_device_id=dev.id,
+    ), actor="cli")
+
+
+def test_prefixo_tomado_nao_depende_da_caixa_do_cadastro(db_session, tmp_path) -> None:
+    """O bloco v6 do site pode ter sido digitado em minúsculas: o IPAM grava a
+    caixa do cadastro (`_preserva_caixa`) e o equipamento escreve a dele. O
+    conflito é da reserva, não da grafia — sem isso um `/126` já reservado
+    volta como adotável e colide no índice único do banco na hora da adoção."""
+    dev = _ambiente(db_session)
+    outro = _circuito_tomado(db_session, dev, code="CIRC-V6-MINUSCULO")
+    site = db_session.scalar(select(models.Site))
+    db_session.add(models.IpPrefix(site_id=site.id, network="2804:194c:1000::1100:73:0/126",
+                                   kind="p2p", circuit_id=outro.id))
+    db_session.commit()
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+    assert "prefixo_tomado" in {c.tipo for c in alfa.conflitos}
+    assert alfa.veredito == "nao_adotavel"
+
+
+def test_codigo_sugerido_em_uso_vira_pendencia(db_session, tmp_path) -> None:
+    """`ADOC-<ASN>-<VID>` já cadastrado: o operador escolhe outro na revisão."""
+    dev = _ambiente(db_session)
+    _circuito_tomado(db_session, dev, code="ADOC-64512-1001")
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+    assert alfa.circuit_code_sugerido == "ADOC-64512-1001"
+    pendencia = next(p for p in alfa.pendencias if p.tipo == "codigo_em_uso")
+    assert "ADOC-64512-1001" in pendencia.descricao
+
+
+def test_equipamento_sem_site_e_conflito(db_session, tmp_path) -> None:
+    """O IPAM é por site: sem site vinculado não há reserva possível."""
+    dev = create_device(db_session, DeviceCreate(name="ne8000-sem-site",
+                                                 management_address="10.0.0.8", asn=65001),
+                        actor="cli")
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+    assert {c.tipo for c in alfa.conflitos} == {"sem_site"}
+    assert alfa.veredito == "nao_adotavel"
+
+
+_SEM_ASN = (
+    "interface Eth-Trunk127.8001\n"
+    " vlan-type dot1q 8001\n"
+    " ip address 100.64.10.0 255.255.255.254\n"
+    "#\n"
+    "bgp 65001\n"
+    " peer 100.64.10.1 description CLIENTE-SEM-ASN\n"
+    " peer 100.64.10.1 route-policy RP-64512-IMPORT-V4 import\n"
+)
+
+
+def test_peer_sem_as_number_nao_sugere_codigo(db_session, tmp_path) -> None:
+    """Sem `as-number` lido não há ASN para o código — e o `codigo_em_uso` só
+    confere o código que existe: `ADOC-None-8001` seria um código mostrado ao
+    operador e nunca conferido contra a SoT."""
+    dev = _ambiente(db_session)
+    _com_texto(db_session, dev, tmp_path, _SEM_ASN)
+    (prop,) = listar_propostas(db_session, dev.id).propostas
+    assert prop.vid == 8001  # o enlace tem VLAN: o `None` vem do ASN que falta
+    assert prop.circuit_code_sugerido is None
+
+
+def test_pendencia_da_organizacao_sem_asn_nao_imprime_none(db_session, tmp_path) -> None:
+    """Sem ASN lido, a mensagem diz o que falta em vez de pedir a organização
+    de um `ASN None`."""
+    dev = _ambiente(db_session)
+    _com_texto(db_session, dev, tmp_path, _SEM_ASN)
+    (prop,) = listar_propostas(db_session, dev.id).propostas
+    pendencia = next(p for p in prop.pendencias if p.tipo == "organizacao_ausente")
+    assert "None" not in pendencia.descricao
+    assert "as-number" in pendencia.descricao
+
+
+def test_politica_sem_asn_nao_afirma_que_esta_fora_do_padrao(db_session, tmp_path) -> None:
+    """Sem o ASN do par não existe nome padrão com que comparar: dizer que a
+    política "não segue o padrão" afirmaria o que a configuração não diz."""
+    dev = _ambiente(db_session)
+    _com_texto(db_session, dev, tmp_path, _SEM_ASN)
+    (prop,) = listar_propostas(db_session, dev.id).propostas
+    pendencia = next(p for p in prop.pendencias if p.tipo == "perfil_indeterminado")
+    assert "as-number" in pendencia.descricao
+    assert "não segue o padrão" not in pendencia.descricao
+
+
+def test_a_sessao_usa_as_chaves_do_modelo(db_session, tmp_path) -> None:
+    """A conferência de fidelidade espalha este dicionário no modelo
+    (`models.BgpSession(**dados)`): o campo do modelo é `description`, e
+    `descricao` levantaria `TypeError` no flush."""
+    dev = _ambiente(db_session)
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+    sessao = next(s for s in alfa.sessoes if s["afi"] == "ipv4")
+    assert sessao["description"] == "CLIENTE-ALFA"
+    assert set(sessao) <= {c.name for c in models.BgpSession.__table__.columns}
+
+
+def test_pendencia_de_politica_nomeia_a_que_segue_o_padrao(db_session, tmp_path) -> None:
+    """No enlace do CLIENTE-ALFA a importação é `RP-64512-IMPORT-V4` (o padrão
+    de nome deste sistema) e a exportação é `IP-PFX-64512-EXPORT-V4` (fora
+    dele): a mensagem cita a que segue o padrão, em vez de afirmar que as duas
+    seguem."""
+    dev = _ambiente(db_session)
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+    pendencia = next(p for p in alfa.pendencias if p.tipo == "perfil_indeterminado")
+    assert "RP-64512-IMPORT-V4" in pendencia.descricao
+    assert "IP-PFX-64512-EXPORT-V4" not in pendencia.descricao
+
+
+def test_o_enlace_dual_nao_repete_a_pendencia(db_session, tmp_path) -> None:
+    """Os dois candidatos do enlace dual têm descrições próprias no equipamento
+    (`CLIENTE-ALFA` e `CLIENTE-ALFA-V6`): a pendência da organização é uma só,
+    e cita a descrição do enlace — a mesma que vira `organizacao_sugerida`."""
+    dev = _ambiente(db_session)
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+    pendencias = [p for p in alfa.pendencias if p.tipo == "organizacao_ausente"]
+    assert len(pendencias) == 1
+    assert "(descrição no equipamento: CLIENTE-ALFA)" in pendencias[0].descricao
+    assert alfa.organizacao_sugerida == "CLIENTE-ALFA"
+
+
+def test_duas_subinterfaces_com_o_mesmo_vid_sao_dois_enlaces(db_session, tmp_path) -> None:
+    """Duas subinterfaces do mesmo equipamento com o mesmo VID são dois
+    enlaces: agrupadas pelo VID viram **uma** proposta com dois pares e duas
+    sessões, que não existe em equipamento nenhum."""
+    dev = _ambiente(db_session)
+    _com_texto(db_session, dev, tmp_path,
+               "interface Eth-Trunk127.1001\n"
+               " vlan-type dot1q 1001\n"
+               " ip address 100.64.10.0 255.255.255.254\n"
+               "#\n"
+               "interface GE0/0/1.1001\n"
+               " vlan-type dot1q 1001\n"
+               " ip address 100.64.11.0 255.255.255.254\n"
+               "#\n"
+               "bgp 65001\n"
+               " peer 100.64.10.1 as-number 64512\n"
+               " peer 100.64.11.1 as-number 64513\n")
+    propostas = listar_propostas(db_session, dev.id).propostas
+    assert [p.subinterface for p in propostas] == ["Eth-Trunk127.1001", "GE0/0/1.1001"]
+    assert [len(p.candidatos) for p in propostas] == [1, 1]
+    assert [len(p.sessoes) for p in propostas] == [1, 1]
+
+
+def test_enlace_qinq_propoe_s_vlan(db_session, tmp_path) -> None:
+    """`vlan-type dot1q 0x88a8 vid 7001` é empilhado: a reserva nasce como
+    S-VLAN (o IPAM criaria `kind='s_vlan'`) e o render só emite a linha
+    empilhada com `Circuit.qinq` ligado. `vlan_mode` segue "unica": a mesma
+    VLAN carrega as duas famílias — isso é outro eixo."""
+    dev = _ambiente(db_session)
+    _com_texto(db_session, dev, tmp_path,
+               "interface Eth-Trunk127.7001\n"
+               " vlan-type dot1q 0x88a8 vid 7001\n"
+               " ip address 100.64.10.0 255.255.255.254\n"
+               "#\n"
+               "bgp 65001\n"
+               " peer 100.64.10.1 as-number 64512\n")
+    (prop,) = listar_propostas(db_session, dev.id).propostas
+    assert prop.qinq is True
+    assert prop.vlans == [{"vid": 7001, "kind": "s_vlan", "family": None}]
+    assert prop.vlan_mode == "unica"
+
+
+def test_sessao_de_outro_equipamento_nao_e_o_mesmo_par(db_session, tmp_path) -> None:
+    """O par p2p é único por domínio/site: dois POPs podem ter o mesmo `/31`
+    privado, e a sessão do outro POP não fala deste enlace."""
+    from gerenet.domain.schemas import CircuitCreate
+    from gerenet.domain.services.circuits import create_circuit
+
+    dev = _ambiente(db_session)
+    outro_site = create_site(db_session, SiteCreate(name="pop-desc-2"), actor="cli")
+    outro_dev = create_device(db_session, DeviceCreate(name="ne8000-desc-2",
+                                                       management_address="10.0.0.2",
+                                                       asn=65001), actor="cli")
+    link_device(db_session, outro_site.id, outro_dev.id, actor="cli")
+    org = create_organization(db_session, OrganizationCreate(name="Outro Cliente",
+                                                             asn=64999), actor="cli")
+    circ = create_circuit(db_session, CircuitCreate(
+        code="CIRC-DESC-OUTRO-POP", organization_id=org.id, site_id=outro_site.id,
+        access_device_id=outro_dev.id, access_port="GE0/0/1", edge_device_id=outro_dev.id,
+    ), actor="cli")
+    db_session.add(models.BgpSession(
+        circuit_id=circ.id, device_id=outro_dev.id, afi="ipv4",
+        local_address="100.64.10.0", remote_address="100.64.10.1",
+        asn_local=65001, asn_remote=64512,
+    ))
+    db_session.commit()
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+    assert "par_em_uso" not in {c.tipo for c in alfa.conflitos}
+
+
+def test_sessao_do_mesmo_equipamento_e_conflito(db_session, tmp_path) -> None:
+    """A sessão do par já existe **neste** equipamento, em outra VRF: o
+    conflito aparece, e a mensagem diz de que equipamento é a sessão — sem
+    dizer o estado dela, que a conferência não leu."""
+    dev = _ambiente(db_session)
+    circ = _circuito_tomado(db_session, dev, code="CIRC-DESC-VRF-PAR", vrf="VPNA")
+    db_session.add(models.BgpSession(
+        circuit_id=circ.id, device_id=dev.id, afi="ipv4",
+        local_address="100.64.10.0", remote_address="100.64.10.1",
+        asn_local=65001, asn_remote=64512,
+    ))
+    db_session.commit()
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+    conflito = next(c for c in alfa.conflitos if c.tipo == "par_em_uso")
+    assert dev.name in conflito.descricao
+    assert "ativa" not in conflito.descricao

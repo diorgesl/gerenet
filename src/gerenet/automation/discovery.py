@@ -7,7 +7,7 @@ peer desconhecido com o palpite de classificação e o motivo que o sustenta.
 import ipaddress
 from dataclasses import dataclass, field
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from gerenet.automation import naming
@@ -203,6 +203,7 @@ class Proposta:
     stack: str
     vlan_mode: str
     p2p_v4_len: int | None
+    qinq: bool = False
     organizacao_id: int | None = None
     organizacao_sugerida: str | None = None
     site_id: int | None = None
@@ -361,7 +362,7 @@ def _pendencia_de_politica(peer: PeerConfig, afi: str) -> Pendencia:
 
 def _pendencias_de(
     session: Session, device: models.Device, peer: PeerConfig, candidato: Candidato,
-    *, vid: int | None, descricao_do_enlace: str | None = None,
+    *, codigo_sugerido: str | None, descricao_do_enlace: str | None = None,
 ) -> list[Pendencia]:
     """O que depende de decisão humana e se resolve na revisão (spec §6).
 
@@ -370,6 +371,11 @@ def _pendencias_de(
     candidatos do enlace dual têm descrições próprias — `CLIENTE-ALFA` e
     `CLIENTE-ALFA-V6` —, e a pendência é uma só por ASN: citar a do candidato
     corrente faria o mesmo pedido aparecer duas vezes.
+
+    `codigo_sugerido` é o código da própria proposta, e não um recalculado
+    aqui: o que o operador lê e o que é conferido contra a SoT têm de ser o
+    mesmo texto — um código que a proposta mostra sem conferir passaria a
+    colidir só na adoção.
     """
     pendencias: list[Pendencia] = []
     if _organizacao_por_asn(session, peer.asn_remote) is None:
@@ -395,13 +401,13 @@ def _pendencias_de(
             "A configuração do edge não diz de que switch e porta o cliente chega: "
             "preencha o acesso na revisão.",
         ))
-    if vid is not None and peer.asn_remote is not None:
-        codigo = f"ADOC-{peer.asn_remote}-{vid}"
-        if session.scalar(select(models.Circuit.id).where(models.Circuit.code == codigo)):
-            pendencias.append(Pendencia(
-                "codigo_em_uso",
-                f"O código sugerido {codigo} já existe: escolha outro na revisão.",
-            ))
+    if codigo_sugerido is not None and session.scalar(
+        select(models.Circuit.id).where(models.Circuit.code == codigo_sugerido)
+    ):
+        pendencias.append(Pendencia(
+            "codigo_em_uso",
+            f"O código sugerido {codigo_sugerido} já existe: escolha outro na revisão.",
+        ))
     if peer.tem_password:
         pendencias.append(Pendencia(
             "senha_nao_legivel",
@@ -420,16 +426,24 @@ def _pendencias_de(
     return pendencias
 
 
-def _conflitos_de(session, *, site_id, vid, rede, local, remoto) -> list[Conflito]:
+def _conflitos_de(
+    session, *, device: models.Device, vid, rede, local, remoto,
+) -> list[Conflito]:
     """O que impede a adoção e precisa ser resolvido fora da revisão (§6).
 
-    `rede` é o texto da rede como a proposta o mostra — a caixa com que o
-    equipamento escreve o endereço —, porque é esse o texto que a reserva
-    grava: comparar com a forma canônica do `ipaddress` deixaria um /126 já
-    reservado invisível (o IPAM grava a caixa do bloco do site, e ela é
-    `2804:194C::/48`).
+    `rede` é o texto da rede com a caixa do equipamento, mas a conferência é
+    sem caixa: o IPAM grava a caixa do bloco do site — `2804:194C::/48` no
+    default dos settings, minúsculas se o cadastro foi digitado assim — e o
+    equipamento escreve a dele. Exigir que as duas coincidam deixaria um /126
+    já reservado invisível, e o operador adotaria um par que colide no índice
+    único do banco.
+
+    O par de endereços é único por domínio/site, não por equipamento: dois POPs
+    podem ter o mesmo `/31` privado legitimamente, então a sessão que conta é a
+    DESTE equipamento — a de outro POP não fala deste enlace.
     """
     conflitos: list[Conflito] = []
+    site_id = device.site_id
     if site_id is None:
         conflitos.append(Conflito(
             "sem_site", "O equipamento não está vinculado a um site: o IPAM é por site."))
@@ -450,7 +464,7 @@ def _conflitos_de(session, *, site_id, vid, rede, local, remoto) -> list[Conflit
         prefixo_tomado = session.scalar(
             select(models.IpPrefix.id).where(
                 models.IpPrefix.site_id == site_id,
-                models.IpPrefix.network == rede,
+                func.lower(models.IpPrefix.network) == rede.lower(),
                 models.IpPrefix.status == "reservada",
             )
         )
@@ -461,15 +475,19 @@ def _conflitos_de(session, *, site_id, vid, rede, local, remoto) -> list[Conflit
             ))
     em_uso = session.scalar(
         select(models.BgpSession.id).where(
+            models.BgpSession.device_id == device.id,
             models.BgpSession.local_address == local,
             models.BgpSession.remote_address == remoto,
             models.BgpSession.admin_status.is_(True),
         )
     )
     if em_uso:
+        # Sem qualificar o estado: a conferência olha a sessão da SoT, não o
+        # `shutdown` do equipamento, e "ativa" afirmaria o que não foi lido.
         conflitos.append(Conflito(
             "par_em_uso",
-            f"Já existe sessão ativa entre {local} e {remoto}.",
+            f"O equipamento {device.name} já tem uma sessão entre {local} e {remoto} "
+            "na SoT: confirme se este enlace é o mesmo antes de adotar.",
         ))
     return conflitos
 
@@ -538,10 +556,13 @@ def _marca_mesmo_asn(por_enlace: dict) -> None:
 def listar_propostas(session: Session, device_id: int) -> ResultadoPropostas:
     """A cadeia que nasceria para cada enlace com peer desconhecido (spec §6).
 
-    O agrupamento é por enlace, ou seja por (VRF, VLAN): os peers v4 e v6 que
-    dividem a mesma subinterface são **um** circuito dual stack, e não dois.
-    Candidato sem enlace resolvido vira proposta órfã, com o conflito que explica
-    o motivo: ele aparece para o operador, não some da tela.
+    O agrupamento é por enlace, ou seja por (VRF, subinterface): os peers v4 e
+    v6 que dividem a mesma subinterface são **um** circuito dual stack, e não
+    dois. Duas subinterfaces com o mesmo VID (`Eth-Trunk127.1001` e
+    `GE0/0/1.1001` no mesmo equipamento) são dois enlaces, e agrupar pelo VID
+    apresentaria um circuito só com os dois pares. Candidato sem enlace
+    resolvido vira proposta órfã, com o conflito que explica o motivo: ele
+    aparece para o operador, não some da tela.
     """
     descoberta = listar_candidatos(session, device_id)
     resultado = ResultadoPropostas(
@@ -560,7 +581,7 @@ def listar_propostas(session: Session, device_id: int) -> ResultadoPropostas:
     snap = session.get(models.DeviceSnapshot, descoberta.snapshot_id)
     config = parse_config_vrp(texto_backup(snap))
 
-    por_enlace: dict[tuple[str | None, int | str | None], Proposta] = {}
+    por_enlace: dict[tuple[str | None, str], Proposta] = {}
     orfas: list[Proposta] = []
 
     for candidato in descoberta.candidatos:
@@ -584,25 +605,38 @@ def listar_propostas(session: Session, device_id: int) -> ResultadoPropostas:
         else:
             sub, rede, local = enlace
             par_p2p = _eh_par_p2p(rede)
-            # O enlace é a VLAN quando ela existe; sem VLAN (`/31` direto numa
-            # porta, sem subinterface) ele é a própria interface — agrupar pelo
-            # `vid`, que aí é `None` nos dois, juntaria dois enlaces distintos
-            # num só.
-            chave = (candidato.vrf, sub.vid if sub.vid is not None else sub.nome)
+            # O enlace é a subinterface, sempre — com VLAN ou sem (`/31` direto
+            # numa porta). Pelo `vid`, duas subinterfaces do mesmo equipamento
+            # com o mesmo VID seriam uma proposta só, com dois pares e duas
+            # sessões, e sem VLAN (`vid=None` nos dois) o mesmo valeria para
+            # duas portas.
+            chave = (candidato.vrf, sub.nome)
             proposta = por_enlace.get(chave)
             if proposta is None:
                 proposta = Proposta(
                     device_id=device.id, vrf=candidato.vrf, subinterface=sub.nome,
                     vid=sub.vid, stack=candidato.afi, vlan_mode="unica",
+                    # `vlan_mode` é "unica" nos dois casos: a mesma VLAN carrega
+                    # as duas famílias ou uma por família — o empilhamento é
+                    # outro eixo, e o render só o emite com `Circuit.qinq`.
+                    qinq=sub.qinq,
                     p2p_v4_len=rede.prefixlen if (rede.version == 4 and par_p2p) else None,
                     site_id=device.site_id,
                     circuit_code_sugerido=(
                         f"ADOC-{candidato.asn_remote}-{sub.vid}"
-                        if sub.vid is not None else None  # sem VLAN não há código a sugerir
+                        # Sem VLAN ou sem ASN lido não há código a sugerir (e o
+                        # `codigo_em_uso` só confere o código que existe).
+                        if sub.vid is not None and candidato.asn_remote is not None
+                        else None
                     ),
                 )
                 if sub.vid is not None:
-                    proposta.vlans.append({"vid": sub.vid, "kind": "vlan", "family": None})
+                    proposta.vlans.append({
+                        "vid": sub.vid,
+                        # Empilhado (`vlan-type dot1q 0x88a8`) reserva S-VLAN.
+                        "kind": "s_vlan" if sub.qinq else "vlan",
+                        "family": None,
+                    })
                 por_enlace[chave] = proposta
             elif proposta.stack != candidato.afi:
                 proposta.stack = "dual"
@@ -613,7 +647,7 @@ def listar_propostas(session: Session, device_id: int) -> ResultadoPropostas:
                 sessao = _sessao_de(peer, candidato, rede, orientacao)
                 proposta.sessoes.append(sessao)
                 _acrescenta(proposta.conflitos, _conflitos_de(
-                    session, site_id=device.site_id, vid=sub.vid, rede=rede_texto,
+                    session, device=device, vid=sub.vid, rede=rede_texto,
                     local=sessao["local_address"], remoto=candidato.remote_address,
                 ))
                 _acrescenta(proposta.conflitos, _conflitos_de_coleta(
@@ -631,7 +665,8 @@ def listar_propostas(session: Session, device_id: int) -> ResultadoPropostas:
 
         proposta.candidatos.append(candidato)
         _acrescenta(proposta.pendencias, _pendencias_de(
-            session, device, peer, candidato, vid=proposta.vid,
+            session, device, peer, candidato,
+            codigo_sugerido=proposta.circuit_code_sugerido,
             descricao_do_enlace=proposta.organizacao_sugerida or peer.descricao,
         ))
         org = _organizacao_por_asn(session, candidato.asn_remote)

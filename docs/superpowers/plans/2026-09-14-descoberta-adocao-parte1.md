@@ -2694,6 +2694,7 @@ class PropostaOut(BaseModel):
     stack: str
     vlan_mode: str
     p2p_v4_len: int | None
+    qinq: bool
     organizacao_id: int | None
     organizacao_sugerida: str | None
     site_id: int | None
@@ -3148,6 +3149,7 @@ export interface DiscoveryPropostaOut {
   stack: string;
   vlan_mode: string;
   p2p_v4_len: number | null;
+  qinq: boolean;
   organizacao_id: number | null;
   organizacao_sugerida: string | null;
   site_id: number | null;
@@ -3417,6 +3419,9 @@ export default function Discovery() {
           { key: "vid", title: "VLAN", render: (p) => (p.vid === null ? "sem enlace" : p.vid) },
           { key: "subinterface", title: "Subinterface", render: (p) => p.subinterface ?? "—" },
           { key: "stack", title: "Stack", render: (p) => p.stack },
+          // O enlace empilhado reserva S-VLAN: sem a coluna, o QinQ só aparece
+          // depois de adotar.
+          { key: "qinq", title: "QinQ", render: (p) => (p.qinq ? "sim" : "—") },
           {
             key: "peers",
             title: "Peers",
