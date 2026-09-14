@@ -139,7 +139,7 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
 - Web (ciclo E): **wiki operacional** — página `/wiki` (grupo de nav "Ajuda",
   rota na SPA), API `/api/v1/wiki` (router `gerenet.api.wiki`, renderização
   server-side com `markdown` + sanitização `nh3` — a SPA nunca renderiza
-  markdown cru); conteúdo em `docs/wiki/` (12 páginas PT-BR, frontmatter
+  markdown cru); conteúdo em `docs/wiki/` (10 páginas PT-BR, frontmatter
   `title`/`secao`/`order`/`em_breve`, `em_breve: true` = badge "(em breve)" na
   sidebar + aviso na página); **tooltips de campo** — prop `help` no `FormField`
   (`.field-help` + `.field-help-dica` no hover/foco), textos centralizados em
@@ -350,6 +350,24 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   `POST /api/v1/circuits/{id}/unreserve`, CLI `gerenet circuits unreserve`,
   botão "Remover recursos" com `ConfirmDialog` no detalhe do circuito (wiki
   `/wiki/circuitos`).
+- Fase 6, parte 1 (automação contínua, 2026-09-14): **coleta periódica** —
+  `GERENET_COLLECT_INTERVAL_MINUTES` (0 = desligado) liga a varredura no worker
+  (`with_scheduler=True`, arm na subida e rearm ao fim de cada execução), que
+  enfileira os equipamentos ativos com credencial reusando `enqueue_collect`
+  (lock/dedupe/recusas valem como na coleta manual), pula quem foi coletado
+  dentro do intervalo (pior caso ~2×) e audita `collect.sweep` com os números;
+  mudar o intervalo pede restart do worker. Cada coleta passou a gravar
+  `resources["divergencias"]` (contagem por severidade + `parcial`/`motivo`) e
+  falha do reconcile **não** derruba a coleta (`collect.reconcile_failed`).
+  **`/metrics`** na API (`gerenet.api.metrics`, `CollectorRegistry` por app,
+  sem auth como o `/healthz`, token opcional `GERENET_METRICS_TOKEN`), com os
+  nove itens do §20.1 derivados do banco/Redis (jobs por tipo/status/equipamento
+  e p50/p95 de duração em SQL) — o worker **não** expõe endpoint (fork por job;
+  emenda registrada ao §25.15); **Prometheus e Grafana** no compose de dev
+  (`docker/observability/`, dashboard `gerenet — operação`) e card de
+  divergências no dashboard (lê o resumo, linka `/reconcile?device_id=N`).
+  Dependência nova: `prometheus-client`. Runbook em
+  `docs/runbook-observabilidade.md`.
 - Descoberta na configuração — parte 1 (2026-09-14): a página **Migrar**
   (`/discovery`, grupo Operação) e o grupo `gerenet discovery` leem o
   `display current-configuration` **já coletado** e propõem o que a SoT não

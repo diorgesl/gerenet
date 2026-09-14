@@ -882,6 +882,8 @@ Antes de habilitar produção, testar em equipamento ou imagem VRP de laboratór
 - API para ativação por sistemas externos;
 - relatórios operacionais.
 
+Entregue em 2026-09-14 (parte 1): reconciliação agendada (coleta periódica com resumo de divergência em cada coleta) e Grafana (dashboard do §20.1 sobre o `/metrics`). Seguem pendentes: notificações, API de ativação para sistemas externos, relatórios operacionais, Zabbix e NetBox.
+
 ### Fase 7 — Segment Routing (SR-MPLS)
 
 - capacidades de SR por equipamento (§5.1): SRGB, SID de prefixo, de nó e de adjacência, IGP estendido (OSPF com `opaque-capability`, IS-IS com `cost-style wide`) e faixa de labels livre de conflito com LDP;
@@ -964,6 +966,11 @@ Complementos registrados em 2026-09-03 (sessão de design do ciclo B):
 16. **Ordem dos ciclos de implementação**: depois do ciclo B (parsers + render da intenção + divergência desejado × encontrado), o **motor de mudanças (ciclo C, §12)** precede a interface web; a UI entra como "ciclo do assistente" após o C, consumindo a API existente.
 17. **Servidor MCP sobre as ferramentas do gerenet**: o operador pretende expor as ferramentas (SoT, render, divergência e, depois do ciclo C, mudanças controladas) por um **servidor MCP próprio**, no arco de integrações pós-C — começando por consultas read-only; qualquer mutação passa pelo fluxo de aprovação do §12, nunca direto no equipamento.
 18. **Coluna `circuits.edge_trunk` (aprovado em 2026-09-03)**: o trunk no edge (NE8000) que carrega as subinterfaces do downstream (ex.: `Eth-Trunk127`) entra como coluna **nullable** em `circuits`, preenchível no cadastro/atualização do circuito. O render de subinterface do ciclo B forma `<edge_trunk>.<vid>` a partir dela; circuito sem o campo não gera bloco de subinterface e a divergência devolve aviso (`circuito.sem_trunk`). É a **única migration de schema** do ciclo B (exceção ao congelamento do §14/§7 do ciclo A; seed de `somente-autorizadas` continua sendo a outra exceção).
+
+Complementos registrados em 2026-09-14 (Fase 6, parte 1):
+
+19. **`/metrics` só na API (emenda ao item 15)**: o item 15 prometia o endpoint Prometheus "na API e no worker". O RQ executa cada job num processo filho (`os.fork`), então contador em memória criado dentro do job morre com o filho; sustentar métricas no worker exigiria o modo multiprocesso do `prometheus_client` (diretório compartilhado, semântica de gauge própria). As métricas de tarefa saem do `job_runs`, que é durável e sobrevive a restart do worker. O modo multiprocesso fica registrado como caminho para métricas de processo, quando houver razão.
+20. **Coleta periódica e resumo da divergência**: o agendamento mora no próprio worker (`with_scheduler` do RQ), com arm na subida e rearm ao fim de cada varredura, e o intervalo é global (`GERENET_COLLECT_INTERVAL_MINUTES`, 0 = desligado). Cada coleta grava o resumo do desejado × encontrado por severidade em `snapshot.resources`; falha do reconcile não derruba a coleta (evento `collect.reconcile_failed`).
 
 ---
 

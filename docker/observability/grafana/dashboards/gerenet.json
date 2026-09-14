@@ -1,0 +1,153 @@
+{
+  "uid": "gerenet-operacao",
+  "title": "gerenet — operação",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "1m",
+  "editable": true,
+  "time": { "from": "now-24h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Equipamentos por estado de comunicação",
+      "datasource": { "type": "prometheus", "uid": "gerenet-prom" },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "gerenet_devices_comm_status", "legendFormat": "{{status}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Coleta mais antiga",
+      "datasource": { "type": "prometheus", "uid": "gerenet-prom" },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "max(gerenet_snapshot_age_seconds)", "legendFormat": "idade" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Divergências por severidade",
+      "datasource": { "type": "prometheus", "uid": "gerenet-prom" },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "gerenet_divergencias", "legendFormat": "{{severidade}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Equipamentos sem resumo de divergência",
+      "datasource": { "type": "prometheus", "uid": "gerenet-prom" },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "gerenet_devices_sem_resumo", "legendFormat": "sem resumo" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Idade da coleta por equipamento",
+      "datasource": { "type": "prometheus", "uid": "gerenet-prom" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "targets": [
+        { "refId": "A", "expr": "gerenet_snapshot_age_seconds", "legendFormat": "{{device}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Peers BGP por estado",
+      "datasource": { "type": "prometheus", "uid": "gerenet-prom" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "targets": [
+        { "refId": "A", "expr": "gerenet_peers_bgp", "legendFormat": "{{estado}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Serviços MPLS por estado",
+      "datasource": { "type": "prometheus", "uid": "gerenet-prom" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 13 },
+      "targets": [
+        { "refId": "A", "expr": "gerenet_l2vc_oper_status", "legendFormat": "l2vc {{status}}" },
+        { "refId": "B", "expr": "gerenet_vsi_oper_status", "legendFormat": "vsi {{status}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Mudanças por status",
+      "datasource": { "type": "prometheus", "uid": "gerenet-prom" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 13 },
+      "targets": [
+        { "refId": "A", "expr": "gerenet_change_requests", "legendFormat": "{{status}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Fila de jobs",
+      "datasource": { "type": "prometheus", "uid": "gerenet-prom" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 13 },
+      "targets": [
+        { "refId": "A", "expr": "gerenet_queue_jobs", "legendFormat": "aguardando {{queue}}" },
+        { "refId": "B", "expr": "gerenet_queue_started", "legendFormat": "iniciados {{queue}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Duração da coleta (p50/p95)",
+      "datasource": { "type": "prometheus", "uid": "gerenet-prom" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 21 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "gerenet_job_duration_seconds",
+          "legendFormat": "{{kind}} p{{quantil}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Falhas consecutivas por equipamento",
+      "datasource": { "type": "prometheus", "uid": "gerenet-prom" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 21 },
+      "targets": [
+        { "refId": "A", "expr": "gerenet_device_consecutive_failures", "legendFormat": "{{device}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "id": 12,
+      "type": "stat",
+      "title": "Execuções de coleta por status",
+      "datasource": { "type": "prometheus", "uid": "gerenet-prom" },
+      "gridPos": { "h": 5, "w": 12, "x": 0, "y": 29 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (status) (gerenet_job_runs{kind=\"collect\"})",
+          "legendFormat": "{{status}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    }
+  ]
+}

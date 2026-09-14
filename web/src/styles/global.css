@@ -224,6 +224,10 @@ h2 {
   margin-bottom: 1.4rem;
 }
 .estados-equipamentos { margin: 0 0 0.8rem; font-size: 0.85rem; color: var(--sub); }
+.divergencias { margin: 0 0 1.2rem; }
+.divergencias .sub { font-size: 0.85rem; color: var(--sub); }
+.divergencias .severidades { display: flex; align-items: center; gap: 0.9rem; flex-wrap: wrap; margin: 0.4rem 0 0; }
+.divergencias .severidade-contagem { display: inline-flex; align-items: center; gap: 0.35rem; }
 .metric {
   display: flex;
   align-items: center;

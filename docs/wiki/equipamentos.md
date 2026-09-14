@@ -85,5 +85,26 @@ Falhas comuns: equipamento inalcançável (timeout/porta), credencial do grupo
 inválida (Vault), saída fora do esperado para o parser, e lock ativo (outra
 coleta do mesmo equipamento em andamento — auditado como `collect.skipped`).
 
+## Coleta periódica
+
+Com `GERENET_COLLECT_INTERVAL_MINUTES` maior que zero, o worker arma uma
+varredura que enfileira a coleta dos equipamentos **ativos e com grupo de
+credencial** no intervalo configurado (default 0, desligado). Mudar o valor pede
+restart do worker: o arm acontece na subida, e a varredura se reagenda ao fim de
+cada execução.
+
+- Quem foi coletado dentro do intervalo é pulado, então coletar à mão minutos
+  antes da varredura adia aquele equipamento para a próxima (o intervalo entre
+  coletas de um equipamento pode chegar a 2× o configurado).
+- Cada varredura deixa um evento `collect.sweep` na auditoria, com quantos
+  equipamentos foram enfileirados, quantos foram pulados por idade e o motivo de
+  cada recusa (coleta em andamento ou já pendente, entre as demais validações da
+  fila).
+- A coleta agendada aparece nos jobs com `origin = scheduler`, o que a distingue
+  da coleta manual.
+- Com um worker só (o do compose atende as duas filas, `gerenet-collect` antes de
+  `gerenet-change`), as coletas passam na frente de uma mudança já aprovada.
+  Separar as filas em dois workers é frente futura.
+
 Veja também [Reconciliação, config desejada, jobs e auditoria](/wiki/operacao)
 para o que fazer com o resultado de cada coleta.

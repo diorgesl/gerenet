@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,6 +28,26 @@ class Settings(BaseSettings):
     # threshold % configuráveis (design §5); a conta é feita no coletor.
     bgp_anomalia_janela: int = 2
     bgp_anomalia_pct: int = 50
+
+    # F6: coleta periódica no worker (varredura). 0 = desligada; ligar é decisão
+    # explícita de quem instala, e mudar o valor pede restart do worker (o arm
+    # da varredura acontece na subida).
+    collect_interval_minutes: int = 0
+
+    # F6: token opcional do /metrics (Bearer). None = sem autenticação, como o
+    # /healthz — o endpoint pertence à rede de gerência (§19).
+    metrics_token: str | None = None
+
+    @field_validator("metrics_token")
+    @classmethod
+    def _token_nao_vazio(cls, v: str | None) -> str | None:
+        """'' é falsy: sem isto o /metrics ficaria aberto com quem instalou achando que autenticou."""
+        if v is not None and not v.strip():
+            raise ValueError(
+                "GERENET_METRICS_TOKEN vazio: deixe a variável ausente para desligar "
+                "a autenticação do /metrics."
+            )
+        return v
 
     # IPAM p2p (§25.8): bloco privado de enlaces v4 e base v6 por padrão;
     # cada site pode sobrescrever.

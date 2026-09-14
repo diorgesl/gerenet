@@ -47,11 +47,28 @@ um aviso de comparação parcial, e não uma divergência inventada.
 somente leitura — o plano de correção com aprovação e execução chega com as
 [mudanças controladas](/wiki/mudancas-controladas) (em breve).
 
+### Divergências da última coleta
+
+Cada coleta grava, no próprio snapshot, a contagem do desejado × encontrado por
+severidade (`resources["divergencias"]`). O **card do dashboard** lê essa contagem
+sem refazer a comparação (nenhum reconcile na leitura), e o detalhe item a item
+continua nesta página, sob demanda.
+
+Além das contagens por severidade, o card lista os equipamentos **com divergência
+crítica ou alerta** (cada nome abre a reconciliação daquele equipamento) e diz no
+subtítulo quantos estão com **comparação parcial** e quantos estão **sem resumo**.
+
+Equipamento coletado antes desta versão não tem o resumo, e o card diz quantos
+são: *sem resumo* é diferente de *sem divergência*, e o painel não soma zero
+onde ninguém olhou. Quando a comparação é parcial (faltou um recurso no
+snapshot), o resumo marca `parcial` e guarda o motivo.
+
 ## Jobs de coleta e erros comuns
 
 A página Jobs lista as execuções (equipamento, tipo, autor, status, motivo e
-duração). Origem do job: `api` (botão na web) ou `cli` (`gerenet collect run`).
-Erros comuns e onde olhar:
+duração). Origem do job: `api` (botão na web), `cli` (`gerenet collect run`) ou
+`scheduler` (coleta periódica do worker, quando ligada). Erros comuns e onde
+olhar:
 
 | Sintoma | Onde ver / o que fazer |
 |---|---|
@@ -60,6 +77,11 @@ Erros comuns e onde olhar:
 | Job `partial` | Snapshot → `errors` mostra o recurso que falhou (ex.: parser da saída de um comando). |
 | `comm_status = fail` | Última coleta não trouxe recurso nenhum; `consecutive_failures` cresce a cada tentativa. |
 | Filtro de política divergente | Veja acima: `peer.filtros` — a coleta `bgp_peers_verbose` é que alimenta essa comparação. |
+
+Falha ao calcular a divergência **não** derruba a coleta: o snapshot fica sem o
+resumo e a auditoria registra `collect.reconcile_failed` com o erro. Se o card
+mostrar equipamentos sem resumo, confira esse evento antes de suspeitar da
+coleta.
 
 ## Auditoria
 

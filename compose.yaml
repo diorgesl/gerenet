@@ -96,6 +96,10 @@ services:
     environment:
       <<: *app-env
       RUN_MIGRATIONS: "false"
+      # Dev: liga a coleta periódica (design §3) — o worker arma uma varredura na
+      # subida e coleta, a cada hora, os equipamentos cadastrados no banco dev.
+      # Desligar: "0".
+      GERENET_COLLECT_INTERVAL_MINUTES: "60"
     volumes:
       - ./src:/srv/app/src
       - uv-cache:/root/.cache/uv
@@ -120,6 +124,32 @@ services:
       - node_modules:/srv/web/node_modules
     depends_on:
       - api
+
+  # Observabilidade de dev (§20): raspa o /metrics da API e abre o dashboard
+  # provisionado. Em produção, o Prometheus/Grafana são os de quem instala.
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: gerenet-prometheus
+    volumes:
+      - ./docker/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports: ["9090:9090"]
+    depends_on:
+      - api
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: gerenet-grafana
+    # Dev: anônimo para ver (viewer, sem senha) e o login de admin do primeiro
+    # boot fica disponível para editar os painéis e exportar de volta.
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./docker/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["3000:3000"]
+    depends_on:
+      - prometheus
 
 volumes:
   db-data:
