@@ -12,7 +12,10 @@ segue (§19).
 Tolerância a linha desconhecida: a captura de um equipamento real traz comandos
 que este parser não modela. Linha que não casa com nenhum ramo é ignorada, e os
 endereços só entram quando são endereço de verdade — perder a captura inteira por
-causa de uma linha (`ip address unnumbered ...`) seria pior do que ignorá-la.
+causa de uma linha (`ip address unnumbered ...`) seria pior do que ignorá-la. O
+que a leitura não entendeu (seção de família fora do escopo, valor que não
+converte, captura sem bloco `bgp`) sai em `ConfigVrp.avisos`, para "não entendi o
+formato" não ficar idêntico a "o equipamento não tem peer".
 """
 import ipaddress
 from dataclasses import dataclass
@@ -55,6 +58,9 @@ class Subinterface:
 class ConfigVrp:
     peers: tuple[PeerConfig, ...] = ()
     subinterfaces: tuple[Subinterface, ...] = ()
+    # O que a leitura não entendeu. Sem isso, uma captura em formato
+    # desconhecido devolve zero peers igual a um equipamento sem BGP.
+    avisos: tuple[str, ...] = ()
 
 
 def _novo_peer(endereco: str, vrf: str | None, asn_local: int) -> dict:
@@ -80,21 +86,41 @@ def _novo_peer(endereco: str, vrf: str | None, asn_local: int) -> dict:
     }
 
 
-def _aplica_peer(reg: dict, resto: list[str], linha: str) -> None:
+def _int_tolerante(valor: str, avisos: list[str], linha: str) -> int | None:
+    """Converte o número de uma linha da configuração.
+
+    Configuração real traz linha que este parser não modela, e um número que não
+    converte derruba a leitura da captura inteira. O valor ruim vira aviso e o
+    campo fica como estava, em vez de a captura se perder.
+    """
+    try:
+        return int(valor)
+    except ValueError:
+        avisos.append(f"valor não numérico em `{linha}`: {valor!r}")
+        return None
+
+
+def _aplica_peer(reg: dict, resto: list[str], linha: str, avisos: list[str]) -> None:
     """Aplica uma linha `peer <endereço> ...` ao registro acumulado."""
     if not resto:
         return
     if resto[0] == "as-number" and len(resto) >= 2:
-        reg["asn_remote"] = int(resto[1])
+        asn_remoto = _int_tolerante(resto[1], avisos, linha)
+        if asn_remoto is not None:
+            reg["asn_remote"] = asn_remoto
     elif resto[0] == "description":
         reg["descricao"] = linha.split("description", 1)[1].strip()
     elif resto[0] == "password":
         # O valor (cipher) não é lido: só a presença interessa (§19).
         reg["tem_password"] = True
     elif resto[:2] == ["timer", "keepalive"] and len(resto) >= 3:
-        reg["keepalive"] = int(resto[2])
-        if "hold" in resto:
-            reg["holdtime"] = int(resto[resto.index("hold") + 1])
+        keepalive = _int_tolerante(resto[2], avisos, linha)
+        if keepalive is not None:
+            reg["keepalive"] = keepalive
+        if "hold" in resto and resto.index("hold") + 1 < len(resto):
+            holdtime = _int_tolerante(resto[resto.index("hold") + 1], avisos, linha)
+            if holdtime is not None:
+                reg["holdtime"] = holdtime
     elif "route-policy" in resto and resto.index("route-policy") + 1 < len(resto):
         nome = resto[resto.index("route-policy") + 1]
         if "export" in resto:
@@ -104,9 +130,13 @@ def _aplica_peer(reg: dict, resto: list[str], linha: str) -> None:
     elif "ip-prefix" in resto and resto.index("ip-prefix") + 1 < len(resto):
         reg["import_prefix_list"] = resto[resto.index("ip-prefix") + 1]
     elif resto[0] == "maximum-prefix" and len(resto) >= 2:
-        reg["maximum_prefix"] = int(resto[1])
+        maximo = _int_tolerante(resto[1], avisos, linha)
+        if maximo is not None:
+            reg["maximum_prefix"] = maximo
         if len(resto) >= 3:
-            reg["maximum_prefix_threshold"] = int(resto[2])
+            limiar = _int_tolerante(resto[2], avisos, linha)
+            if limiar is not None:
+                reg["maximum_prefix_threshold"] = limiar
     elif resto[:2] == ["bfd", "enable"]:
         reg["bfd"] = True
     elif resto[0] == "graceful-restart":
@@ -162,19 +192,40 @@ def _par_v6(partes: list[str]) -> tuple[str, int] | None:
     return endereco, comprimento_v6
 
 
-def _aplica_sub(reg: dict, linha: str) -> None:
+def _vid_da_linha(partes: list[str], chave: str, linha: str, avisos: list[str]) -> int | None:
+    """O VID de uma linha `vlan-type`, o primeiro número depois da chave.
+
+    À frente do VID pode vir o TPID externo do QinQ (`0x88a8`) e, depois dele, o
+    `second-dot1q`: o último número da linha seria justamente o CE-VLAN interno,
+    que não é a VLAN da subinterface. Sem número depois da chave, a linha vira
+    aviso e o VID fica de fora.
+    """
+    if chave in partes:
+        for token in partes[partes.index(chave) + 1:]:
+            try:
+                return int(token)
+            except ValueError:
+                continue
+    avisos.append(f"VID não reconhecido em `{linha}`")
+    return None
+
+
+def _aplica_sub(reg: dict, linha: str, avisos: list[str]) -> None:
+    partes = linha.split()
     if linha.startswith("vlan-type dot1q "):
-        reg["vid"] = int(linha.split()[-1])
+        reg["vid"] = _vid_da_linha(partes, "dot1q", linha, avisos)
         # QinQ: o TPID externo 0x88a8 é o que separa a linha empilhada da
         # simples (`vlan-type dot1q 0x88a8 vid <vid>`, o que o render emite).
-        reg["qinq"] = "0x88a8" in linha.split()
+        reg["qinq"] = "0x88a8" in partes
     elif linha.startswith("vlan-type qinq "):
-        reg["vid"] = int(linha.split()[-1])
+        reg["vid"] = _vid_da_linha(partes, "qinq", linha, avisos)
         reg["qinq"] = True
     elif linha.startswith("description "):
         reg["descricao"] = linha.split(" ", 1)[1].strip()
     elif linha.startswith("mtu "):
-        reg["mtu"] = int(linha.split()[1])
+        mtu = _int_tolerante(partes[1], avisos, linha)
+        if mtu is not None:
+            reg["mtu"] = mtu
     elif linha.startswith("ip address ") and not linha.startswith("ip address 0.0.0.0"):
         par = _par_v4(linha.split())
         if par is not None:
@@ -203,11 +254,18 @@ def parse_config_vrp(texto: str) -> ConfigVrp:
     `interface`, as linhas indentadas são sub-comandos; dentro de `bgp`, uma
     seção `ipvN-family unicast` traz os ajustes por família da instância pública
     e uma seção `ipvN-family vpn-instance <nome>` traz os peers daquela VRF.
+
+    Seção de família que não seja nenhuma dessas duas (`multicast`, `vpnv4`...)
+    não tem os peers lidos: eles iriam para a VRF anterior ou sobrescreveriam o
+    registro da instância pública, e o cabeçalho fica registrado em `avisos`.
     """
     peers: dict[tuple[str, str | None], dict] = {}
     subs: list[Subinterface] = []
+    avisos: list[str] = []
     asn_bloco: int | None = None
     vrf_atual: str | None = None
+    secao_desconhecida = False
+    viu_bgp = False
     iface: dict | None = None
 
     for bruta in texto.splitlines():
@@ -222,24 +280,38 @@ def parse_config_vrp(texto: str) -> ConfigVrp:
                 iface = None
             asn_bloco = None
             vrf_atual = None
+            secao_desconhecida = False
             if linha.startswith("interface "):
                 iface = {"nome": linha.split(" ", 1)[1], "vid": None, "qinq": False,
                          "descricao": None, "mtu": None, "v4": [], "v6": []}
             elif linha.startswith("bgp "):
-                asn_bloco = int(linha.split(" ", 1)[1].split()[0])
+                viu_bgp = True
+                asn_bloco = _int_tolerante(linha.split(" ", 1)[1].split()[0], avisos, linha)
             continue
 
         if iface is not None:
-            _aplica_sub(iface, linha)
+            _aplica_sub(iface, linha, avisos)
             continue
         if asn_bloco is None:
             continue
 
-        if linha.startswith(("ipv4-family vpn-instance ", "ipv6-family vpn-instance ")):
-            vrf_atual = linha.split(" ", 2)[2].strip()
+        if linha.split()[0].endswith("-family"):
+            if linha.startswith(("ipv4-family vpn-instance ", "ipv6-family vpn-instance ")):
+                vrf_atual = linha.split(" ", 2)[2].strip()
+                secao_desconhecida = False
+            elif linha.startswith(("ipv4-family ", "ipv6-family ")) and linha.endswith(" unicast"):
+                vrf_atual = None
+                secao_desconhecida = False
+            else:
+                # `ipv4-family multicast`, `l2vpn-family evpn`, `vpnv4`...: os
+                # peers daqui não são sessão desta instância, e atribuí-los à
+                # VRF anterior (ou ao registro público) seria inventar.
+                vrf_atual = None
+                secao_desconhecida = True
+                avisos.append(f"seção de família não reconhecida, peers ignorados: `{linha}`")
             continue
-        if linha.endswith("-family unicast"):
-            vrf_atual = None
+
+        if secao_desconhecida:
             continue
         if linha.startswith("peer "):
             _, endereco, *resto = linha.split()
@@ -248,8 +320,17 @@ def parse_config_vrp(texto: str) -> ConfigVrp:
             except ValueError:
                 continue  # `peer <nome-de-grupo>` não é endereço: fora do escopo
             reg = peers.setdefault((endereco, vrf_atual), _novo_peer(endereco, vrf_atual, asn_bloco))
-            _aplica_peer(reg, resto, linha)
+            _aplica_peer(reg, resto, linha, avisos)
 
     if iface is not None:
         subs.append(_monta_sub(iface))
-    return ConfigVrp(peers=tuple(_monta_peer(r) for r in peers.values()), subinterfaces=tuple(subs))
+    if texto and not viu_bgp:
+        avisos.append(
+            "nenhum bloco `bgp` encontrado: confira se a captura é o "
+            "`display current-configuration` inteiro"
+        )
+    return ConfigVrp(
+        peers=tuple(_monta_peer(r) for r in peers.values()),
+        subinterfaces=tuple(subs),
+        avisos=tuple(avisos),
+    )

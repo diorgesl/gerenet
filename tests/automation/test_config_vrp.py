@@ -108,3 +108,157 @@ def test_config_vazia_nao_quebra() -> None:
     config = parse_config_vrp("")
     assert config.peers == ()
     assert config.subinterfaces == ()
+
+
+def test_qinq_do_render_com_0x88a8() -> None:
+    """A linha de QinQ é a que o próprio render emite (`subinterface.j2`)."""
+    texto = "interface Eth-Trunk127.100\n vlan-type dot1q 0x88a8 vid 100\n ipv6 enable\n"
+    (sub,) = parse_config_vrp(texto).subinterfaces
+    assert sub.vid == 100
+    assert sub.qinq is True
+
+
+def test_ipv6_com_barra_do_render() -> None:
+    """A grafia com barra é a que o render emite (golden de `test_templates.py`)."""
+    texto = "interface Eth-Trunk127.4024\n ipv6 address 2804:194C:1000::1100:73:1/126\n"
+    (sub,) = parse_config_vrp(texto).subinterfaces
+    assert sub.enderecos_v6 == (("2804:194C:1000::1100:73:1", 126),)
+
+
+def test_linhas_que_nao_sao_endereco_sao_ignoradas_derivado() -> None:
+    """Derivado: `unnumbered`, `auto link-local` e `eui-64` não vêm do render.
+
+    São linhas que existem numa configuração de equipamento e que não são par de
+    endereço: elas ficam de fora sem derrubar a leitura dos endereços de verdade.
+    """
+    texto = (
+        "interface Eth-Trunk127.1001\n"
+        " ip address unnumbered interface LoopBack0\n"
+        " ipv6 address auto link-local\n"
+        " ipv6 address eui-64 2001:DB8::/64\n"
+        " ipv6 address 2001:DB8::9/129\n"
+        " ip address 100.64.10.0 255.255.255.254\n"
+        " ipv6 address 2804:194C:1000::1100:73:1 126\n"
+    )
+    (sub,) = parse_config_vrp(texto).subinterfaces
+    assert sub.enderecos_v4 == (("100.64.10.0", "255.255.255.254"),)
+    assert sub.enderecos_v6 == (("2804:194C:1000::1100:73:1", 126),)
+
+
+def test_secao_de_familia_desconhecida_nao_cria_peer_fantasma_derivado() -> None:
+    """Derivado: `ipv4-family multicast` não vem do render.
+
+    Seção que não é a pública nem uma VRF não pertence a nenhum peer; o peer de
+    lá não pode aparecer como se fosse da VRF da seção anterior.
+    """
+    texto = (
+        "bgp 65001\n"
+        " ipv4-family vpn-instance VPNA\n"
+        "  peer 10.99.0.1 as-number 64513\n"
+        " ipv4-family multicast\n"
+        "  peer 10.0.0.9 enable\n"
+    )
+    config = parse_config_vrp(texto)
+    assert [(p.address, p.vrf) for p in config.peers] == [("10.99.0.1", "VPNA")]
+    assert any("multicast" in aviso for aviso in config.avisos)
+
+
+def test_secao_de_familia_desconhecida_nao_sobrescreve_o_publico_derivado() -> None:
+    """O peer da instância pública não perde atributo para a seção ignorada."""
+    texto = (
+        "bgp 65001\n"
+        " peer 10.0.0.9 as-number 65001\n"
+        " ipv4-family unicast\n"
+        "  peer 10.0.0.9 enable\n"
+        "  peer 10.0.0.9 route-policy RP-UNICAST import\n"
+        "  peer 10.0.0.9 maximum-prefix 100 80\n"
+        " ipv4-family multicast\n"
+        "  peer 10.0.0.9 enable\n"
+        "  peer 10.0.0.9 route-policy RP-MULTICAST import\n"
+        "  peer 10.0.0.9 maximum-prefix 5\n"
+    )
+    config = parse_config_vrp(texto)
+    (publico,) = config.peers
+    assert publico.vrf is None
+    assert publico.import_route_policy == "RP-UNICAST"
+    assert publico.maximum_prefix == 100
+    assert publico.maximum_prefix_threshold == 80
+
+
+def test_secao_l2vpn_nao_herda_a_vrf_anterior_derivado() -> None:
+    """Derivado: `l2vpn-family evpn` fica no mesmo lugar e não é sessão unicast.
+
+    A seção não é `ipvN-family`, mas cai na mesma regra: peer de lá não é peer
+    desta instância.
+    """
+    texto = (
+        "bgp 65001\n"
+        " ipv4-family vpn-instance VPNA\n"
+        "  peer 10.99.0.1 as-number 64513\n"
+        " l2vpn-family evpn\n"
+        "  peer 10.0.0.9 enable\n"
+    )
+    config = parse_config_vrp(texto)
+    assert [(p.address, p.vrf) for p in config.peers] == [("10.99.0.1", "VPNA")]
+    assert any("l2vpn-family" in aviso for aviso in config.avisos)
+
+
+def test_aviso_quando_a_captura_nao_tem_bloco_bgp_derivado() -> None:
+    """Captura sem `bgp` avisa; o texto vazio e a fixture boa não avisam."""
+    sem_bgp = parse_config_vrp(
+        "sysname NE8000-SPO\ninterface LoopBack0\n ip address 10.0.0.1 255.255.255.255\n"
+    )
+    assert sem_bgp.peers == ()
+    assert any("bgp" in aviso for aviso in sem_bgp.avisos)
+    assert parse_config_vrp("").avisos == ()
+    assert parse_config_vrp(FIXTURE.read_text(encoding="utf-8")).avisos == ()
+
+
+def test_vid_e_o_primeiro_numero_depois_do_dot1q_derivado() -> None:
+    """Derivado: o `second-dot1q` é dívida registrada do template QinQ.
+
+    O VID é o primeiro número depois do `dot1q`. O último número da linha é o
+    CE-VLAN interno, e um token final não numérico não derruba mais a leitura.
+    """
+    texto = (
+        "interface Eth-Trunk127.100\n"
+        " vlan-type dot1q 0x88a8 vid 100 second-dot1q 200\n"
+        "interface Eth-Trunk127.101\n"
+        " vlan-type dot1q 0x88a8 vid 101 second-dot1q any\n"
+    )
+    por_nome = {s.nome: s for s in parse_config_vrp(texto).subinterfaces}
+    assert por_nome["Eth-Trunk127.100"].vid == 100
+    assert por_nome["Eth-Trunk127.100"].qinq is True
+    assert por_nome["Eth-Trunk127.101"].vid == 101
+
+
+def test_valor_que_nao_converte_vira_aviso_derivado() -> None:
+    """Derivado: asdot e valor torto não vêm do render.
+
+    O que não converte vira aviso e o campo fica vazio; o que converte na mesma
+    linha entra, e o resto da captura segue sendo lido.
+    """
+    texto = (
+        "interface Eth-Trunk127.100\n"
+        " vlan-type dot1q vid\n"
+        " mtu 9214\n"
+        " ip address 100.64.10.0 255.255.255.254\n"
+        "bgp 65001\n"
+        " peer 100.64.10.1 as-number 65535.100\n"
+        " peer 100.64.10.1 maximum-prefix 100 200x\n"
+        " peer 100.64.10.2 as-number 64512\n"
+        " peer 100.64.10.2 shutdown\n"
+    )
+    config = parse_config_vrp(texto)
+    (sub,) = config.subinterfaces
+    assert sub.vid is None
+    assert sub.mtu == 9214
+    assert sub.enderecos_v4 == (("100.64.10.0", "255.255.255.254"),)
+    alfa = _por_endereco(config, "100.64.10.1")
+    assert alfa.asn_remote is None
+    assert alfa.maximum_prefix == 100
+    assert alfa.maximum_prefix_threshold is None
+    beta = _por_endereco(config, "100.64.10.2")
+    assert beta.asn_remote == 64512
+    assert beta.shutdown is True
+    assert len(config.avisos) == 3
