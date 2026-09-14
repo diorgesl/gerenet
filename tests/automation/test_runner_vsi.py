@@ -141,6 +141,28 @@ def test_run_change_vsi_pre_check_ldp_bloqueia(
     assert "LDP" in (cr.steps[0].erro or "")
 
 
+def test_run_change_vsi_pos_down_vira_com_divergencia(
+    db_session: Session, tmp_path: Path, monkeypatch,
+) -> None:
+    """VSI que subiu fora de UP no pós-check (§13) ⇒ CR com_divergencia."""
+    d1, d2, svc = _ambiente_vsi(db_session)
+    cr = _cr_vsi_aprovada(db_session, d1, d2, svc)
+    colas = [
+        _recursos_vsi_vazios(db_session, d1, svc), _recursos_vsi_aplicados(db_session, d1, svc, estado="down"),
+        _recursos_vsi_vazios(db_session, d2, svc), _recursos_vsi_aplicados(db_session, d2, svc),
+    ]
+    _fakes_de_mudanca(monkeypatch, colas)
+
+    resultado = run_change(cr.id, settings=Settings(_env_file=None, backups_dir=tmp_path),
+                           session_override=db_session)
+    assert resultado["status"] == "com_divergencia"
+    db_session.refresh(cr)
+    assert cr.status == "com_divergencia"
+    step_a = next(s for s in cr.steps if s.device_id == d1.id)
+    assert any(i["tipo"] == "vsi.estado" and i["severidade"] == "critica"
+               for i in step_a.post_check_json["items"])
+
+
 def test_run_change_vsi_blocos_ja_presentes_marcam_pulado(
     db_session: Session, tmp_path: Path, monkeypatch,
 ) -> None:
