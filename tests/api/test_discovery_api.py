@@ -217,3 +217,38 @@ def test_ignorar_esquecer_e_relistar(client, db_session, tmp_path) -> None:
     assert apagado.status_code == 204
     assert client.get(f"/api/v1/discovery/ignore?device_id={dev_id}",
                       headers=_auth()).json() == []
+
+
+def test_esquecer_o_que_nao_foi_ignorado_e_404(client, db_session, tmp_path) -> None:
+    """O DELETE respondia 204 sem apagar nada, e a caixa do endereço separava a
+    linha gravada da procurada: o operador via sucesso e seguia com o peer ainda
+    fora da lista."""
+    ambiente = _ambiente(db_session, tmp_path)
+    dev_id = ambiente["dev"].id
+    resposta = client.delete(
+        f"/api/v1/discovery/ignore?device_id={dev_id}&afi=ipv4&remote_address=100.64.10.3",
+        headers=_auth(),
+    )
+    assert resposta.status_code == 404
+    assert "não está na lista" in resposta.json()["detail"]
+
+
+def test_unignore_com_outra_caixa_apaga_a_linha(client, db_session, tmp_path) -> None:
+    """A linha guardada em maiúsculas e o DELETE em minúsculas: mesmo endereço."""
+    ambiente = _ambiente(db_session, tmp_path)
+    dev_id = ambiente["dev"].id
+    criado = client.post("/api/v1/discovery/ignore", headers=_auth(), json={
+        "device_id": dev_id, "afi": "ipv6",
+        "remote_address": "2804:194C:1000::1100:73:2",
+    })
+    assert criado.status_code == 201
+    assert criado.json()["remote_address"] == "2804:194c:1000::1100:73:2"
+
+    apagado = client.delete(
+        f"/api/v1/discovery/ignore?device_id={dev_id}&afi=ipv6"
+        "&remote_address=2804:194c:1000::1100:73:2",
+        headers=_auth(),
+    )
+    assert apagado.status_code == 204
+    assert client.get(f"/api/v1/discovery/ignore?device_id={dev_id}",
+                      headers=_auth()).json() == []

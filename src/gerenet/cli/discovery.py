@@ -19,6 +19,7 @@ from gerenet.domain.services.discovery import (
     listar_ignorados,
 )
 from gerenet.domain.services.errors import GerenetError, NotFoundError
+from gerenet.domain.validators import endereco_canonico
 
 app = typer.Typer(help="Descoberta de peers na configuração do equipamento.")
 
@@ -137,9 +138,13 @@ def mostrar(
         except GerenetError as exc:
             typer.echo(f"Erro: {exc}", err=True)
             raise typer.Exit(1) from exc
+        # A comparação é pela forma canônica: o endereço do IPv6 sai do
+        # equipamento em maiúsculas e o operador digita o que copiou da tela,
+        # e os dois são o mesmo peer.
+        alvo = endereco_canonico(peer)
         proposta = next(
             (p for p in resultado.propostas
-             if any(c.remote_address == peer for c in p.candidatos)),
+             if any(c.remote_address == alvo for c in p.candidatos)),
             None,
         )
         if proposta is None:
@@ -189,11 +194,14 @@ def designorar(
     with get_session() as session:
         encontrado = _resolve(session, device)
         try:
-            esquecer_ignorado(
+            removido = esquecer_ignorado(
                 session, device_id=encontrado.id, vrf=vrf, afi=afi, remote_address=peer,
                 actor="cli",
             )
         except GerenetError as exc:
             typer.echo(f"Erro: {exc}", err=True)
             raise typer.Exit(1) from exc
-    typer.echo(f"{peer} voltou a ser candidato.")
+    if removido:
+        typer.echo(f"{peer} voltou a ser candidato.")
+    else:
+        typer.echo(f"{peer} não estava na lista de ignorados.")

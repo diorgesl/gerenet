@@ -58,14 +58,50 @@ def test_ignorado_na_instancia_publica_e_distinto_do_da_vrf(db_session, edge_dev
 def test_esquecer_remove(db_session, edge_device) -> None:
     ignorar_candidato(db_session, device_id=edge_device.id, vrf=None, afi="ipv4",
                       remote_address="10.0.0.9", motivo=None, actor="cli")
-    esquecer_ignorado(db_session, device_id=edge_device.id, vrf=None, afi="ipv4",
-                      remote_address="10.0.0.9", actor="cli")
+    assert esquecer_ignorado(db_session, device_id=edge_device.id, vrf=None, afi="ipv4",
+                             remote_address="10.0.0.9", actor="cli") is True
     assert listar_ignorados(db_session, edge_device.id) == []
 
 
-def test_esquecer_o_que_nao_existe_e_no_op(db_session, edge_device) -> None:
-    esquecer_ignorado(db_session, device_id=edge_device.id, vrf=None, afi="ipv4",
-                      remote_address="10.0.0.9", actor="cli")
+def test_esquecer_o_que_nao_existe_e_no_op_e_devolve_falso(db_session, edge_device) -> None:
+    """O `False` é o que impede o sucesso falso: as duas superfícies dizem que
+    nada foi apagado em vez de responder 204/mensagem de sucesso."""
+    assert esquecer_ignorado(db_session, device_id=edge_device.id, vrf=None, afi="ipv4",
+                             remote_address="10.0.0.9", actor="cli") is False
+    assert listar_ignorados(db_session, edge_device.id) == []
+
+
+def test_o_mesmo_ipv6_em_duas_caixas_e_uma_linha_so(db_session, edge_device) -> None:
+    """O endereço é a identidade do peer e a caixa não faz parte dela: o
+    equipamento escreve `2804:194C:...`, o cadastro à mão escreve minúsculo, e
+    as duas linhas conviveriam — escondendo o candidato por dois motivos e
+    obrigando o `unignore` a acertar a caixa para desfazer."""
+    for endereco in ("2804:194C:1000::1100:73:2", "2804:194c:1000::1100:73:2"):
+        ignorar_candidato(db_session, device_id=edge_device.id, vrf=None, afi="ipv6",
+                          remote_address=endereco, motivo=None, actor="cli")
+    linhas = listar_ignorados(db_session, edge_device.id)
+    assert len(linhas) == 1
+    assert linhas[0].remote_address == "2804:194c:1000::1100:73:2"  # forma canônica
+
+
+def test_esquecer_com_caixa_diferente_da_gravada_remove(db_session, edge_device) -> None:
+    ignorar_candidato(db_session, device_id=edge_device.id, vrf=None, afi="ipv6",
+                      remote_address="2804:194C:1000::1100:73:2", motivo=None, actor="cli")
+    assert esquecer_ignorado(db_session, device_id=edge_device.id, vrf=None, afi="ipv6",
+                             remote_address="2804:194c:1000::1100:73:2", actor="cli") is True
+    assert listar_ignorados(db_session, edge_device.id) == []
+
+
+def test_busca_acha_a_linha_gravada_antes_da_canonicalizacao(db_session, edge_device) -> None:
+    """Linha gravada direto no banco (fora do serviço) em outra caixa: a busca
+    canonicaliza os dois lados, então ela ainda é encontrada e o `unignore`
+    da forma exata não responde sucesso à toa."""
+    db_session.add(models.DiscoveryIgnoredPeer(
+        device_id=edge_device.id, vrf=None, afi="ipv6",
+        remote_address="2804:194C:1000::1100:73:2", autor="cli"))
+    db_session.commit()
+    assert esquecer_ignorado(db_session, device_id=edge_device.id, vrf=None, afi="ipv6",
+                             remote_address="2804:194c:1000::1100:73:2", actor="cli") is True
     assert listar_ignorados(db_session, edge_device.id) == []
 
 

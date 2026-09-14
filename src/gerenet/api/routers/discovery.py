@@ -84,7 +84,14 @@ def esquecer(
         get_device(session, device_id)
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    esquecer_ignorado(
+    if not esquecer_ignorado(
         session, device_id=device_id, vrf=vrf, afi=afi, remote_address=remote_address,
         actor=actor.nome,
-    )
+    ):
+        # 204 sem apagar nada é o sucesso falso que o operador não confere: o
+        # peer segue fora da lista e a resposta dizia que tinha saído.
+        raise HTTPException(
+            status_code=404,
+            detail=f"O peer {remote_address} não está na lista de ignorados do "
+                   f"equipamento {device_id}.",
+        )

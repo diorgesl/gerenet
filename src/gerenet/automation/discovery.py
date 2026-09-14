@@ -24,6 +24,7 @@ from gerenet.domain.services.bgp_sessions import list_sessions
 from gerenet.domain.services.devices import get_device
 from gerenet.domain.services.discovery import listar_ignorados
 from gerenet.domain.services.ipam import pontas_v4, pontas_v6
+from gerenet.domain.validators import endereco_canonico
 
 AVISO_SEM_CONFIG = (
     "O equipamento não tem coleta com a configuração salva. Colete antes de descobrir."
@@ -62,15 +63,6 @@ class ResultadoDescoberta:
     internos: list[Candidato] = field(default_factory=list)
 
 
-def _normaliza(endereco: str) -> str:
-    """Forma canônica do endereço: a config e a SoT podem escrever IPv6 em
-    caixas diferentes, e a comparação da quádrupla não pode depender disso."""
-    try:
-        return str(ipaddress.ip_address(endereco))
-    except ValueError:
-        return endereco
-
-
 def _snapshot_com_config(session: Session, device_id: int) -> models.DeviceSnapshot | None:
     """Snapshot mais recente que ainda tenha a configuração em disco.
 
@@ -107,7 +99,7 @@ def _conhecidos(session: Session, device_id: int) -> set[tuple[str | None, str, 
         )
     }
     return {
-        (vrf_do_circuito.get(s.circuit_id), s.afi, _normaliza(s.remote_address))
+        (vrf_do_circuito.get(s.circuit_id), s.afi, endereco_canonico(s.remote_address))
         for s in sessoes
     }
 
@@ -162,7 +154,7 @@ def listar_candidatos(session: Session, device_id: int) -> ResultadoDescoberta:
     config = parse_config_vrp(texto_backup(snap))
     conhecidos = _conhecidos(session, device.id)
     ignorados = {
-        (i.vrf, i.afi, _normaliza(i.remote_address))
+        (i.vrf, i.afi, endereco_canonico(i.remote_address))
         for i in listar_ignorados(session, device.id)
     }
 
@@ -170,13 +162,13 @@ def listar_candidatos(session: Session, device_id: int) -> ResultadoDescoberta:
         device_id=device.id, snapshot_id=snap.id, aviso=_aviso_da_leitura(config),
     )
     for peer in config.peers:
-        chave = (peer.vrf, peer.afi, _normaliza(peer.address))
+        chave = (peer.vrf, peer.afi, endereco_canonico(peer.address))
         if chave in conhecidos or chave in ignorados:
             continue
         classificacao, motivo = _classificar(session, device, peer)
         candidato = Candidato(
             device_id=device.id, vrf=peer.vrf, afi=peer.afi,
-            remote_address=_normaliza(peer.address), asn_remote=peer.asn_remote,
+            remote_address=endereco_canonico(peer.address), asn_remote=peer.asn_remote,
             descricao=peer.descricao, snapshot_id=snap.id,
             classificacao=classificacao, motivo=motivo,
         )
@@ -296,7 +288,9 @@ def _orientacao(rede, endereco_local: str) -> str:
         inferior = pontas_v4(str(rede), "inferior")[0]
     else:
         inferior = pontas_v6(str(rede), "inferior")[0].split("/")[0]
-    return "inferior" if _normaliza(endereco_local) == _normaliza(inferior) else "superior"
+    if endereco_canonico(endereco_local) == endereco_canonico(inferior):
+        return "inferior"
+    return "superior"
 
 
 def _sessao_de(peer: PeerConfig, candidato: Candidato, rede, orientacao: str) -> dict:
@@ -628,7 +622,7 @@ def listar_propostas(session: Session, device_id: int) -> ResultadoPropostas:
     for candidato in descoberta.candidatos:
         peer = next(
             p for p in config.peers
-            if _normaliza(p.address) == candidato.remote_address and p.vrf == candidato.vrf
+            if endereco_canonico(p.address) == candidato.remote_address and p.vrf == candidato.vrf
         )
         enlace = _enlace(config.subinterfaces, candidato.afi, candidato.remote_address)
         if enlace is None:
@@ -774,7 +768,7 @@ def _contexto_peer(texto: str, endereco: str) -> set[str]:
     de família (a indentação do contexto não interessa à comparação).
 
     A busca e a reescrita são sem caixa: a identidade do peer é o endereço na
-    forma canônica (`_normaliza`, minúsculas) e a configuração escreve o hex do
+    forma canônica (`endereco_canonico`, minúsculas) e a configuração escreve o hex do
     IPv6 como digitado (`2804:194C:...`, a mesma caixa que o `_texto_rede`
     preserva no outro lado). Sem isso todo peer v6 apareceria inteiro como
     diferença — e a diferença de verdade ficaria escondida no meio.

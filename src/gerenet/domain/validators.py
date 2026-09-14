@@ -47,6 +47,21 @@ def cidr_valido(cidr: str, familia: str | None = None) -> ipaddress.IPv4Network 
     return rede
 
 
+def endereco_canonico(endereco: str) -> str:
+    """Forma canônica de um IPv4/IPv6; o texto original quando não for endereço.
+
+    O endereço é a identidade do peer, e a caixa não faz parte dela: o
+    equipamento escreve o hex do IPv6 como digitado (`2804:194C:1000::...`) e o
+    cadastro à mão escreve minúsculo. Comparar texto cru faz o mesmo peer virar
+    dois — duas linhas na lista de ignorados, um `unignore` que responde sucesso
+    sem apagar nada. Quem guarda ou compara endereço de peer passa por aqui.
+    """
+    try:
+        return str(ipaddress.ip_address(endereco))
+    except ValueError:
+        return endereco
+
+
 def validar_vid(vid: int) -> None:
     """VID de VLAN: 2–4094 (1 é a nativa; 0/4095 reservados)."""
     if not 2 <= vid <= 4094:

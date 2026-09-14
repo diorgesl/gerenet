@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from gerenet.domain import models
 from gerenet.domain.audit import registrar
 from gerenet.domain.services.errors import ConflictError
+from gerenet.domain.validators import endereco_canonico
 
 
 def listar_ignorados(session: Session, device_id: int) -> list[models.DiscoveryIgnoredPeer]:
@@ -22,16 +23,27 @@ def listar_ignorados(session: Session, device_id: int) -> list[models.DiscoveryI
 
 
 def _busca(session: Session, *, device_id: int, vrf: str | None, afi: str, remote_address: str):
+    """A linha do peer, comparando pela forma canônica dos dois lados.
+
+    O endereço é a identidade, e a caixa não faz parte dela: o equipamento
+    escreve `2804:194C:...` e o operador digita minúsculo. Comparar texto cru
+    deixaria as duas formas convivendo como peers diferentes, e o `unignore` de
+    uma forma acharia que apagou enquanto a outra seguia escondendo o candidato.
+    """
+    canonico = endereco_canonico(remote_address)
     stmt = select(models.DiscoveryIgnoredPeer).where(
         models.DiscoveryIgnoredPeer.device_id == device_id,
         models.DiscoveryIgnoredPeer.afi == afi,
-        models.DiscoveryIgnoredPeer.remote_address == remote_address,
     )
     stmt = stmt.where(
         models.DiscoveryIgnoredPeer.vrf.is_(None) if vrf is None
         else models.DiscoveryIgnoredPeer.vrf == vrf
     )
-    return session.scalars(stmt).first()
+    return next(
+        (linha for linha in session.scalars(stmt)
+         if endereco_canonico(linha.remote_address) == canonico),
+        None,
+    )
 
 
 def ignorar_candidato(
@@ -43,8 +55,11 @@ def ignorar_candidato(
                        remote_address=remote_address)
     if existente is not None:
         return existente
+    # Grava a forma canônica: é ela que o índice único do banco protege, e é o
+    # que faz o mesmo peer escrito de duas formas não virar duas linhas.
+    canonico = endereco_canonico(remote_address)
     linha = models.DiscoveryIgnoredPeer(
-        device_id=device_id, vrf=vrf, afi=afi, remote_address=remote_address,
+        device_id=device_id, vrf=vrf, afi=afi, remote_address=canonico,
         motivo=motivo, autor=actor,
     )
     session.add(linha)
@@ -59,7 +74,7 @@ def ignorar_candidato(
         registrar(session, tipo="discovery.ignore", ator=actor,
                   objeto="discovery_ignored_peer", objeto_id=linha.id, antes=None,
                   depois={"device_id": device_id, "vrf": vrf, "afi": afi,
-                          "remote_address": remote_address, "motivo": motivo})
+                          "remote_address": canonico, "motivo": motivo})
         session.commit()
     except IntegrityError as exc:
         session.rollback()
@@ -74,16 +89,22 @@ def ignorar_candidato(
 def esquecer_ignorado(
     session: Session, *, device_id: int, vrf: str | None, afi: str,
     remote_address: str, actor: str,
-) -> None:
-    """Tira o candidato da lista. No-op quando não está lá."""
+) -> bool:
+    """Tira o candidato da lista; `False` quando não havia o que tirar.
+
+    O booleano existe para quem chama poder dizer o que aconteceu: sem ele o
+    delete de quem não estava lá respondia sucesso, e o operador seguia
+    acreditando que o peer tinha voltado a ser candidato.
+    """
     existente = _busca(session, device_id=device_id, vrf=vrf, afi=afi,
                        remote_address=remote_address)
     if existente is None:
-        return
-    antes = {"device_id": device_id, "vrf": vrf, "afi": afi, "remote_address": remote_address,
-             "motivo": existente.motivo}
+        return False
+    antes = {"device_id": device_id, "vrf": vrf, "afi": afi,
+             "remote_address": existente.remote_address, "motivo": existente.motivo}
     objeto_id = existente.id
     session.delete(existente)
     registrar(session, tipo="discovery.unignore", ator=actor,
               objeto="discovery_ignored_peer", objeto_id=objeto_id, antes=antes, depois=None)
     session.commit()
+    return True

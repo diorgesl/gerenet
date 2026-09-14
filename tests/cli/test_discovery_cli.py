@@ -59,6 +59,41 @@ def test_ignore_e_unignore(db_session, tmp_path) -> None:
     assert "100.64.10.4" in runner.invoke(cli_app, ["discovery", "list", dev.name]).output
 
 
+def test_unignore_acha_o_endereco_em_outra_caixa(db_session, tmp_path) -> None:
+    """O IPv6 vem do equipamento em maiúsculas e o operador digita minúsculo: é
+    o mesmo peer, e o `unignore` tem de tirá-lo da lista de verdade."""
+    dev = _ambiente(db_session, tmp_path)
+    r = runner.invoke(cli_app, [
+        "discovery", "ignore", dev.name, "2804:194C:1000::1100:73:2", "--afi", "ipv6",
+    ])
+    assert r.exit_code == 0, r.output
+    lista = runner.invoke(cli_app, ["discovery", "list", dev.name]).output
+    assert "2804:194c:1000::1100:73:2" not in lista
+
+    r = runner.invoke(cli_app, [
+        "discovery", "unignore", dev.name, "2804:194c:1000::1100:73:2", "--afi", "ipv6",
+    ])
+    assert r.exit_code == 0, r.output
+    assert "2804:194c:1000::1100:73:2" in runner.invoke(
+        cli_app, ["discovery", "list", dev.name]).output
+
+
+def test_show_acha_o_peer_em_outra_caixa(db_session, tmp_path) -> None:
+    """O endereço como o equipamento o escreve (`2804:194C:...`) acha a proposta
+    do mesmo jeito: sem isso o `show` respondia que o peer não era candidato."""
+    dev = _ambiente(db_session, tmp_path)
+    r = runner.invoke(cli_app, ["discovery", "show", dev.name, "2804:194C:1000::1100:73:2"])
+    assert r.exit_code == 0, r.output
+    assert "2804:194c:1000::1100:73:2" in r.output
+
+
+def test_unignore_do_que_nao_foi_ignorado_avisa(db_session, tmp_path) -> None:
+    dev = _ambiente(db_session, tmp_path)
+    r = runner.invoke(cli_app, ["discovery", "unignore", dev.name, "100.64.10.4"])
+    assert r.exit_code == 0, r.output
+    assert "não estava na lista" in r.output
+
+
 def test_device_sem_coleta_avisa(db_session) -> None:
     site = create_site(db_session, SiteCreate(name="pop-cli-sem-coleta"), actor="cli")
     dev = create_device(db_session, DeviceCreate(name="ne-cli-sem-coleta",
