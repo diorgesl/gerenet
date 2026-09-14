@@ -29,6 +29,10 @@ VLAN_MODE = ("unica", "separada", "none")
 FAMILY = ("ipv4", "ipv6")
 ALLOC_STATUS = ("reservada", "liberada")
 PREFIX_KIND = ("p2p",)
+# Orientação da ponta do par p2p (spec §7): qual dos dois endereços é o do
+# roteador. `inferior` é a convenção do alocador; `superior` existe para o
+# circuito adotado cujo lado local é o endereço de cima.
+PONTA_LOCAL = ("inferior", "superior")
 DIRECTION = ("import", "export")
 PROFILE_KIND = ("produto",)
 AUTH_ORIGIN = ("manual", "irr", "rpki")
@@ -319,6 +323,9 @@ class IpPrefix(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     network: Mapped[str] = mapped_column(String(64), nullable=False)  # CIDR canônico alinhado
     kind: Mapped[str] = mapped_column(Enum(*PREFIX_KIND, name="prefix_kind"), default="p2p", nullable=False)
+    ponta_local: Mapped[str] = mapped_column(
+        Enum(*PONTA_LOCAL, name="ponta_local"), default="inferior", nullable=False
+    )
     site_id: Mapped[int] = mapped_column(ForeignKey("sites.id"), nullable=False)
     circuit_id: Mapped[int | None] = mapped_column(ForeignKey("circuits.id"))
     status: Mapped[str] = mapped_column(

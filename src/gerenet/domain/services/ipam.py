@@ -78,25 +78,49 @@ def _addr_v6(base: str, sufixo: str, host: int) -> str:
     return f"{base}{corpo}"
 
 
-def pontas_v4(network: str) -> tuple[str, str]:
-    """Pontas local/remota de um enlace v4 (/31: .0/.1; /30: .1/.2)."""
+def _valida_orientacao(ponta_local: str) -> None:
+    if ponta_local not in models.PONTA_LOCAL:
+        raise ValidationError(
+            f"Orientação de ponta deve ser uma de {models.PONTA_LOCAL}: {ponta_local}."
+        )
+
+
+def pontas_v4(network: str, ponta_local: str = "inferior") -> tuple[str, str]:
+    """Pontas local/remota de um enlace v4 (/31: .0/.1; /30: .1/.2).
+
+    `ponta_local` diz qual das duas é a do roteador: `inferior` é a convenção do
+    alocador e `superior` atende o circuito adotado cujo lado local é o
+    endereço de cima.
+    """
+    _valida_orientacao(ponta_local)
     rede = ipaddress.ip_network(network, strict=True)
     base = int(rede.network_address)
     if rede.prefixlen == 31:
-        return (str(ipaddress.IPv4Address(base)), str(ipaddress.IPv4Address(base + 1)))
-    if rede.prefixlen == 30:
-        return (str(ipaddress.IPv4Address(base + 1)), str(ipaddress.IPv4Address(base + 2)))
-    raise ValidationError(f"Enlace p2p v4 deve ser /30 ou /31: {network}.")
+        inferior = str(ipaddress.IPv4Address(base))
+        superior = str(ipaddress.IPv4Address(base + 1))
+    elif rede.prefixlen == 30:
+        inferior = str(ipaddress.IPv4Address(base + 1))
+        superior = str(ipaddress.IPv4Address(base + 2))
+    else:
+        raise ValidationError(f"Enlace p2p v4 deve ser /30 ou /31: {network}.")
+    return (inferior, superior) if ponta_local == "inferior" else (superior, inferior)
 
 
-def pontas_v6(network: str) -> tuple[str, str]:
-    """Pontas local/remota de um /126 (rede +1/+2), com prefixo no retorno."""
+def pontas_v6(network: str, ponta_local: str = "inferior") -> tuple[str, str]:
+    """Pontas local/remota de um /126 (rede +1/+2), com prefixo no retorno.
+
+    `ponta_local` segue a mesma convenção do `pontas_v4`: `inferior` (default)
+    devolve a rede +1 como local; `superior` inverte para o circuito adotado
+    cujo lado local é o endereço de cima.
+    """
+    _valida_orientacao(ponta_local)
     rede = ipaddress.ip_network(network, strict=True)
     if rede.prefixlen != 126:
         raise ValidationError(f"Enlace p2p v6 deve ser /126: {network}.")
     base = int(rede.network_address)
-    local = _preserva_caixa(network, str(ipaddress.IPv6Address(base + 1)))
-    remota = _preserva_caixa(network, str(ipaddress.IPv6Address(base + 2)))
+    inferior = _preserva_caixa(network, str(ipaddress.IPv6Address(base + 1)))
+    superior = _preserva_caixa(network, str(ipaddress.IPv6Address(base + 2)))
+    local, remota = (inferior, superior) if ponta_local == "inferior" else (superior, inferior)
     return (f"{local}/126", f"{remota}/126")
 
 
