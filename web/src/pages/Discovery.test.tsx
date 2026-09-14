@@ -97,7 +97,9 @@ const IGNORADO = {
   autor: "admin",
 };
 
-function mockFetch(opts: { descoberta?: unknown; ignorados?: unknown[]; deleteStatus?: number } = {}) {
+function mockFetch(
+  opts: { descoberta?: unknown; ignorados?: unknown[]; deleteStatus?: number; postFalhaPara?: string } = {},
+) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
@@ -110,7 +112,12 @@ function mockFetch(opts: { descoberta?: unknown; ignorados?: unknown[]; deleteSt
             ? json({ detail: "O peer 100.64.10.1 não está na lista de ignorados do equipamento 1." }, 404)
             : new Response(null, { status: 204 });
         }
-        if (init?.method === "POST") return json(IGNORADO, 201);
+        if (init?.method === "POST") {
+          if (opts.postFalhaPara && String(init.body).includes(opts.postFalhaPara)) {
+            return json({ detail: `O peer ${opts.postFalhaPara} não pôde ser ignorado.` }, 409);
+          }
+          return json(IGNORADO, 201);
+        }
         return json(opts.ignorados ?? []);
       }
       if (url.startsWith("/api/v1/discovery")) return json(opts.descoberta ?? DISCOVERY);
@@ -134,9 +141,10 @@ function chamadas() {
   return vi.mocked(fetch).mock.calls as unknown as [string, RequestInit][];
 }
 
-function corpoDoPost() {
-  const post = chamadas().find((c) => c[1]?.method === "POST");
-  if (!post) throw new Error("a página não enviou nenhum POST.");
+function corpoDoPost(indice = 0) {
+  const posts = chamadas().filter((c) => c[1]?.method === "POST");
+  const post = posts[indice];
+  if (!post) throw new Error("a página não enviou esse POST.");
   return JSON.parse(String(post[1].body)) as Record<string, unknown>;
 }
 
@@ -168,7 +176,7 @@ describe("Discovery", () => {
     mockFetch();
     renderDiscovery("/discovery?device_id=1");
     await userEvent.click(await screen.findByRole("button", { name: "Não adotar" }));
-    await userEvent.type(screen.getByLabelText("Motivo"), "cliente saiu");
+    await userEvent.type(screen.getByLabelText(/^Motivo/), "cliente saiu");
     await userEvent.click(screen.getByRole("button", { name: "Confirmar" }));
     // O peer sai identificado pela quádrupla inteira: família e VRF do mesmo
     // candidato a que o endereço pertence.
@@ -179,15 +187,35 @@ describe("Discovery", () => {
       remote_address: "100.64.10.1",
       motivo: "cliente saiu",
     });
+    expect(await screen.findByRole("status")).toHaveTextContent("1 peer saiu da lista de ignorados.");
   });
 
-  it("no enlace dual o botão age no primeiro candidato e o diálogo diz qual é", async () => {
+  it("no enlace dual o botão retira os dois peers e o diálogo nomeia os dois", async () => {
     mockFetch({ descoberta: DUAS_FAMILIAS });
     renderDiscovery("/discovery?device_id=1");
     await userEvent.click(await screen.findByRole("button", { name: "Não adotar" }));
-    expect(screen.getByText(/O enlace tem 2 peers; este botão marca só 100\.64\.10\.1\./)).toBeInTheDocument();
+    expect(
+      screen.getByText("Saem da lista: 100.64.10.1 (ipv4), 2804:194c::1 (ipv6)."),
+    ).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Confirmar" }));
-    expect(corpoDoPost()).toMatchObject({ afi: "ipv4", remote_address: "100.64.10.1" });
+    expect(await screen.findByRole("status")).toHaveTextContent("2 peers saíram da lista de ignorados.");
+    const posts = chamadas().filter((c) => c[1]?.method === "POST");
+    expect(posts).toHaveLength(2);
+    expect(corpoDoPost(0)).toMatchObject({ afi: "ipv4", remote_address: "100.64.10.1" });
+    expect(corpoDoPost(1)).toMatchObject({ afi: "ipv6", remote_address: "2804:194c::1" });
+  });
+
+  it("a falha no meio da sequência diz quantos saíram e não desfaz o que saiu", async () => {
+    mockFetch({ descoberta: DUAS_FAMILIAS, postFalhaPara: "2804:194c::1" });
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Não adotar" }));
+    await userEvent.click(screen.getByRole("button", { name: "Confirmar" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /1 de 2 peers foram ignorados e ficam fora: a operação não é atômica\./,
+    );
+    // O que saiu continua fora: nada de DELETE de compensação.
+    expect(chamadas().filter((c) => c[1]?.method === "DELETE")).toHaveLength(0);
+    expect(chamadas().filter((c) => c[1]?.method === "POST")).toHaveLength(2);
   });
 
   it("sem coleta não afirma que não há peer", async () => {

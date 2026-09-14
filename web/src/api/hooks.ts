@@ -742,19 +742,62 @@ export const useDiscoveryIgnorados = (deviceId: number) =>
     enabled: deviceId > 0,
   });
 
+/** Um peer da proposta: a quádrupla que identifica a linha de ignorados. */
+export type DiscoveryIgnorarIn = {
+  device_id: number;
+  vrf: string | null;
+  afi: string;
+  remote_address: string;
+  motivo: string | null;
+};
+
+/** O POST que falhou no meio da sequência: a mensagem diz quantos saíram. */
+function textoDaFalhaParcial(sairam: number, total: number, causa: string): string {
+  if (sairam === 0) return `Nenhum peer saiu da lista: ${causa}`;
+  return (
+    `${sairam} de ${total} peers foram ignorados e ficam fora: ` +
+    `a operação não é atômica. ${causa}`
+  );
+}
+
 export function useDiscoveryIgnorar() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: {
-      device_id: number;
-      vrf: string | null;
-      afi: string;
-      remote_address: string;
-      motivo: string | null;
-    }) => apiFetch<DiscoveryIgnoradoOut>("/api/v1/discovery/ignore", { method: "POST", body }),
-    onSuccess: (_d, v) => {
-      void qc.invalidateQueries({ queryKey: ["discovery", v.device_id] });
-      void qc.invalidateQueries({ queryKey: ["discovery-ignorados", v.device_id] });
+    // A decisão do operador é sobre o enlace, e um enlace dual stack são dois
+    // peers: os dois saem. A API de ignorados é por peer, então é um POST por
+    // candidato, em sequência.
+    mutationFn: async (peers: DiscoveryIgnorarIn[]) => {
+      const criadas: DiscoveryIgnoradoOut[] = [];
+      for (const peer of peers) {
+        try {
+          criadas.push(
+            await apiFetch<DiscoveryIgnoradoOut>("/api/v1/discovery/ignore", {
+              method: "POST",
+              body: peer,
+            }),
+          );
+        } catch (exc) {
+          // O que já saiu fica fora: a API não desfaz, e reinserir seria pior
+          // que a metade feita. A mensagem diz quantos saíram para o operador
+          // conferir a lista, que o `onSettled` refaz.
+          throw new Error(
+            textoDaFalhaParcial(
+              criadas.length,
+              peers.length,
+              exc instanceof Error ? exc.message : "falha ao ignorar o peer.",
+            ),
+          );
+        }
+      }
+      return criadas;
+    },
+    onSettled: (_d, _e, peers) => {
+      // Nos dois desfechos a lista da tela está velha — no sucesso pelo que
+      // saiu, na falha parcial pelo que saiu antes de falhar.
+      const deviceId = peers[0]?.device_id;
+      if (deviceId === undefined) return;
+      void qc.invalidateQueries({ queryKey: ["discovery", deviceId] });
+      void qc.invalidateQueries({ queryKey: ["discovery-ignorados", deviceId] });
     },
   });
 }

@@ -20,6 +20,12 @@ import type { DiscoveryPropostaOut } from "@/api/types";
 const VAZIO_SEM_COLETA = "Sem coleta com a configuração salva — não há o que comparar.";
 const VAZIO_SEM_PEER = "Nenhum peer fora da SoT neste equipamento.";
 
+function textoDeIgnorados(quantidade: number): string {
+  return quantidade === 1
+    ? "1 peer saiu da lista de ignorados."
+    : `${quantidade} peers saíram da lista de ignorados.`;
+}
+
 export default function Discovery() {
   const [params, setParams] = useSearchParams();
   const { data: devices } = useDevices();
@@ -28,6 +34,7 @@ export default function Discovery() {
   const [detalhe, setDetalhe] = useState<DiscoveryPropostaOut | null>(null);
   const [ignorando, setIgnorando] = useState<DiscoveryPropostaOut | null>(null);
   const [motivo, setMotivo] = useState("");
+  const [resultado, setResultado] = useState<string | null>(null);
 
   useEffect(() => {
     setDeviceSel(deviceParam);
@@ -38,12 +45,7 @@ export default function Discovery() {
   const ignorar = useDiscoveryIgnorar();
   const desdesignorar = useDiscoveryDesdesignorar();
   const propostas = data?.propostas ?? [];
-
-  // O botão age no primeiro candidato — o mesmo que a proposta usa como
-  // identidade (o ASN do código sugerido, o snapshot da conferência). O
-  // diálogo nomeia o peer: no enlace dual são dois, e o operador precisa saber
-  // qual dos dois sai da lista.
-  const alvo = ignorando?.candidatos[0] ?? null;
+  const candidatos = ignorando?.candidatos ?? [];
   // A proposta órfã (endereço sem subinterface) não tem VLAN nem enlace: o
   // título diz o que a proposta é, em vez de imprimir "null" ao operador.
   const tituloDetalhe =
@@ -93,6 +95,7 @@ export default function Discovery() {
             : "Falha ao voltar a considerar o peer."}
         </p>
       )}
+      {resultado && <p role="status">{resultado}</p>}
 
       {deviceSel > 0 && !error && (
         <DataTable<DiscoveryPropostaOut>
@@ -147,6 +150,7 @@ export default function Discovery() {
                 onClick={() => {
                   setIgnorando(p);
                   setMotivo("");
+                  setResultado(null);
                 }}
               >
                 Não adotar
@@ -228,27 +232,27 @@ export default function Discovery() {
 
       <Modal
         aberto={ignorando !== null}
-        titulo="Não adotar este peer"
+        titulo="Não adotar este enlace"
         onFechar={() => setIgnorando(null)}
       >
-        {alvo && (
+        {/* A decisão é sobre o enlace, e um enlace dual stack tem dois peers:
+            os dois saem. Dizer só o primeiro faria o operador acreditar que
+            resolveu, e a leitura seguinte traria o outro de volta. */}
+        {ignorando !== null && (
           <p>
-            Peer <strong>{alvo.remote_address}</strong> · {alvo.afi}
-            {alvo.vrf ? ` · VRF ${alvo.vrf}` : ""}
+            {candidatos.length > 1 ? "Saem da lista: " : "Sai da lista: "}
+            {candidatos
+              .map((c) => `${c.remote_address} (${c.afi}${c.vrf ? `, VRF ${c.vrf}` : ""})`)
+              .join(", ")}
+            .
           </p>
         )}
-        {ignorando !== null && ignorando.candidatos.length > 1 && (
-          <p>
-            O enlace tem {ignorando.candidatos.length} peers; este botão marca só{" "}
-            {alvo?.remote_address}.
-          </p>
-        )}
-        <FormField label="Motivo">
+        <FormField label="Motivo" help={help("discovery.nao_adotar")}>
           <input value={motivo} onChange={(e) => setMotivo(e.target.value)} />
         </FormField>
         {ignorar.error && (
           <p role="alert">
-            {ignorar.error instanceof ApiError ? ignorar.error.message : "Falha ao ignorar o peer."}
+            {ignorar.error.message || "Falha ao ignorar os peers do enlace."}
           </p>
         )}
         <div className="dialog-actions">
@@ -260,16 +264,21 @@ export default function Discovery() {
             className="danger"
             disabled={ignorar.isPending}
             onClick={() => {
-              if (ignorando === null || alvo === null) return;
+              if (ignorando === null || candidatos.length === 0) return;
               ignorar.mutate(
-                {
+                candidatos.map((c) => ({
                   device_id: ignorando.device_id,
-                  vrf: alvo.vrf,
-                  afi: alvo.afi,
-                  remote_address: alvo.remote_address,
+                  vrf: c.vrf,
+                  afi: c.afi,
+                  remote_address: c.remote_address,
                   motivo: motivo || null,
+                })),
+                {
+                  onSuccess: (criadas) => {
+                    setIgnorando(null);
+                    setResultado(textoDeIgnorados(criadas.length));
+                  },
                 },
-                { onSuccess: () => setIgnorando(null) },
               );
             }}
           >
