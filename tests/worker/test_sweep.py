@@ -19,7 +19,7 @@ from gerenet.config import Settings, set_settings
 from gerenet.domain.models import AuditEvent, CredentialGroup, DeviceSnapshot
 from gerenet.domain.schemas import DeviceCreate
 from gerenet.domain.services.devices import create_device
-from gerenet.worker.tasks import SWEEP_LOCK, enqueue_collect, varredura_coletas
+from gerenet.worker.tasks import SWEEP_LOCK, varredura_coletas
 
 CHAVE_AGENDADOS = "rq:scheduled:gerenet-collect"
 
@@ -149,17 +149,26 @@ def test_varredura_enfileira_quem_esta_fora_do_intervalo(fila_limpa: Redis, db_s
 
 
 def test_varredura_conta_recusa_do_enqueue(fila_limpa: Redis, db_session: Session) -> None:
-    """Coleta já pendente não entra de novo: a recusa do enqueue vira `recusados`."""
+    """Coleta em andamento não entra de novo: a recusa do enqueue vira `recusados`.
+
+    O teste segura o lock do equipamento, e não uma coleta pendente de verdade:
+    o caminho "pendente" já tem teste determinístico em
+    `tests/worker/test_tasks.py::test_nao_duplica_job_pendente`, e a recusa por
+    lock é a que um worker ativo não consegue mascarar (ele retiraria o job da
+    fila antes de a varredura consultá-la).
+    """
     set_settings(Settings(_env_file=None, collect_interval_minutes=60))
     grupo = _grupo(db_session)
-    dev = _dev(db_session, "ja-na-fila", "10.10.1.3", grupo=grupo)
-    enqueue_collect(dev.id, actor="cli", origin="cli")
+    dev = _dev(db_session, "em-coleta", "10.10.1.3", grupo=grupo)
+    chave_lock = f"gerenet:lock:device:{dev.id}"
+    fila_limpa.set(chave_lock, "outra-coleta", ex=60)
 
     resultado = varredura_coletas()
 
+    fila_limpa.delete(chave_lock)
     assert resultado["enfileirados"] == 0
-    assert resultado["recusados"][0]["device"] == "ja-na-fila"
-    assert "pendente" in resultado["recusados"][0]["motivo"]
+    assert resultado["recusados"][0]["device"] == "em-coleta"
+    assert "andamento" in resultado["recusados"][0]["motivo"]
 
 
 def test_varredura_desligada_nao_faz_nada(fila_limpa: Redis, db_session: Session) -> None:
