@@ -1028,3 +1028,89 @@ def test_peer_sem_as_number_e_conflito(db_session, tmp_path) -> None:
     (prop,) = listar_propostas(db_session, dev.id).propostas
     assert "asn_remoto_ausente" in {c.tipo for c in prop.conflitos}
     assert prop.veredito == "nao_adotavel"
+
+
+def test_endereco_fora_das_pontas_do_par_e_conflito(db_session, tmp_path) -> None:
+    """O `/30` com o roteador no `.3` e o par no `.2`: o `.3` está dentro do
+    prefixo, mas não é nenhuma das duas pontas que o IPAM representa (`.1` e
+    `.2`). O `.2` do par é a outra ponta, então a proposta saía com
+    `ponta_local: superior` e uma sessão de endereço local igual ao do par."""
+    dev = _ambiente(db_session)
+    _com_texto(db_session, dev, tmp_path,
+               "interface Eth-Trunk127.9001\n"
+               " vlan-type dot1q 9001\n"
+               " ip address 100.64.10.3 255.255.255.252\n"
+               "#\n"
+               "bgp 65001\n"
+               " peer 100.64.10.2 as-number 64512\n")
+    (prop,) = listar_propostas(db_session, dev.id).propostas
+    conflito = next(c for c in prop.conflitos if c.tipo == "ponta_incoerente")
+    assert "100.64.10.3" in conflito.descricao
+    assert "100.64.10.1" in conflito.descricao  # a inferior, que o roteador não usa
+    assert "100.64.10.2" in conflito.descricao  # a do par
+    assert prop.prefixos == []
+    assert prop.sessoes == []
+    assert prop.veredito == "nao_adotavel"
+
+
+def test_endereco_v6_fora_das_pontas_do_par_e_conflito(db_session, tmp_path) -> None:
+    """O irmão v6: `...:3` está no /126 `...::0/126`, cujas pontas são `:1` e `:2`."""
+    dev = _ambiente(db_session)
+    _com_texto(db_session, dev, tmp_path,
+               "interface Eth-Trunk127.9002\n"
+               " vlan-type dot1q 9002\n"
+               " ipv6 address 2804:194C:1000::1100:73:3 126\n"
+               "#\n"
+               "bgp 65001\n"
+               " peer 2804:194C:1000::1100:73:2 as-number 64512\n")
+    (prop,) = listar_propostas(db_session, dev.id).propostas
+    conflito = next(c for c in prop.conflitos if c.tipo == "ponta_incoerente")
+    assert "2804:194C:1000::1100:73:3" in conflito.descricao
+    assert "2804:194c:1000::1100:73:1" in conflito.descricao  # a inferior, em minúsculas
+    assert prop.prefixos == []
+    assert prop.sessoes == []
+    assert prop.veredito == "nao_adotavel"
+
+
+def test_peer_sem_enable_em_nenhuma_familia_vira_pendencia(db_session, tmp_path) -> None:
+    """O peer declarado e não habilitado é resto de configuração: o render emite
+    `peer <endereço> enable` em toda sessão, então adotá-lo mandaria o
+    equipamento habilitar o que ninguém pediu. Pendência, e não conflito — o
+    operador pode estar a um passo de ativá-lo. O vizinho habilitado num
+    `ipv4-family unicast` não recebe nada."""
+    dev = _ambiente(db_session)
+    _com_texto(db_session, dev, tmp_path,
+               "interface Eth-Trunk127.9101\n"
+               " vlan-type dot1q 9101\n"
+               " ip address 100.64.10.0 255.255.255.254\n"
+               "#\n"
+               "interface Eth-Trunk127.9102\n"
+               " vlan-type dot1q 9102\n"
+               " ip address 100.64.20.0 255.255.255.254\n"
+               "#\n"
+               "bgp 65001\n"
+               " peer 100.64.10.1 as-number 64512\n"
+               " peer 100.64.10.1 description CLIENTE-LEGADO\n"
+               " peer 100.64.20.1 as-number 64513\n"
+               " ipv4-family unicast\n"
+               "  peer 100.64.20.1 enable\n")
+    por_vid = _propostas(db_session, dev)
+    pendencia = next(p for p in por_vid[9101].pendencias if p.tipo == "peer_nao_habilitado")
+    assert "não o habilita em nenhuma família" in pendencia.descricao
+    assert por_vid[9101].veredito == "adotavel_com_pendencias"
+    assert "peer_nao_habilitado" not in {p.tipo for p in por_vid[9102].pendencias}
+
+
+def test_veredito_adotavel_do_upstream_com_organizacao(db_session, tmp_path) -> None:
+    """O GAMA da fixture: operadora cadastrada para o ASN, peer sem senha e sem
+    política, habilitado no `ipv4-family unicast`. Sem pendência e sem conflito
+    é o único caminho para `adotavel`, que os outros testes não pinam."""
+    dev = _ambiente(db_session)
+    create_organization(db_session, OrganizationCreate(name="Operadora Gama", asn=64515,
+                                                       kind="operadora"), actor="cli")
+    _com_config(db_session, dev, tmp_path)
+    gama = _propostas(db_session, dev)[3001]
+    assert gama.candidatos[0].classificacao == "upstream"
+    assert gama.pendencias == []
+    assert gama.conflitos == []
+    assert gama.veredito == "adotavel"

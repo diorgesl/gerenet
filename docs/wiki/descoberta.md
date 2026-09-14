@@ -48,6 +48,7 @@ recalcula sozinha na próxima abertura, porque nada dela fica gravado.
 | `senha_nao_legivel` | O equipamento tem senha de peer e o valor não é legível: cadastre o segredo no Vault e informe o caminho. |
 | `perfil_indeterminado`, `politica_fora_do_padrao` | A política aplicada na configuração: o produto (full, parcial, default) não é recuperável do nome dela. |
 | `asn_do_equipamento` | O `bgp <asn>` do bloco difere do ASN cadastrado no equipamento. |
+| `peer_nao_habilitado` | O equipamento declara o peer mas não o habilita em nenhuma família (`peer ... enable`): adotar transforma um resto de configuração em sessão ativa, e o render emite `peer ... enable` em toda sessão. |
 | `mesmo_asn_em_outro_enlace` | Outro enlace deste equipamento tem o mesmo ASN remoto: é um dual stack com VLAN separada (um circuito) ou dois circuitos? |
 
 **Conflito** é o que impede a adoção, e vem sempre com o que fazer:
@@ -57,6 +58,7 @@ recalcula sozinha na próxima abertura, porque nada dela fica gravado.
 | `vlan_tomada`, `prefixo_tomado` | A VLAN ou o prefixo já está reservado para outro circuito no mesmo site. |
 | `par_em_uso` | Este equipamento já tem, na SoT, uma sessão entre os dois endereços do enlace. |
 | `enlace_nao_p2p` | O endereço está numa rede que não é `/30`, `/31` ou `/126` — a sub-rede compartilhada de um IX, por exemplo, que o IPAM não representa. A VLAN continua na proposta; o que não há é prefixo a reservar. |
+| `ponta_incoerente` | O endereço está dentro de um par, mas não é nenhuma das duas pontas que o IPAM representa — o `/30` com o roteador no `.3`, por exemplo, cujas pontas são `.1` e `.2`. A VLAN continua na proposta; sem ponta não há reserva nem sessão. |
 | `endereco_sem_subinterface` | Nenhuma subinterface do equipamento contém o endereço do peer: sem enlace não há VLAN nem prefixo. A proposta aparece assim mesmo, com o motivo. |
 | `interface_ausente_na_coleta`, `endereco_fora_da_coleta`, `vrf_do_enlace_divergente` | A conferência cruzada com a interface brief da mesma coleta não bate (veja abaixo). |
 | `sem_site` | O equipamento não está vinculado a um site — o IPAM é por site. |
@@ -81,6 +83,15 @@ gravado. Quando a comparação não pôde ser feita — peer em VRF, ou uma rest
 de unicidade que recusou o ensaio — ela devolve uma diferença de contexto
 `ensaio` dizendo isso, em vez de sair como fiel. Ela aparece no
 `gerenet discovery show`.
+
+O limite dela, dito sem rodeios: a comparação cobre as linhas do peer e o bloco
+da interface, e **não** o corpo das definições que o render emite junto com a
+sessão (prefix-list, route-policies de importação e exportação, community-filter,
+as-path-filter). Como o nome da route-policy deriva do ASN do par, escolher o
+produto errado na revisão produz linhas de peer idênticas byte a byte com um
+corpo de política completamente diferente, e a conferência não acusa diferença
+nenhuma. Uma conferência limpa não é, por si só, prova de que o produto
+escolhido é o certo.
 
 ## Página e CLI
 

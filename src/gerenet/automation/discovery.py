@@ -277,20 +277,38 @@ def _texto_rede(rede, endereco_de_origem: str) -> str:
     return texto
 
 
-def _orientacao(rede, endereco_local: str) -> str:
-    """Qual ponta do par é o roteador (spec §7).
+def _pontas(rede) -> tuple[str, str]:
+    """As duas pontas do par, na forma de `_sessao_de` (v6 sem o `/126`).
+
+    É a única fonte da orientação e da conferência: a reserva representa duas
+    pontas e só duas, e o endereço que não seja nenhuma delas não tem como
+    virar sessão.
+    """
+    if rede.version == 4:
+        return pontas_v4(str(rede), "inferior")
+    inferior, superior = pontas_v6(str(rede), "inferior")
+    return inferior.split("/")[0], superior.split("/")[0]
+
+
+def _orientacao(rede, endereco_local: str) -> str | None:
+    """Qual ponta do par é o roteador (spec §7); None se não é nenhuma delas.
 
     A comparação é pela forma canônica: a configuração pode trazer o endereço
     IPv6 em maiúsculas e o `ipaddress` o devolve em minúsculas, então comparar
     os textos crus diria "superior" para o endereço de baixo.
+
+    `None` é o endereço que existe dentro do prefixo sem ser uma das duas
+    pontas — o `/30` com o roteador no `.3`, por exemplo. A orientação supõe
+    duas pontas, e responder "superior" para ele faria a sessão nascer com o
+    endereço local igual ao do par.
     """
-    if rede.version == 4:
-        inferior = pontas_v4(str(rede), "inferior")[0]
-    else:
-        inferior = pontas_v6(str(rede), "inferior")[0].split("/")[0]
-    if endereco_canonico(endereco_local) == endereco_canonico(inferior):
+    alvo = endereco_canonico(endereco_local)
+    inferior, superior = _pontas(rede)
+    if alvo == endereco_canonico(inferior):
         return "inferior"
-    return "superior"
+    if alvo == endereco_canonico(superior):
+        return "superior"
+    return None
 
 
 def _sessao_de(peer: PeerConfig, candidato: Candidato, rede, orientacao: str) -> dict:
@@ -426,6 +444,18 @@ def _pendencias_de(
             "asn_do_equipamento",
             f"O bloco `bgp {peer.asn_local}` difere do ASN {device.asn} cadastrado para "
             "o equipamento: confirme qual está certo.",
+        ))
+    if not peer.habilitado:
+        # Resto de configuração, e não peer ativo: o render emite
+        # `peer <endereço> enable` em toda sessão, então adotá-lo mandaria o
+        # equipamento habilitar o que ninguém pediu para habilitar. Pendência, e
+        # não conflito: o operador pode estar a um passo de ativá-lo.
+        pendencias.append(Pendencia(
+            "peer_nao_habilitado",
+            "O equipamento declara este peer, mas não o habilita em nenhuma família "
+            "(`peer ... enable`): adotá-lo transforma um resto de configuração em "
+            "sessão ativa, e a renderização seguinte mandaria habilitá-lo no "
+            "equipamento.",
         ))
     return pendencias
 
@@ -685,8 +715,8 @@ def listar_propostas(session: Session, device_id: int) -> ResultadoPropostas:
                 por_enlace[chave] = proposta
             elif proposta.stack != candidato.afi:
                 proposta.stack = "dual"
-            if par_p2p:
-                orientacao = _orientacao(rede, local)
+            orientacao = _orientacao(rede, local) if par_p2p else None
+            if orientacao is not None:
                 rede_texto = _texto_rede(rede, local)
                 proposta.prefixos.append({"network": rede_texto, "ponta_local": orientacao})
                 sessao = _sessao_de(peer, candidato, rede, orientacao)
@@ -698,6 +728,20 @@ def listar_propostas(session: Session, device_id: int) -> ResultadoPropostas:
                 _acrescenta(proposta.conflitos, _conflitos_de_coleta(
                     snap, sub, sessao["local_address"], candidato.vrf,
                 ))
+            elif par_p2p:
+                # O endereço existe dentro do prefixo e não é nenhuma das duas
+                # pontas que o IPAM representa (`pontas_v4`/`pontas_v6`): sem
+                # ponta não há reserva, e a sessão nasceria com o endereço local
+                # igual ao do par. A proposta continua na lista, com a VLAN que
+                # existe, como no `enlace_nao_p2p` logo abaixo.
+                inferior, superior = _pontas(rede)
+                _acrescenta(proposta.conflitos, [Conflito(
+                    "ponta_incoerente",
+                    f"O endereço {local} está em {_texto_rede(rede, local)}, mas não é "
+                    f"nenhuma das duas pontas que o IPAM representa para esse par "
+                    f"({inferior} e {superior}): sem ponta não há reserva nem sessão "
+                    "a montar para este enlace.",
+                )])
             else:
                 # A proposta continua na lista, com a VLAN que existe, mas sem
                 # reserva de prefixo: não há par p2p a reservar.

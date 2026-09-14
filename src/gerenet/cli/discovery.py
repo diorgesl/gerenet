@@ -122,9 +122,11 @@ def listar(device: str = typer.Argument(..., help="ID ou nome do equipamento."))
         if resultado.aviso:
             typer.echo(f"Aviso: {resultado.aviso}")
         _imprime_propostas(resultado.propostas)
-        if resultado.aviso is None and not resultado.propostas:
+        if resultado.aviso is None and not resultado.propostas and not internos:
             # Sem coleta a lista vazia não sustenta conclusão nenhuma: quem diz
-            # que não há peer é a leitura, e ela não aconteceu.
+            # que não há peer é a leitura, e ela não aconteceu. E com internos a
+            # frase seria falsa: eles estão fora da SoT por definição, e o bloco
+            # logo abaixo os mostra.
             typer.echo("Nenhum peer fora da SoT.")
         _imprime_internos(encontrado.name, internos)
         ignorados = listar_ignorados(session, encontrado.id)
@@ -167,7 +169,11 @@ def mostrar(
                     f"{encontrado.name}: use `discovery unignore` para desfazer.",
                     err=True,
                 )
-            else:
+            elif resultado.aviso is None:
+                # A frase é a mesma regra do `list` e da página: só a leitura
+                # inteira sustenta "não está entre os candidatos". Com aviso —
+                # sem coleta ou leitura parcial — a lista pode não ter o peer
+                # por falta de fonte, e aí quem responde é o aviso.
                 typer.echo("Peer não está entre os candidatos.", err=True)
             raise typer.Exit(1)
         _imprime_propostas([proposta])

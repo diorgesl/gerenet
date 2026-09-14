@@ -1,4 +1,9 @@
 #
+# Fixture DERIVADA, não capturada: foi escrita a partir dos templates de render
+# deste projeto (subinterface.j2 / bgp_peer.j2), para o parser ter uma entrada
+# com a forma do que o VRP escreve. Não é a configuração de um equipamento real
+# — a captura de verdade entra pelo runbook docs/runbook-validacao-ne8000.md.
+#
 sysname NE8000-SPO
 #
 interface Eth-Trunk127

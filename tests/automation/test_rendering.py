@@ -500,3 +500,9 @@ def test_subinterface_usa_a_ponta_superior_quando_a_linha_diz(db_session: Sessio
     ]
     assert any(linha.startswith(f"ip address {esperado} ") for linha in linhas)
     assert not any(linha.startswith(f"ip address {inferior} ") for linha in linhas)
+    # O v6 sai pelo mesmo caminho e sem a orientação (`pontas_v6(rede_texto)`)
+    # seguiria passando: é a linha do `ipv6 address` que prende a orientação.
+    esperado_v6 = pontas_v6(redes[6], "superior")[0]
+    inferior_v6 = pontas_v6(redes[6], "inferior")[0]
+    assert any(linha.strip() == f"ipv6 address {esperado_v6}" for linha in linhas)
+    assert not any(linha.strip() == f"ipv6 address {inferior_v6}" for linha in linhas)

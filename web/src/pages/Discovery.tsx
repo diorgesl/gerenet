@@ -22,9 +22,13 @@ import type { DiscoveryOut, DiscoveryPropostaOut } from "@/api/types";
 const VAZIO_SEM_COLETA = "Sem coleta com a configuração salva — não há o que comparar.";
 const VAZIO_LEITURA_PARCIAL = "A leitura da configuração não entendeu tudo (veja o aviso acima): a lista pode estar incompleta.";
 const VAZIO_SEM_PEER = "Nenhum peer fora da SoT neste equipamento.";
+// Sem dado nenhum não há leitura a concluir: a frase de lista vazia afirmaria
+// o que ninguém leu. Hoje a tela não chega a este estado, e a mensagem segue o
+// mesmo cuidado das outras duas.
+const VAZIO_SEM_LEITURA = "A leitura ainda não devolveu nada para este equipamento.";
 
-function vazioDaLista(data: DiscoveryOut | undefined): string {
-  if (data === undefined) return VAZIO_SEM_PEER;
+export function vazioDaLista(data: DiscoveryOut | undefined): string {
+  if (data === undefined) return VAZIO_SEM_LEITURA;
   if (data.snapshot_id === null) return VAZIO_SEM_COLETA;
   if (data.aviso !== null) return VAZIO_LEITURA_PARCIAL;
   return VAZIO_SEM_PEER;

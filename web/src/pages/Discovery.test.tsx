@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import Discovery from "./Discovery";
+import Discovery, { vazioDaLista } from "./Discovery";
 
 const DEVICES = [{ id: 1, name: "ne8000-01" }];
 
@@ -278,6 +278,20 @@ describe("Discovery", () => {
     expect(await screen.findByText(LEITURA_PARCIAL.aviso)).toBeInTheDocument();
     expect(screen.getByText(/pode estar incompleta/)).toBeInTheDocument();
     expect(screen.queryByText("Nenhum peer fora da SoT neste equipamento.")).not.toBeInTheDocument();
+  });
+
+  it("a mensagem de lista vazia não é a de sem dado nenhum", () => {
+    // Inalcançável pela tela hoje (a query fica carregando ou dá erro antes de
+    // existir este estado), mas a frase de lista vazia é a única das três que
+    // afirma o que ninguém leu: sem dado nenhum, ela não pode sair.
+    expect(vazioDaLista(undefined)).not.toContain("Nenhum peer fora da SoT");
+    expect(vazioDaLista({ ...DISCOVERY, propostas: [] })).toBe(
+      "Nenhum peer fora da SoT neste equipamento.",
+    );
+    expect(vazioDaLista(SEM_COLETA)).toBe("Sem coleta com a configuração salva — não há o que comparar.");
+    expect(vazioDaLista({ ...DISCOVERY, propostas: [], aviso: "leitura parcial" })).toBe(
+      "A leitura da configuração não entendeu tudo (veja o aviso acima): a lista pode estar incompleta.",
+    );
   });
 
   it("a proposta órfã explica o conflito e não imprime null no título", async () => {

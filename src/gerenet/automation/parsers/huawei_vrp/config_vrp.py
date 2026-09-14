@@ -248,7 +248,7 @@ def _monta_peer(reg: dict) -> PeerConfig:
 
 
 def parse_config_vrp(texto: str) -> ConfigVrp:
-    """Leem a configuração inteira e devolve peers e subinterfaces tipados.
+    """Lê a configuração inteira e devolve peers e subinterfaces tipados.
 
     Regras de contexto: linha sem indentação abre bloco novo; dentro de
     `interface`, as linhas indentadas são sub-comandos; dentro de `bgp`, uma

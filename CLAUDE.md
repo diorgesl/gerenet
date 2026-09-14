@@ -362,9 +362,10 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   dos ignorados, classificado por ASN (interno sai em lista separada, só no CLI);
   proposta agrupada por **enlace** (VRF + subinterface — v4+v6 viram um dual
   stack) com `veredito` (`adotavel` / `adotavel_com_pendencias` /
-  `nao_adotavel`), pendências (organização, acesso, código, senha, perfil de
-  política, ASN do equipamento, mesmo ASN em outro enlace) e conflitos
-  (VLAN/prefixo reservados, par em uso, `enlace_nao_p2p`,
+  `nao_adotavel`), pendências (organização, `classificacao_nao_confirmada`,
+  acesso, código, senha, perfil de política, ASN do equipamento,
+  `peer_nao_habilitado`, mesmo ASN em outro enlace) e conflitos
+  (VLAN/prefixo reservados, par em uso, `enlace_nao_p2p`, `ponta_incoerente`,
   `endereco_sem_subinterface`, `sem_site`, os três da conferência cruzada com a
   interface brief e os dois da leitura: `vrf_nao_renderizavel` — esta versão do
   render emite toda sessão na instância pública — e `asn_remoto_ausente`).

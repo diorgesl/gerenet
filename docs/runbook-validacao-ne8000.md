@@ -216,12 +216,17 @@ Para cada proposta, abra a configuração do equipamento ao lado e confira, camp
 - **Endereços** — os prefixos da proposta são o par (`/30`, `/31` ou `/126`) em que o peer
   está, com a **ponta** certa (qual dos dois endereços é o do roteador)? Um endereço de
   rede compartilhada (IX) precisa sair como conflito `enlace_nao_p2p`, não como proposta
-  adotável.
+  adotável; um endereço do par que **não** é nenhuma das duas pontas (o `/30` com o
+  roteador no `.3`, cujas pontas são `.1` e `.2`) sai como `ponta_incoerente`, sem reserva
+  e sem sessão.
 - **ASN** — o ASN remoto é o do `as-number` do peer, e o local é o do bloco `bgp`? Peer sem
   `as-number` lido tem de sair como `asn_remoto_ausente`.
 - **Políticas** — a route-policy que a configuração aplica vira pendência de perfil (o
   produto não é recuperável do nome), e a linha dela aparece na conferência de fidelidade.
   Peer em VRF sai como `vrf_nao_renderizavel`, e não como proposta adotável.
+- **Peer sem `enable`** — peer declarado e sem `peer ... enable` em nenhuma família sai como
+  pendência `peer_nao_habilitado`, e não como sessão limpa: adotá-lo ativaria um resto de
+  configuração (a assunção 11 do checklist é o outro lado disso).
 - **Stack e classificações** — enlace com peer v4 e v6 na mesma subinterface sai como `dual`,
   e cada peer com a classificação (downstream/upstream) que o ASN sugere.
 
