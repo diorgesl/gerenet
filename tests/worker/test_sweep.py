@@ -194,6 +194,9 @@ def test_varredura_com_lock_tomado_nao_enfileira(fila_limpa: Redis, db_session: 
 
     assert resultado == {"status": "skipped", "message": "Varredura já em andamento."}
     assert _jobs_do_device(Queue("gerenet-collect", connection=fila_limpa), dev.id) == []
+    # Só quem tomou o lock reagenda: é o autolimite que impede a corrente duplicada
+    # de varreduras de se multiplicar.
+    assert fila_limpa.zcard(CHAVE_AGENDADOS) == 0
 
 
 def test_armar_sem_intervalo_nao_agenda(fila_limpa: Redis) -> None:
@@ -231,3 +234,46 @@ def test_varredura_desligada_nao_reagenda(fila_limpa: Redis) -> None:
     varredura_coletas()
 
     assert fila_limpa.zcard(CHAVE_AGENDADOS) == 0
+
+
+def _enqueue_que_falha(*args, **kwargs) -> None:
+    raise RuntimeError("redis caiu")
+
+
+def test_varredura_reagenda_mesmo_com_falha_no_corpo(
+    fila_limpa: Redis, db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Exceção no corpo não deixa a coleta periódica órfã.
+
+    Sem o reagendamento no `finally`, o job ficaria só no registry de falhas e a
+    varredura seguinte só voltaria no próximo boot do worker.
+    """
+    set_settings(Settings(_env_file=None, collect_interval_minutes=30))
+    grupo = _grupo(db_session)
+    _dev(db_session, "ativo", "10.11.1.1", grupo=grupo)
+    monkeypatch.setattr("gerenet.worker.tasks.enqueue_collect", _enqueue_que_falha)
+
+    with pytest.raises(RuntimeError, match="redis caiu"):
+        varredura_coletas()
+
+    fila = Queue("gerenet-collect", connection=fila_limpa)
+    agendados = fila.scheduled_job_registry.get_job_ids()
+    assert len(agendados) == 1
+    assert Job.fetch(agendados[0], connection=fila_limpa).func_name.endswith(".varredura_coletas")
+    # O erro não pode deixar o lock preso.
+    assert fila_limpa.get(SWEEP_LOCK) is None
+
+
+def test_armar_ignora_id_orfao_no_registry(fila_limpa: Redis) -> None:
+    """Id sem job no Redis não impede o agendamento (fetch_job devolve None)."""
+    fila_limpa.zadd(CHAVE_AGENDADOS, {"orfao": 0})
+    settings = Settings(_env_file=None, collect_interval_minutes=30)
+
+    assert armar_varredura(fila_limpa, settings) is True
+
+    fila = Queue("gerenet-collect", connection=fila_limpa)
+    agendados = fila.scheduled_job_registry.get_job_ids()
+    assert len(agendados) == 2
+    assert "orfao" in agendados
+    real = [job_id for job_id in agendados if job_id != "orfao"]
+    assert Job.fetch(real[0], connection=fila_limpa).func_name.endswith(".varredura_coletas")

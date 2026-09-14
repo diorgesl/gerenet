@@ -154,10 +154,11 @@ def varredura_coletas(agora: datetime | None = None) -> dict:
     """Enfileira a coleta dos equipamentos ativos com credencial (§10, F6).
 
     Chamada pelo agendador do worker (e pelos testes) e, ao fim de cada execução,
-    reagenda a si mesma — é o que mantém a coleta periódica viva. Não levanta por
-    recusa: quem não entra na fila (coleta em andamento, job pendente, equipamento
-    desativado desde a consulta) conta em `recusados` e fica auditado. O lock
-    `gerenet:lock:sweep` impede duas varreduras sobrepostas.
+    reagenda a si mesma — inclusive quando o corpo falha, senão a coleta periódica
+    morreria em silêncio até o próximo boot. Não levanta por recusa: quem não entra
+    na fila (coleta em andamento, job pendente, equipamento desativado desde a
+    consulta) conta em `recusados` e fica auditado. O lock `gerenet:lock:sweep`
+    impede duas varreduras sobrepostas.
     """
     settings = get_settings()
     if settings.collect_interval_minutes <= 0:
@@ -167,9 +168,11 @@ def varredura_coletas(agora: datetime | None = None) -> dict:
     limite = agora - timedelta(minutes=settings.collect_interval_minutes)
     r = _redis(settings)
     token = secrets.token_hex(16)
+    executou = False
     try:
         if not r.set(SWEEP_LOCK, token, nx=True, ex=settings.lock_ttl_seconds):
             return {"status": "skipped", "message": "Varredura já em andamento."}
+        executou = True
         enfileirados: list[str] = []
         recusados: list[dict] = []
         pulados_idade = 0
@@ -217,15 +220,6 @@ def varredura_coletas(agora: datetime | None = None) -> dict:
                     },
                 )
             )
-        # A varredura se reagenda: o intervalo é relido agora, então desligar a
-        # coleta periódica vale já na execução seguinte.
-        settings = get_settings()
-        if settings.collect_interval_minutes > 0:
-            Queue("gerenet-collect", connection=r).enqueue_in(
-                timedelta(minutes=settings.collect_interval_minutes),
-                varredura_coletas,
-                job_timeout=SWEEP_JOB_TIMEOUT,
-            )
         return {
             "status": "ok",
             "enfileirados": len(enfileirados),
@@ -233,6 +227,17 @@ def varredura_coletas(agora: datetime | None = None) -> dict:
             "recusados": recusados,
         }
     finally:
+        if executou:
+            # Reagenda também quando o corpo falha: uma exceção no meio (Postgres ou
+            # Redis tropeçando) deixaria a coleta periódica parada até o próximo boot
+            # do worker, com o job só no registry de falhas. Só o caminho que tomou o
+            # lock reagenda, então duas varreduras sobrepostas não se multiplicam.
+            # Best-effort de propósito: falhar aqui não pode mascarar o erro real da
+            # varredura nem impedir a liberação do lock — o boot do worker rearma.
+            try:
+                armar_varredura(r)
+            except Exception:  # noqa: BLE001, S110 — redis indisponível ao reagendar: o boot rearma
+                pass
         liberta_lock(r, SWEEP_LOCK, token)
         r.close()
 
