@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     # da varredura acontece na subida).
     collect_interval_minutes: int = 0
 
+    # F6: token opcional do /metrics (Bearer). None = sem autenticação, como o
+    # /healthz — o endpoint pertence à rede de gerência (§19).
+    metrics_token: str | None = None
+
     # IPAM p2p (§25.8): bloco privado de enlaces v4 e base v6 por padrão;
     # cada site pode sobrescrever.
     p2p_ipv4_block: str = "100.64.0.0/10"

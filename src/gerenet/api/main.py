@@ -3,6 +3,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from gerenet.api import auth, dashboard, jobs, users, wiki
+from gerenet.api.metrics import montar_metrics
 from gerenet.api.routers import (
     audit_events,
     bgp_sessions,
@@ -64,6 +65,8 @@ def create_app() -> FastAPI:
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    montar_metrics(app, get_settings())
 
     # Por último: fallback SPA (só registra se web/dist/index.html existir).
     montar_spa(app, get_settings().static_dir)
