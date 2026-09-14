@@ -61,8 +61,18 @@ ocupando a porta/banco de dev quebra esse fluxo.
 Após o build da SPA (ou no dev com a API rodando), o operador autenticado acessa
 `/wiki` (menu "Ajuda") para ler a documentação operacional; a sidebar agrupa as
 páginas por seção e marca com "(em breve)" as que ainda não têm recurso
-disponível. O conteúdo vive em `docs/wiki/` (10 páginas) e é editado via PR
+disponível. O conteúdo vive em `docs/wiki/` (12 páginas, contando as de `em-breve/`) e é editado via PR
 (renderização server-side com `markdown` + sanitização `nh3` — o HTML vem
 sanitizado do servidor; nenhum markdown é renderizado no cliente). Cada página usa frontmatter
 `title`/`secao`/`order`/`em_breve` — `em_breve: true` mostra o aviso
 "Recurso planejado — não disponível ainda." no topo da página.
+
+## Descoberta na configuração — "Migrar" (parte 1)
+
+A página `/discovery` (menu Operação, "Migrar") e o grupo
+`gerenet discovery list|show|ignore|unignore` leem o `display current-configuration`
+já coletado e mostram o que o equipamento tem que a SoT ainda não conhece. É
+somente leitura: nenhum comando vai ao equipamento por esses caminhos, e a lista
+de ignorados (na SoT) é a única escrita. A adoção a partir da proposta é a parte
+2, ainda não implementada. Operação: `docs/wiki/descoberta.md`; validação contra
+um NE8000 real: `docs/runbook-validacao-ne8000.md`.
