@@ -640,6 +640,8 @@ class ChangeRequestOut(BaseModel):
     escopo: str
     l2vc_id: int | None = None
     l2vc_name: str | None = None
+    vsi_id: int | None = None
+    vsi_name: str | None = None  # espelho do modelo (propriedade vsi_name)
     upstream_id: int | None = None
     upstream_name: str | None = None  # espelho do modelo (propriedade upstream_name)
     acao: str
@@ -796,6 +798,12 @@ class VsiOut(BaseModel):
     created_at: datetime
     endpoints: list[VsiEndpointOut] = Field(default_factory=list)
     domain_name: str | None = None
+
+
+class VsiStatusIn(BaseModel):
+    """Corpo do PATCH de status do VSI (espelho do `L2vcStatusIn` do router)."""
+
+    admin_status: bool
 
 
 # ---- Fase 5 (upstreams, §7): conectividade própria — trânsito/IX/PNI. ----

@@ -92,6 +92,28 @@ def test_vsi_criar_e_consultar(client):
     assert client.get(f"/api/v1/mpls/vsi/{vsi['id']}", headers=headers).json()["vsi_id"] == 550
 
 
+def test_vsi_status(client):
+    headers = _auth()
+    _site, d1, d2, dom = _criar_site_devs_dominio(client, headers)
+    vsi = client.post("/api/v1/mpls/vsi", headers=headers, json={
+        "domain_id": dom["id"], "name": "vsi status", "vsi_id": 560,
+        "endpoints": [
+            {"device_id": d1["id"], "vid": 561},
+            {"device_id": d2["id"], "vid": 562},
+        ],
+    }).json()
+    desativado = client.patch(f"/api/v1/mpls/vsi/{vsi['id']}/status",
+                              headers=headers, json={"admin_status": False})
+    assert desativado.status_code == 200 and desativado.json()["admin_status"] is False
+    assert client.get("/api/v1/mpls/vsi", headers=headers).json() == []
+    ativado = client.patch(f"/api/v1/mpls/vsi/{vsi['id']}/status",
+                           headers=headers, json={"admin_status": True})
+    assert ativado.json()["admin_status"] is True
+    inexistente = client.patch("/api/v1/mpls/vsi/9999/status",
+                               headers=headers, json={"admin_status": False})
+    assert inexistente.status_code == 404
+
+
 def test_change_request_l2vc(client):
     headers = _auth()
     _site, d1, d2, dom = _criar_site_devs_dominio(client, headers)
@@ -111,3 +133,26 @@ def test_change_request_l2vc(client):
         "escopo": "l2vc", "acao": "provision", "motivo": "sem id",
     })
     assert sem_id.status_code == 422
+
+
+def test_change_request_vsi(client):
+    """CR de escopo vsi: um step por PE e o nome do serviço no Out (a web rotula)."""
+    headers = _auth()
+    _site, d1, d2, dom = _criar_site_devs_dominio(client, headers)
+    vsi = client.post("/api/v1/mpls/vsi", headers=headers, json={
+        "domain_id": dom["id"], "name": "vsi cr", "vsi_id": 570,
+        "endpoints": [
+            {"device_id": d1["id"], "vid": 571},
+            {"device_id": d2["id"], "vid": 572},
+        ],
+    }).json()
+    criada = client.post("/api/v1/change-requests", headers=headers, json={
+        "escopo": "vsi", "vsi_id": vsi["id"], "acao": "provision", "motivo": "ativar",
+    })
+    assert criada.status_code == 201
+    body = criada.json()
+    assert body["escopo"] == "vsi" and body["vsi_id"] == vsi["id"]
+    assert body["vsi_name"] == "vsi cr" and body["circuit_id"] is None
+    assert {s["device_id"] for s in body["steps"]} == {d1["id"], d2["id"]}
+    detalhe = client.get(f"/api/v1/change-requests/{body['id']}", headers=headers).json()
+    assert detalhe["vsi_id"] == vsi["id"] and detalhe["vsi_name"] == "vsi cr"

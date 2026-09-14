@@ -23,6 +23,7 @@ from gerenet.domain.schemas import (
     MplsMemberIn,
     VsiCreate,
     VsiOut,
+    VsiStatusIn,
 )
 from gerenet.domain.services import mpls as svc
 from gerenet.domain.services.errors import ConflictError, NotFoundError, ValidationError
@@ -213,5 +214,20 @@ def criar_vsi(
 def detalhar_vsi(vsi_id: int, session: SessionDep) -> object:
     try:
         return svc.out_vsi(svc.get_vsi(session, vsi_id))
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.patch("/vsi/{vsi_id}/status", response_model=VsiOut)
+def set_vsi_status(
+    vsi_id: int,
+    data: VsiStatusIn,
+    session: SessionDep,
+    actor: Annotated[Actor, Depends(require_actor)],
+) -> object:
+    try:
+        return svc.out_vsi(
+            svc.set_vsi_status(session, vsi_id, admin_status=data.admin_status, actor=actor.nome)
+        )
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

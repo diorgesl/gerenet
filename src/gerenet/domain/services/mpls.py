@@ -420,6 +420,21 @@ def set_l2vc_status(session: Session, l2vc_id: int, *, admin_status: bool, actor
     return _l2vc(session, svc.id)
 
 
+def set_vsi_status(session: Session, vsi_id: int, *, admin_status: bool, actor: str = "cli") -> models.VsiService:
+    """Reativa ou desativa o VSI (§14.1: desativado, nunca excluído).
+
+    Sem este caminho o operador não tem como desligar um VSI e o guard de
+    serviço desativado da CR ficaria inalcançável.
+    """
+    svc = _vsi(session, vsi_id)
+    antes, svc.admin_status = svc.admin_status, admin_status
+    session.flush()
+    registrar(session, tipo="mpls.vsi.status", ator=actor, objeto="vsi", objeto_id=svc.id,
+              antes={"admin_status": antes}, depois={"admin_status": admin_status})
+    session.commit()
+    return _vsi(session, svc.id)
+
+
 # ---- Serialização L2VC (padrão dashboard.py: Out explícito) ----------------
 
 def _out_endpoint(ep: models.ServiceEndpoint) -> ServiceEndpointOut:

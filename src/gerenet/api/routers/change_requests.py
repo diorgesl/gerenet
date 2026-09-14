@@ -167,7 +167,7 @@ def reconciliar(
     cr_id: int, session: SessionDep, actor: Annotated[Actor, Depends(require_actor)]
 ) -> object:
     """Recomputa os steps não aplicados. Estado que recusa o replanejamento
-    (ex.: upstream ou serviço L2VC desativado desde o plano) ⇒ 409."""
+    (ex.: upstream, serviço L2VC ou VSI desativado desde o plano) ⇒ 409."""
     try:
         return svc.reconciliar(session, cr_id, actor=actor.nome)
     except NotFoundError as exc:

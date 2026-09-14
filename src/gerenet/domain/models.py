@@ -543,6 +543,7 @@ class ChangeRequest(Base):
 
     circuito: Mapped[Circuit] = relationship()
     l2vc: Mapped["L2vcService | None"] = relationship()
+    vsi: Mapped["VsiService | None"] = relationship()
     upstream: Mapped["Upstream | None"] = relationship()
     solicitante: Mapped[User | None] = relationship()
     steps: Mapped[list["ChangeStep"]] = relationship(
@@ -556,6 +557,11 @@ class ChangeRequest(Base):
     def l2vc_name(self) -> str | None:
         """Nome do serviço L2VC (CR de escopo l2vc) — exposto via ChangeRequestOut."""
         return self.l2vc.name if self.l2vc else None
+
+    @property
+    def vsi_name(self) -> str | None:
+        """Nome do VSI (CR de escopo vsi) — exposto via ChangeRequestOut."""
+        return self.vsi.name if self.vsi else None
 
     @property
     def upstream_name(self) -> str | None:

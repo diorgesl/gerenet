@@ -310,24 +310,6 @@ def test_rollback_l2vc_barra_dominio_desativado(db_session, l2vc):
         gerar_rollback(db_session, cr.id, ator_id=None, actor="cli")
 
 
-def test_rollback_e_reconciliar_de_vsi_seguem_indisponiveis(db_session):
-    """O escopo vsi continua barrado até a Frente B (mensagem própria)."""
-    from gerenet.domain import models
-    from gerenet.domain.services.change_requests import gerar_rollback, reconciliar
-    from gerenet.domain.services.errors import ValidationError
-    dom = create_domain(db_session, MplsDomainCreate(name="dom-vsi-msg"), actor="cli")
-    vsi = models.VsiService(
-        domain_id=dom.id, vsi_id=900, name="vsi-msg", vrp_name="VSI-MSG-900",
-    )
-    db_session.add(vsi)
-    db_session.commit()
-    cr = models.ChangeRequest(
-        circuit_id=None, l2vc_id=None, escopo="vsi", acao="provision",
-        status="erro", motivo="msg", solicitante_id=None,
-    )
-    db_session.add(cr)
-    db_session.commit()
-    with pytest.raises(ValidationError, match="fase posterior"):
-        reconciliar(db_session, cr.id, actor="cli")
-    with pytest.raises(ValidationError, match="fase posterior"):
-        gerar_rollback(db_session, cr.id, ator_id=None, actor="cli")
+# O teste do bloqueio temporário do escopo vsi ("fase posterior") saiu na
+# frente do VSI multiponto, que ligou reconciliação e rollback do escopo: a
+# cobertura dele vive em tests/domain/test_change_requests_vsi.py.

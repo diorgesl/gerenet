@@ -17,7 +17,7 @@ from gerenet.domain.services.errors import GerenetError, NotFoundError
 app = typer.Typer(no_args_is_help=True, help="MPLS em switches (domínios, L2VC, VSI).")
 domain_app = typer.Typer(no_args_is_help=True, help="Domínios MPLS.")
 l2vc_app = typer.Typer(no_args_is_help=True, help="Serviços L2VC.")
-vsi_app = typer.Typer(no_args_is_help=True, help="Serviços VSI (consulta).")
+vsi_app = typer.Typer(no_args_is_help=True, help="Serviços VSI.")
 app.add_typer(domain_app, name="domain")
 app.add_typer(l2vc_app, name="l2vc")
 app.add_typer(vsi_app, name="vsi")
@@ -211,6 +211,21 @@ def vsi_list(
             typer.echo(
                 f"{servico.id:>3}  {servico.name:<24} vsi {servico.vsi_id:>5}  {servico.vrp_name}"
             )
+
+
+@vsi_app.command("set-status")
+def vsi_set_status(
+    vsi_id: int = typer.Argument(..., help="ID do VSI."),
+    ativo: bool = typer.Option(True, "--ativo/--inativo", help="Ativa (default) ou desativa o serviço."),
+) -> None:
+    """Reativa ou desativa um serviço VSI."""
+    with get_session() as session:
+        try:
+            servico = svc.set_vsi_status(session, vsi_id, admin_status=ativo, actor="cli")
+        except GerenetError as exc:
+            typer.echo(f"Erro: {exc}", err=True)
+            raise typer.Exit(1) from exc
+    typer.echo(f"VSI #{servico.id} {'ativado' if ativo else 'desativado'}.")
 
 
 @vsi_app.command("show")
