@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 
 from redis import Redis
 from rq import Queue, get_current_job
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from gerenet.automation.runner import liberta_lock, run_change, run_collection
 from gerenet.config import Settings, get_settings
@@ -14,6 +14,7 @@ from gerenet.domain.services import devices as device_svc
 from gerenet.domain.services.errors import NotFoundError
 
 SWEEP_LOCK = "gerenet:lock:sweep"
+SWEEP_JOB_TIMEOUT = 600
 
 
 def _redis(settings: Settings) -> Redis:
@@ -125,11 +126,36 @@ def change_task(change_request_id: int) -> None:
     )
 
 
+def armar_varredura(r: Redis, settings: Settings | None = None) -> bool:
+    """Agenda a varredura, se a coleta periódica está ligada e nenhuma está agendada.
+
+    Idempotente de propósito: o worker chama na subida, então uma agenda perdida
+    no Redis volta no próximo boot sem duplicar job.
+    """
+    settings = settings or get_settings()
+    if settings.collect_interval_minutes <= 0:
+        return False
+    fila = Queue("gerenet-collect", connection=r)
+    alvo = f"{varredura_coletas.__module__}.{varredura_coletas.__name__}"
+    for job_id in fila.scheduled_job_registry.get_job_ids():
+        # fetch_job (e não Job.fetch) tolera id órfão no registry: devolve None.
+        job = fila.fetch_job(job_id)
+        if job is not None and job.func_name == alvo:
+            return False
+    fila.enqueue_in(
+        timedelta(minutes=settings.collect_interval_minutes),
+        varredura_coletas,
+        job_timeout=SWEEP_JOB_TIMEOUT,
+    )
+    return True
+
+
 def varredura_coletas(agora: datetime | None = None) -> dict:
     """Enfileira a coleta dos equipamentos ativos com credencial (§10, F6).
 
-    Chamada pelo agendador do worker (e pelos testes). Não levanta por recusa:
-    quem não entra na fila (coleta em andamento, job pendente, equipamento
+    Chamada pelo agendador do worker (e pelos testes) e, ao fim de cada execução,
+    reagenda a si mesma — é o que mantém a coleta periódica viva. Não levanta por
+    recusa: quem não entra na fila (coleta em andamento, job pendente, equipamento
     desativado desde a consulta) conta em `recusados` e fica auditado. O lock
     `gerenet:lock:sweep` impede duas varreduras sobrepostas.
     """
@@ -158,13 +184,20 @@ def varredura_coletas(agora: datetime | None = None) -> dict:
                     .order_by(models.Device.name)
                 )
             )
+            # Uma consulta para todos os devices: aqui vale a data da coleta mais
+            # recente (é a idade que decide se pula), não o id do snapshot — o
+            # max(started_at) por device responde a mesma pergunta em 2 consultas
+            # em vez de N+1.
+            ultimos = dict(
+                session.execute(
+                    select(
+                        models.DeviceSnapshot.device_id,
+                        func.max(models.DeviceSnapshot.started_at),
+                    ).group_by(models.DeviceSnapshot.device_id)
+                ).all()
+            )
             for dev in devices:
-                ultimo = session.scalar(
-                    select(models.DeviceSnapshot.started_at)
-                    .where(models.DeviceSnapshot.device_id == dev.id)
-                    .order_by(models.DeviceSnapshot.id.desc())
-                    .limit(1)
-                )
+                ultimo = ultimos.get(dev.id)
                 if ultimo is not None and ultimo > limite:
                     pulados_idade += 1
                     continue
@@ -184,6 +217,15 @@ def varredura_coletas(agora: datetime | None = None) -> dict:
                     },
                 )
             )
+        # A varredura se reagenda: o intervalo é relido agora, então desligar a
+        # coleta periódica vale já na execução seguinte.
+        settings = get_settings()
+        if settings.collect_interval_minutes > 0:
+            Queue("gerenet-collect", connection=r).enqueue_in(
+                timedelta(minutes=settings.collect_interval_minutes),
+                varredura_coletas,
+                job_timeout=SWEEP_JOB_TIMEOUT,
+            )
         return {
             "status": "ok",
             "enfileirados": len(enfileirados),
@@ -200,4 +242,5 @@ def worker_main() -> None:
 
     settings = get_settings()
     with _redis(settings) as r:
-        Worker(["gerenet-collect", "gerenet-change"], connection=r).work()
+        armar_varredura(r, settings)
+        Worker(["gerenet-collect", "gerenet-change"], connection=r).work(with_scheduler=True)

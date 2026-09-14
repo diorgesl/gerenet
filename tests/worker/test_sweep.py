@@ -13,13 +13,14 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from redis import Redis
 from rq import Queue
+from rq.job import Job
 from sqlalchemy.orm import Session
 
 from gerenet.config import Settings, set_settings
 from gerenet.domain.models import AuditEvent, CredentialGroup, DeviceSnapshot
 from gerenet.domain.schemas import DeviceCreate
 from gerenet.domain.services.devices import create_device
-from gerenet.worker.tasks import SWEEP_LOCK, varredura_coletas
+from gerenet.worker.tasks import SWEEP_LOCK, armar_varredura, varredura_coletas
 
 CHAVE_AGENDADOS = "rq:scheduled:gerenet-collect"
 
@@ -193,3 +194,40 @@ def test_varredura_com_lock_tomado_nao_enfileira(fila_limpa: Redis, db_session: 
 
     assert resultado == {"status": "skipped", "message": "Varredura já em andamento."}
     assert _jobs_do_device(Queue("gerenet-collect", connection=fila_limpa), dev.id) == []
+
+
+def test_armar_sem_intervalo_nao_agenda(fila_limpa: Redis) -> None:
+    armar = armar_varredura(fila_limpa, Settings(_env_file=None, collect_interval_minutes=0))
+    assert armar is False
+    assert fila_limpa.zcard(CHAVE_AGENDADOS) == 0
+
+
+def test_armar_e_idempotente(fila_limpa: Redis) -> None:
+    settings = Settings(_env_file=None, collect_interval_minutes=30)
+
+    assert armar_varredura(fila_limpa, settings) is True
+    assert armar_varredura(fila_limpa, settings) is False
+
+    fila = Queue("gerenet-collect", connection=fila_limpa)
+    assert len(fila.scheduled_job_registry.get_job_ids()) == 1
+
+
+def test_varredura_reagenda_a_proxima(fila_limpa: Redis, db_session: Session) -> None:
+    set_settings(Settings(_env_file=None, collect_interval_minutes=30))
+    grupo = _grupo(db_session)
+    _dev(db_session, "ativo", "10.11.0.1", grupo=grupo)
+
+    varredura_coletas()
+
+    fila = Queue("gerenet-collect", connection=fila_limpa)
+    agendados = fila.scheduled_job_registry.get_job_ids()
+    assert len(agendados) == 1
+    assert Job.fetch(agendados[0], connection=fila_limpa).func_name.endswith(".varredura_coletas")
+
+
+def test_varredura_desligada_nao_reagenda(fila_limpa: Redis) -> None:
+    set_settings(Settings(_env_file=None, collect_interval_minutes=0))
+
+    varredura_coletas()
+
+    assert fila_limpa.zcard(CHAVE_AGENDADOS) == 0
