@@ -16,6 +16,7 @@ from gerenet.automation.parsers.huawei_vrp.config_vrp import (
     PeerConfig,
     parse_config_vrp,
 )
+from gerenet.automation.render import render_desejado
 from gerenet.automation.snapshots import texto_backup
 from gerenet.domain import models
 from gerenet.domain.services.bgp_sessions import list_sessions
@@ -677,4 +678,202 @@ def listar_propostas(session: Session, device_id: int) -> ResultadoPropostas:
 
     _marca_mesmo_asn(por_enlace)
     resultado.propostas = list(por_enlace.values()) + orfas
+    return resultado
+
+
+@dataclass(frozen=True)
+class Diferenca:
+    contexto: str                  # "peer" | "subinterface"
+    sobrando: tuple[str, ...]      # o render produz e a configuração não tem
+    faltando: tuple[str, ...]      # a configuração tem e o render não produz
+
+
+def _contexto_interface(texto: str, nome: str) -> set[str]:
+    """Linhas da configuração dentro do bloco `interface <nome>`.
+
+    O cabeçalho fica de fora: ele abre o contexto, não é linha dele — e o lado
+    do render o descarta pelo mesmo motivo (`conferir_fidelidade`), para a
+    comparação não começar com o cabeçalho presente de um lado só.
+    """
+    linhas: set[str] = set()
+    dentro = False
+    for bruta in texto.splitlines():
+        linha = bruta.strip()
+        if not linha or linha == "#":
+            continue
+        if not bruta[:1].isspace():
+            dentro = linha == f"interface {nome}"
+            continue
+        if dentro:
+            linhas.add(linha)
+    return linhas
+
+
+def _contexto_peer(texto: str, endereco: str) -> set[str]:
+    """Todas as linhas `peer <endereço> ...`, venham do bloco do bgp ou da seção
+    de família (a indentação do contexto não interessa à comparação).
+
+    A busca e a reescrita são sem caixa: a identidade do peer é o endereço na
+    forma canônica (`_normaliza`, minúsculas) e a configuração escreve o hex do
+    IPv6 como digitado (`2804:194C:...`, a mesma caixa que o `_texto_rede`
+    preserva no outro lado). Sem isso todo peer v6 apareceria inteiro como
+    diferença — e a diferença de verdade ficaria escondida no meio.
+    """
+    prefixo = f"peer {endereco} "
+    linhas: set[str] = set()
+    for bruta in texto.splitlines():
+        linha = bruta.strip()
+        if linha.lower().startswith(prefixo.lower()):
+            linhas.add(_mascara_senha(prefixo + linha[len(prefixo):], endereco))
+    return linhas
+
+
+def _mascara_senha(linha: str, endereco: str) -> str:
+    """A senha do VRP nunca é exibida, nem numa diferença (§19).
+
+    A linha é `peer <endereço> password <algoritmo> <valor>`: saem o algoritmo
+    e o valor, e o que fica diz que o equipamento tem senha de peer e que a
+    SoT não a conhece. A palavra-chave é reconhecida na posição dela, e não em
+    qualquer lugar da linha: uma descrição que por acaso a contivesse viraria
+    uma linha de senha falsa e sumiria do lugar de diferença de verdade.
+    """
+    prefixo = f"peer {endereco} "
+    if linha[len(prefixo):].startswith("password "):
+        return f"{prefixo}password [mascarado]"
+    return linha
+
+
+def _normaliza_linhas(linhas: list[str]) -> set[str]:
+    """Compara por conjunto dentro do contexto: a ordem do render e a da
+    configuração não é a mesma, e `undo ...` é negação de default, não ajuste."""
+    saida: set[str] = set()
+    for linha in linhas:
+        texto = " ".join(linha.split())
+        if not texto or texto.startswith(("#", "undo ")):
+            continue
+        saida.add(texto)
+    return saida
+
+
+def _trunk_da_subinterface(proposta: Proposta) -> str | None:
+    """O trunk do circuito, derivado do nome da subinterface do equipamento.
+
+    O render nomeia a subinterface como `<trunk>.<vid>` (`naming.subinterface`)
+    e quem carrega o trunk é o `edge_trunk` do circuito: sem ele o render não
+    emite bloco de subinterface nenhum e a conferência acusaria uma diferença
+    que a adoção não criaria. Nome que não é `<trunk>.<vid>` não tem trunk a
+    derivar — e aí a diferença é real: o render não reproduz esse nome.
+    """
+    if proposta.subinterface is None or proposta.vid is None:
+        return None
+    sufixo = f".{proposta.vid}"
+    if not proposta.subinterface.endswith(sufixo):
+        return None
+    return proposta.subinterface[: -len(sufixo)]
+
+
+def _ensaio(session: Session, proposta: Proposta) -> dict:
+    """Objetos transitórios com a forma do que a adoção criaria.
+
+    Sem passar pelos serviços, que commitam: aqui nada pode virar escrito. O
+    chamador desfaz a transação.
+    """
+    device = get_device(session, proposta.device_id)
+    org_id = proposta.organizacao_id
+    if org_id is None:
+        org = models.Organization(
+            name=f"ENSAIO-{device.name}-{proposta.vid}",
+            asn=proposta.candidatos[0].asn_remote if proposta.candidatos else None,
+        )
+        session.add(org)
+        session.flush()
+        org_id = org.id
+    circ = models.Circuit(
+        code=f"ENSAIO-{device.name}-{proposta.vid}", organization_id=org_id,
+        site_id=proposta.site_id or device.site_id, access_port="ensaio",
+        edge_device_id=device.id, edge_trunk=_trunk_da_subinterface(proposta),
+        stack=proposta.stack, vlan_mode=proposta.vlan_mode,
+        qinq=proposta.qinq,          # sem isto a fidelidade acusa diferença em todo QinQ
+        p2p_v4_len=proposta.p2p_v4_len or 31,
+    )
+    session.add(circ)
+    session.flush()
+    for vlan in proposta.vlans:
+        session.add(models.Vlan(site_id=circ.site_id, vid=vlan["vid"], kind=vlan["kind"],
+                                family=vlan["family"], circuit_id=circ.id))
+    for prefixo in proposta.prefixos:
+        session.add(models.IpPrefix(site_id=circ.site_id, network=prefixo["network"],
+                                    kind="p2p", circuit_id=circ.id,
+                                    ponta_local=prefixo["ponta_local"]))
+    session.flush()
+    sessoes = []
+    for dados in proposta.sessoes:
+        # `asn_remote` é NOT NULL em `bgp_sessions`, e a adoção também não
+        # conseguiria criá-la: o ensaio espelha apenas o que nasceria de verdade.
+        if dados.get("asn_remote") is None:
+            continue
+        sessao = models.BgpSession(circuit_id=circ.id, device_id=device.id, **dados)
+        session.add(sessao)
+        sessoes.append(sessao)
+    session.flush()
+    return {"circuito": circ, "sessoes": sessoes}
+
+
+def conferir_fidelidade(session: Session, proposta: Proposta) -> list[Diferenca]:
+    """O que a SoT reproduziria × o que a configuração tem (spec §9).
+
+    O ensaio roda o render de verdade, e não uma reimplementação da montagem
+    dos comandos: é o mesmo código que a adoção usaria, então a conferência não
+    pode divergir do que ela produziria. O ensaio é desfeito no fim.
+
+    O `rollback` do fim desfaz a transação INTEIRA, não só o ensaio: quem
+    chamar isto com alterações pendentes na sessão perde as alterações. As
+    superfícies desta frente são somente leitura e convivem com isso; um
+    chamador que escreva tem de conferir antes de abrir a própria transação.
+    """
+    if not proposta.candidatos or proposta.site_id is None:
+        return []
+    snap = session.get(models.DeviceSnapshot, proposta.candidatos[0].snapshot_id)
+    texto = texto_backup(snap)
+    resultado: list[Diferenca] = []
+    try:
+        criados = _ensaio(session, proposta)
+        render = render_desejado(session, proposta.device_id)
+        id_circuito = criados["circuito"].id
+        ids_sessoes = {s.id for s in criados["sessoes"]}
+
+        comandos_peer = [
+            linha for bloco in render.blocos
+            if bloco.objeto == "session" and bloco.objeto_id in ids_sessoes
+            for linha in bloco.comandos
+        ]
+        comandos_sub = [
+            linha for bloco in render.blocos
+            if bloco.objeto == "circuit" and bloco.objeto_id == id_circuito
+            for linha in bloco.comandos
+        ]
+        for endereco in sorted({c.remote_address for c in proposta.candidatos}):
+            esperado = _normaliza_linhas(
+                [linha for linha in comandos_peer if f"peer {endereco} " in f" {linha} "]
+            )
+            encontrado = _contexto_peer(texto, endereco)
+            resultado.append(Diferenca(
+                contexto="peer",
+                sobrando=tuple(sorted(esperado - encontrado)),
+                faltando=tuple(sorted(encontrado - esperado)),
+            ))
+        if proposta.subinterface is not None:
+            esperado = _normaliza_linhas(comandos_sub)
+            esperado.discard(f"interface {proposta.subinterface}")
+            encontrado = _contexto_interface(texto, proposta.subinterface)
+            resultado.append(Diferenca(
+                contexto="subinterface",
+                sobrando=tuple(sorted(esperado - encontrado)),
+                faltando=tuple(sorted(encontrado - esperado)),
+            ))
+    finally:
+        # Descarta o ensaio e a transação do chamador junto (ver a docstring):
+        # é o que garante que nada do ensaio escape, e o preço é o que o
+        # chamador tiver pendente na sessão.
+        session.rollback()
     return resultado

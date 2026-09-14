@@ -783,3 +783,73 @@ def test_sessao_do_mesmo_equipamento_e_conflito(db_session, tmp_path) -> None:
     conflito = next(c for c in alfa.conflitos if c.tipo == "par_em_uso")
     assert dev.name in conflito.descricao
     assert "ativa" not in conflito.descricao
+
+
+from gerenet.automation.discovery import conferir_fidelidade
+
+
+def test_fidelidade_aponta_a_politica_que_o_render_nao_reproduz(db_session, tmp_path) -> None:
+    """O peer tem route-policy no equipamento e o perfil ficou pendente: o render
+    não emite essa linha, e a conferência diz exatamente isso."""
+    dev = _ambiente(db_session)
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+    diferencas = conferir_fidelidade(db_session, alfa)
+    peer = next(d for d in diferencas if d.contexto == "peer")
+    assert peer.sobrando == ()
+    assert any("route-policy RP-64512-IMPORT-V4" in linha for linha in peer.faltando)
+
+
+def test_fidelidade_do_peer_que_casa_com_o_render(db_session, tmp_path) -> None:
+    dev = _ambiente(db_session)
+    arquivo = tmp_path / "current.txt"
+    arquivo.write_text(
+        "interface Eth-Trunk127.6001\n"
+        " vlan-type dot1q 6001\n"
+        " ip address 100.64.10.0 255.255.255.254\n"
+        "#\n"
+        "bgp 65001\n"
+        " peer 100.64.10.1 as-number 64512\n"
+        " ipv4-family unicast\n"
+        "  peer 100.64.10.1 enable\n",
+        encoding="utf-8",
+    )
+    db_session.add(models.DeviceSnapshot(device_id=dev.id, status="success",
+                                        raw_files={"config_backup": [str(arquivo)]}))
+    db_session.commit()
+    (prop,) = listar_propostas(db_session, dev.id).propostas
+    peer = next(d for d in conferir_fidelidade(db_session, prop) if d.contexto == "peer")
+    assert peer.sobrando == ()
+    assert peer.faltando == ()
+
+
+def test_fidelidade_mascara_a_linha_da_senha(db_session, tmp_path) -> None:
+    dev = _ambiente(db_session)
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+    diferencas = conferir_fidelidade(db_session, alfa)
+    linhas = [linha for d in diferencas for linha in d.faltando + d.sobrando]
+    senha = [linha for linha in linhas if "password" in linha]
+    assert senha, "a linha da senha deveria aparecer como diferença"
+    assert all("cipher" not in linha for linha in senha)
+
+
+def test_fidelidade_nao_grava_nada(db_session, tmp_path) -> None:
+    """O ensaio cria objetos transitórios e desfaz: o banco fica como estava."""
+    dev = _ambiente(db_session)
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+    antes = (
+        db_session.query(models.Circuit).count(),
+        db_session.query(models.BgpSession).count(),
+        db_session.query(models.Vlan).count(),
+        db_session.query(models.IpPrefix).count(),
+    )
+    conferir_fidelidade(db_session, alfa)
+    depois = (
+        db_session.query(models.Circuit).count(),
+        db_session.query(models.BgpSession).count(),
+        db_session.query(models.Vlan).count(),
+        db_session.query(models.IpPrefix).count(),
+    )
+    assert antes == depois
