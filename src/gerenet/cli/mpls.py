@@ -3,16 +3,23 @@
 `gerenet mpls` vira `mpls domain ...` / `mpls l2vc ...` / `mpls vsi ...`
 via `add_typer` no próprio arquivo; `cli/main.py` registra só o grupo raiz.
 """
-from typing import Literal
+from typing import Annotated, Literal
 
 import typer
 from pydantic import ValidationError as SchemaValidationError
 
 from gerenet.automation import l2vc as l2vc_auto
 from gerenet.db import get_session
-from gerenet.domain.schemas import L2vcCreate, L2vcEndpointIn, MplsDomainCreate, MplsMemberIn
+from gerenet.domain.schemas import (
+    L2vcCreate,
+    L2vcEndpointIn,
+    MplsDomainCreate,
+    MplsMemberIn,
+    VsiCreate,
+    VsiEndpointIn,
+)
 from gerenet.domain.services import mpls as svc
-from gerenet.domain.services.errors import GerenetError, NotFoundError
+from gerenet.domain.services.errors import GerenetError, NotFoundError, ValidationError
 
 app = typer.Typer(no_args_is_help=True, help="MPLS em switches (domínios, L2VC, VSI).")
 domain_app = typer.Typer(no_args_is_help=True, help="Domínios MPLS.")
@@ -201,6 +208,63 @@ def l2vc_plano(l2vc_id: int = typer.Argument(..., help="ID do L2VC.")) -> None:
                 typer.echo(f"  aviso: {item.aviso}")
 
 
+_SEM_ENDPOINTS: list[str] = []  # default do --endpoint (ver comentário em `vsi add`)
+
+
+def _endpoint_vsi(bruto: str) -> VsiEndpointIn:
+    """`DEVICE_ID` ou `DEVICE_ID:VID` → VsiEndpointIn (erro de CLI, não traceback)."""
+    device_id_str, _, vid_str = bruto.partition(":")
+    try:
+        device_id = int(device_id_str)
+        vid = int(vid_str) if vid_str else None
+    except ValueError as exc:
+        raise ValidationError(
+            f"Endpoint inválido: '{bruto}'. Use DEVICE_ID ou DEVICE_ID:VID."
+        ) from exc
+    return VsiEndpointIn(device_id=device_id, vid=vid)
+
+
+@vsi_app.command("add")
+def vsi_add(
+    domain_id: int = typer.Option(..., "--domain-id", help="ID do domínio MPLS."),
+    name: str = typer.Option(..., help="Nome lógico do serviço."),
+    vsi_id: int | None = typer.Option(None, "--vsi-id", help="VSI-ID (default: próximo livre do domínio)."),
+    # Opção repetível: o estilo `list[str] = typer.Option(...)` reprova no ruff
+    # (B008) e o default literal `[]` reprova no B006 — `Annotated` com o
+    # singleton do módulo passa nos dois. O click monta a lista da linha de
+    # comando a cada invocação; o singleton só é iterado.
+    endpoint: Annotated[
+        list[str],
+        typer.Option("--endpoint", help="DEVICE_ID:VID (repetível). VID omitido assume o VSI-ID."),
+    ] = _SEM_ENDPOINTS,
+    flow_label: bool = typer.Option(
+        False, "--flow-label", help="Habilita flow-label (requer 'mpls_flow_label' na capability)."
+    ),
+) -> None:
+    """Cadastra um VSI multiponto com um AC por PE (§9.3).
+
+    Cada `--endpoint` reserva a VLAN de AC no equipamento (`Vlanif<vid>`); o
+    serviço nasce sem provisionamento — a mudança vai pelo fluxo de CR.
+    """
+    with get_session() as session:
+        try:
+            servico = svc.create_vsi(
+                session,
+                VsiCreate(
+                    domain_id=domain_id,
+                    name=name,
+                    vsi_id=vsi_id,
+                    flow_label=flow_label,
+                    endpoints=[_endpoint_vsi(bruto) for bruto in endpoint],
+                ),
+                actor="cli",
+            )
+        except (GerenetError, SchemaValidationError) as exc:
+            typer.echo(f"Erro: {exc}", err=True)
+            raise typer.Exit(1) from exc
+    typer.echo(f"VSI #{servico.id} criado: {servico.name} ({servico.vrp_name})")
+
+
 @vsi_app.command("list")
 def vsi_list(
     include_disabled: bool = typer.Option(False, "--all", help="Inclui desativados."),
@@ -230,7 +294,7 @@ def vsi_set_status(
 
 @vsi_app.command("show")
 def vsi_show(vsi_id: int = typer.Argument(..., help="ID do VSI.")) -> None:
-    """Mostra um VSI: parâmetros e membros."""
+    """Mostra um VSI: parâmetros e ACs (uma ponta por PE)."""
     with get_session() as session:
         try:
             servico = svc.get_vsi(session, vsi_id)
@@ -240,7 +304,12 @@ def vsi_show(vsi_id: int = typer.Argument(..., help="ID do VSI.")) -> None:
         typer.echo(f"VSI #{servico.id}: {servico.name} ({servico.vrp_name}) — {servico.operational_status}")
         typer.echo(
             f"  mtu {servico.mtu} | split-horizon {'sim' if servico.split_horizon else 'não'} "
-            f"| mac-limit {servico.mac_limit}"
+            f"| mac-limit {servico.mac_limit} "
+            f"| flow-label {'sim' if servico.flow_label else 'não'}"
         )
-        for m in servico.members:
-            typer.echo(f"  membro device {m.device_id}")
+        for ep in servico.endpoints:
+            vid = ep.vlan.vid if ep.vlan is not None else None
+            typer.echo(
+                f"  AC device {ep.device_id}: {ep.interface} (vlan {vid if vid is not None else '—'}, "
+                f"mtu {ep.mtu if ep.mtu is not None else '—'}) — {ep.operational_status}"
+            )

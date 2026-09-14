@@ -50,6 +50,7 @@ def add(
     ),
     circuit_id: int | None = typer.Option(None, "--circuit-id", help="ID do circuito (escopo circuito)."),
     l2vc_id: int | None = typer.Option(None, "--l2vc-id", help="ID do serviço L2VC (escopo l2vc)."),
+    vsi_id: int | None = typer.Option(None, "--vsi-id", help="ID do serviço VSI (escopo vsi)."),
     upstream_id: int | None = typer.Option(None, "--upstream-id", help="ID do upstream (escopo upstream)."),
     ticket: str | None = typer.Option(None, help="Ticket de referência."),
     acao: Literal["provision", "remove"] = typer.Option("provision", "--acao", help="provision ou remove."),
@@ -63,7 +64,7 @@ def add(
             cr = svc.create_change_request(
                 session,
                 ChangeRequestCreate(
-                    escopo=escopo, circuit_id=circuit_id, l2vc_id=l2vc_id,
+                    escopo=escopo, circuit_id=circuit_id, l2vc_id=l2vc_id, vsi_id=vsi_id,
                     upstream_id=upstream_id, acao=acao, criticidade=criticidade,
                     motivo=motivo, ticket=ticket,
                 ),

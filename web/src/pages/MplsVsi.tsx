@@ -11,7 +11,7 @@ export default function MplsVsi() {
 
   return (
     <main>
-      <PageHeader titulo="VSIs" sub="Serviços multiponto (VPLS) no domínio MPLS — consulta, sem provisionamento automático neste ciclo." />
+      <PageHeader titulo="VSIs" sub="Serviços multiponto (VPLS) no domínio MPLS — um AC por PE, provisionados pelo fluxo de change request." />
       <DataTable<VsiOut>
         colunas={[
           { key: "id", title: "ID", render: (v) => <Link to={`/mpls/vsi/${v.id}`}>#{v.id}</Link> },
@@ -19,6 +19,7 @@ export default function MplsVsi() {
           { key: "vrp_name", title: "Nome VRP", render: (v) => v.vrp_name },
           { key: "vsi_id", title: "VSI-ID" },
           { key: "domains", title: "Domínio", render: (v) => v.domain_name ?? `#${v.domain_id}` },
+          { key: "endpoints", title: "PEs", render: (v) => v.endpoints.length },
           { key: "admin_status", title: "Situação", render: (v) => <StatusBadge estado={v.admin_status ? "ativo" : "inativo"} /> },
           { key: "operational_status", title: "Estado operacional", render: (v) => <StatusBadge estado={v.operational_status} /> },
         ]}

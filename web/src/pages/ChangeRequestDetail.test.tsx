@@ -14,6 +14,7 @@ const dev1 = { id: 1, name: "ne-01", management_address: "10.9.0.2", site_id: 1,
 const crBase = {
   id: 1, circuit_id: 1 as number | null, escopo: "circuito" as string, l2vc_id: null as number | null, l2vc_name: null as string | null,
   upstream_id: null as number | null, upstream_name: null as string | null,
+  vsi_id: null as number | null, vsi_name: null as string | null,
   acao: "provision", criticidade: "media", motivo: "Novo cliente GALAXIA",
   ticket: "TICKET-42", rollback_de: null, created_at: "2026-09-01T10:00:00Z",
   approvals: [{ id: 1, user_id: 9, decisao: "aprovar", comentario: "ok", created_at: "2026-09-02T10:00:00Z" }],
@@ -131,16 +132,20 @@ describe("ChangeRequestDetail", () => {
     expect(screen.queryByText("#null")).toBeNull();
   });
 
-  it("não mostra rollback/reconciliar para CR de escopo vsi (circuito mantém)", async () => {
-    // o vsi segue truncado até o provisionamento multiponto existir (a frente
-    // seguinte); o l2vc deixou de ser truncado quando o rollback/reconciliação
-    // chegaram ao serviço/API/CLI. parcial é o modo de falha desenhado onde o
-    // operador acharia o beco sem saída (risco S2-1).
-    crAtual = { ...crDe(2, "parcial"), circuit_id: null, escopo: "vsi", l2vc_id: null, l2vc_name: null };
+  it("mostra rollback/reconciliar para CR de escopo vsi (último escopo destravado)", async () => {
+    // o vsi era o último escopo truncado: o provisionamento multiponto chegou
+    // ao serviço/API/CLI e não há mais motivo para esconder o fluxo do
+    // operador. parcial é o estado que mostra os dois botões (risco S2-1 do
+    // ciclo D era justamente o beco sem saída).
+    crAtual = {
+      ...crDe(2, "parcial"),
+      circuit_id: null, escopo: "vsi", l2vc_id: null, l2vc_name: null,
+      vsi_id: 3, vsi_name: "vsi-cliente",
+    };
     const { unmount } = renderDetail();
     expect(await screen.findByText("Change request #1")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Gerar rollback" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Reconciliar" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Gerar rollback" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reconciliar" })).toBeInTheDocument();
     unmount();
     // regressão: CR de escopo circuito no mesmo estado continua com os botões
     crAtual = crDe(2, "parcial");
@@ -219,13 +224,38 @@ describe("ChangeRequestDetail", () => {
     expect(badge).not.toHaveClass("badge-unknown");
   });
 
-  it("não mostra Reconciliar numa CR de escopo vsi com erro", async () => {
+  it("mostra Reconciliar numa CR de escopo vsi com erro", async () => {
     crAtual = {
       ...crDe(2, "erro"),
       circuit_id: null, escopo: "vsi", l2vc_id: null, l2vc_name: null,
+      vsi_id: 3, vsi_name: "vsi-cliente",
     };
     renderDetail();
     await screen.findByText("Change request #1");
-    expect(screen.queryByRole("button", { name: "Reconciliar" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Reconciliar" })).toBeInTheDocument();
+  });
+
+  it("mostra Gerar rollback numa CR de escopo vsi aplicada", async () => {
+    crAtual = {
+      ...crDe(2, "aplicado"),
+      circuit_id: null, escopo: "vsi", l2vc_id: null, l2vc_name: null,
+      upstream_id: null, upstream_name: null, vsi_id: 3, vsi_name: "vsi-cliente",
+    };
+    renderDetail();
+    await screen.findByText("Change request #1");
+    expect(screen.getByRole("button", { name: "Gerar rollback" })).toBeInTheDocument();
+  });
+
+  it("exibe vsi_name (sem #null) na linha Circuito para CR de escopo vsi", async () => {
+    // mesma regressão do l2vc/upstream: sem o nome do serviço a linha mostraria
+    // "—" e o operador não saberia de qual VSI a CR trata.
+    crAtual = {
+      ...crDe(2, "aguardando_aprovacao"),
+      circuit_id: null, escopo: "vsi", l2vc_id: null, l2vc_name: null,
+      vsi_id: 3, vsi_name: "vsi-cliente",
+    };
+    renderDetail();
+    expect(await screen.findByText("vsi-cliente")).toBeInTheDocument();
+    expect(screen.queryByText("#null")).toBeNull();
   });
 });
