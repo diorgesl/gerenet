@@ -74,14 +74,36 @@ def estado_bloco_vsi(bloco: dict, recursos: dict) -> str:
     """Presença do bloco no encontrado, por identidade (nome VRP e Vlanif).
 
     O bloco do AC é identificado pela `Vlanif<vid>` e o do VSI pelo nome VRP,
-    tanto na criação quanto na remoção. O snapshot não guarda o nome do VSI
-    ligado ao AC (o `display` não o mostra), então um binding de outro serviço
-    aparece aqui como "consta"; quem barra esse caso é o pré-check.
+    tanto na criação quanto na remoção, e o despacho é pelo `tipo` do bloco
+    (`changes._bloco_para_plano` o grava e o `plano_json` do runner o carrega).
+    O despacho importa: a `description` do serviço sai nos DOIS blocos (o
+    `vsi.j2` a renderiza dentro do bloco do VSI), então varrer o texto inteiro
+    por `Vlanif\\d+` lia a descrição como se fosse o AC — uma descrição citando
+    `Vlanif900` fazia o bloco do VSI ser julgado pelo AC de OUTRO serviço, e a
+    identidade real (nome VRP) nunca era consultada (revisão final, F1). Sem
+    `tipo` — bloco de chamada antiga —, o fallback varre o texto todo, na ordem
+    antiga.
+
+    O snapshot não guarda o nome do VSI ligado ao AC (o `display` não o mostra),
+    então um binding de outro serviço aparece aqui como "consta"; quem barra
+    esse caso é o pré-check.
     """
     comandos = bloco.get("comandos") or []
     if not comandos:
         return "ausente"
     linhas = recursos.get("vsi", []) or []
+    if bloco.get("tipo") == "vsi":
+        # identidade = nome VRP da 1ª linha: `vsi <nome> static` ou `undo vsi <nome>`
+        partes = comandos[0].split()
+        if partes[:1] == ["undo"]:
+            nome = partes[2] if len(partes) >= 3 and partes[1] == "vsi" else None
+        else:
+            nome = partes[1] if len(partes) >= 2 and partes[0] == "vsi" else None
+        if nome is None:  # fora do render conhecido: não inventa identidade
+            return "ausente"
+        return "consta" if any(l.get("name") == nome for l in linhas) else "ausente"
+    # AC: a `Vlanif<vid>` da linha `interface` — no `vsi_ac.j2` ela vem ANTES do
+    # `description`, então o primeiro match do texto é a identidade do bloco.
     texto = " ".join(comandos)
     m_if = re.search(r"\b(Vlanif\d+)\b", texto)
     if m_if is not None:
@@ -89,7 +111,7 @@ def estado_bloco_vsi(bloco: dict, recursos: dict) -> str:
         return "consta" if any(
             ac.get("interface") == iface for l in linhas for ac in (l.get("acs") or [])
         ) else "ausente"
-    m_vsi = re.search(r"\bvsi (\S+)", texto)
+    m_vsi = re.search(r"\bvsi (\S+)", texto)  # fallback: bloco sem `tipo`
     if m_vsi is not None:
         return "consta" if any(l.get("name") == m_vsi.group(1) for l in linhas) else "ausente"
     return "ausente"

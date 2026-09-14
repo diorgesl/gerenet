@@ -206,3 +206,60 @@ def test_plan_remocao_vsi_exige_snapshot_e_nomeia_o_equipamento(servico, db_sess
     # sem coleta não sai plano de remoção, e a mensagem diz qual switch coletar
     with pytest.raises(ValidationError, match="sw-a"):
         vsi_auto.plan_remocao_vsi(db_session, svc)
+
+
+def test_estado_bloco_vsi_nao_le_a_descricao_como_identidade(servico, db_session):
+    """A `description` do serviço não é identidade de bloco (revisão final, F1).
+
+    O `vsi.j2` renderiza ` description <texto>` dentro do bloco do VSI: varrer
+    o texto inteiro por `Vlanif\\d+` fazia uma descrição que cita `Vlanif900`
+    ser lida como o AC do bloco — o VSI era dado como "consta" quando aquela
+    Vlanif pertence a OUTRO serviço, e a identidade real (nome VRP) nunca era
+    consultada. O despacho é pelo `tipo` do bloco.
+    """
+    from gerenet.automation import changes
+
+    d1, _d2, _d3, svc = servico
+    svc.description = "AC na Vlanif900 do cliente"
+    db_session.commit()
+    bloco = next(b for b in vsi_auto.render_vsi(db_session, svc)[d1.id] if b.tipo == "vsi")
+    item = changes._bloco_para_plano(bloco, "create")
+    assert "Vlanif900" in " ".join(item["comandos"])  # a armadilha está no texto do bloco
+    alheio = {"vsi": [{"name": "VSI-OUTRO-999", "vsi_id": 999,
+                       "acs": [{"interface": "Vlanif900", "estado": "up"}]}]}
+    assert vsi_auto.estado_bloco_vsi(item, alheio) == "ausente"
+    # e o VSI que existe mesmo continua reconhecido (não é "ausente" sempre)
+    proprio = {"vsi": [{"name": svc.vrp_name, "vsi_id": svc.vsi_id, "acs": []}]}
+    assert vsi_auto.estado_bloco_vsi(item, proprio) == "consta"
+
+
+def test_plan_provision_vsi_pula_o_presente_e_avisa_sem_coleta(servico, db_session):
+    """Bloco presente ⇒ skip (§5.1); sem coleta ⇒ plano completo COM o aviso.
+
+    O `aviso` é o que separa "nada a fazer" de "não sei o encontrado": os dois
+    saem com os mesmos blocos do render quando não há coleta, e é por isso que
+    o plano sem diff precisa carregar o texto de re-validação na execução.
+    """
+    d1, d2, d3, svc = servico
+    sem_coleta = {p.device_id: p for p in vsi_auto.plan_provision_vsi(db_session, svc)}
+    assert set(sem_coleta) == {d1.id, d2.id, d3.id}
+    for item in sem_coleta.values():
+        assert [b["tipo"] for b in item.blocos] == ["vsi", "vsi_ac"]
+        assert item.aviso == vsi_auto._SEM_VSI_AVISO
+        assert item.baseline_snapshot_id is None
+    # coleta em que o VSI e a Vlanif da ponta já constam: nada a aplicar
+    for dev in (d1, d2, d3):
+        _snap(db_session, dev, [_linha_vsi(
+            svc, acs=[{"interface": "Vlanif700", "estado": "up"}],
+        )])
+    aplicado = {p.device_id: p for p in vsi_auto.plan_provision_vsi(db_session, svc)}
+    for item in aplicado.values():
+        assert item.blocos == []
+        assert item.aviso is None
+        assert item.baseline_snapshot_id is not None
+    # coleta nova do PE A com o VSI mas SEM o AC da ponta: sobra só o que falta
+    _snap(db_session, d1, [_linha_vsi(svc, acs=[])])
+    parcial = {p.device_id: p for p in vsi_auto.plan_provision_vsi(db_session, svc)}
+    assert [b["tipo"] for b in parcial[d1.id].blocos] == ["vsi_ac"]
+    assert parcial[d1.id].aviso is None
+    assert parcial[d2.id].blocos == []
