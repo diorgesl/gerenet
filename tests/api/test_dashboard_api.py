@@ -135,3 +135,50 @@ def test_dashboard_agrega(client: TestClient, db_session) -> None:
 
 def test_dashboard_exige_autenticacao(client: TestClient) -> None:
     assert client.get("/api/v1/dashboard").status_code == 401
+
+
+def test_dashboard_agrega_divergencias_da_coleta(client: TestClient, db_session) -> None:
+    _ambiente(db_session)  # sw-dash e os 2 NE8000 ficam sem coleta: fora das duas contagens
+    com_resumo = create_device(
+        db_session, DeviceCreate(name="dv1", management_address="10.0.0.11"), actor="cli"
+    )
+    sem_resumo = create_device(
+        db_session, DeviceCreate(name="dv2", management_address="10.0.0.12"), actor="cli"
+    )
+    nao_coletado = create_device(
+        db_session, DeviceCreate(name="dv3", management_address="10.0.0.13"), actor="cli"
+    )
+    started = datetime.now(UTC) - timedelta(minutes=30)
+    db_session.add_all([
+        models.DeviceSnapshot(
+            device_id=com_resumo.id,
+            status="success",
+            resources={
+                "divergencias": {
+                    "total": 3, "critica": 1, "atencao": 2, "aviso": 0, "alerta": 0,
+                    "parcial": False, "motivo": None,
+                }
+            },
+            started_at=started,
+        ),
+        models.DeviceSnapshot(device_id=sem_resumo.id, status="success", resources={}),
+    ])
+    db_session.commit()
+    assert nao_coletado.id  # sem snapshot: nem divergência, nem "sem resumo"
+
+    dados = client.get("/api/v1/dashboard", headers=_auth()).json()
+
+    assert dados["divergencias"] == {
+        "total": 3,
+        "critica": 1,
+        "atencao": 2,
+        "aviso": 0,
+        "alerta": 0,
+        "devices_com_critica": 1,
+        "devices_sem_resumo": 1,
+        "idade_max_seconds": pytest.approx(1800, abs=5),
+    }
+    por_nome = {p["name"]: p for p in dados["per_device"]}
+    assert por_nome["dv1"]["divergencias"]["critica"] == 1
+    assert por_nome["dv2"]["divergencias"] is None
+    assert por_nome["dv3"]["divergencias"] is None

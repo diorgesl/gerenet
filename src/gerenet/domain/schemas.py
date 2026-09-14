@@ -413,6 +413,31 @@ class JobResumoOut(BaseModel):
     status: str
 
 
+class DivergenciasResumoOut(BaseModel):
+    """Resumo do desejado × encontrado gravado pela coleta (F6)."""
+
+    total: int
+    critica: int
+    atencao: int
+    aviso: int
+    alerta: int
+    parcial: bool
+    motivo: str | None = None
+
+
+class DivergenciasAggOut(BaseModel):
+    """Soma do resumo de todos os equipamentos + a contagem de quem não tem resumo."""
+
+    total: int
+    critica: int
+    atencao: int
+    aviso: int
+    alerta: int
+    devices_com_critica: int
+    devices_sem_resumo: int
+    idade_max_seconds: float | None
+
+
 class PerDeviceOut(BaseModel):
     device_id: int
     name: str
@@ -423,6 +448,7 @@ class PerDeviceOut(BaseModel):
     snapshot_age_seconds: float | None
     latest_snapshot: SnapshotResumoOut | None
     active_job: JobResumoOut | None
+    divergencias: DivergenciasResumoOut | None = None
 
 
 class BgpSessionsAggOut(BaseModel):
@@ -444,6 +470,7 @@ class AllocAggOut(BaseModel):
 class DashboardOut(BaseModel):
     devices: DevicesAggOut
     per_device: list[PerDeviceOut]
+    divergencias: DivergenciasAggOut
     bgp_sessions: BgpSessionsAggOut
     circuits: CircuitsAggOut
     vlans: AllocAggOut
