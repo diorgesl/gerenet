@@ -180,3 +180,35 @@ def test_run_change_vsi_blocos_ja_presentes_marcam_pulado(
     assert resultado["status"] == "aplicado"
     db_session.refresh(cr)
     assert {s.status for s in cr.steps} == {"pulado"}
+
+
+def test_run_change_vsi_falha_so_no_pe_b_vira_parcial(
+    db_session: Session, tmp_path: Path, monkeypatch,
+) -> None:
+    """Step do PE B falha na aplicação ⇒ CR parcial (A aplicado, B falhou).
+
+    É o caso do §9.3 que manda reconciliar: o serviço fica parcialmente
+    provisionado, com uma ponta de pé e a outra não.
+    """
+    d1, d2, svc = _ambiente_vsi(db_session)
+    cr = _cr_vsi_aprovada(db_session, d1, d2, svc)
+    colas = [
+        _recursos_vsi_vazios(db_session, d1, svc), _recursos_vsi_aplicados(db_session, d1, svc),
+        _recursos_vsi_vazios(db_session, d2, svc),
+    ]
+
+    def _aplica(device, username, password, commands, settings):
+        if device.name == d2.name:
+            raise ValueError("falha crítica do VRP no PE B")
+        return {"config": ("\n".join(commands) + "\n")}
+
+    _fakes_de_mudanca(monkeypatch, colas, aplica=_aplica)
+
+    resultado = run_change(cr.id, settings=Settings(_env_file=None, backups_dir=tmp_path),
+                           session_override=db_session)
+    assert resultado["status"] == "parcial"
+    db_session.refresh(cr)
+    assert cr.status == "parcial"
+    assert {
+        next(s for s in cr.steps if s.device_id == dev.id).status for dev in (d1, d2)
+    } == {"aplicado", "falhou"}

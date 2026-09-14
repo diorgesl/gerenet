@@ -202,6 +202,29 @@ def test_merge_vsi_estado_desconhecido_fica_none() -> None:
     ]
 
 
+def test_merge_vsi_peer_e_ac_sem_estado_ficam_none() -> None:
+    """Peer e AC sem a linha de estado no grupo continuam com `estado=None`.
+
+    O `display vsi verbose` imprime o estado do peer (`Session`) e do AC
+    (`Interface State`) em linhas próprias: quando elas não vêm — bloco
+    truncado no meio —, o item permanece no grupo como desconhecido, nunca
+    virando "down" por omissão (mesma regra do estado do VSI). O pós-check
+    trata o None como crítico, então o item precisa existir para ser acusado.
+    """
+    assert merge_parsed("vsi", {"display vsi verbose": [
+        {"name": "SEM-ESTADOS", "estado": "up", "vsi_id": "10", "mtu": "1500",
+         "peer": "", "peer_estado": "", "ac_if": "", "ac_estado": ""},
+        {"name": "SEM-ESTADOS", "estado": "", "vsi_id": "", "mtu": "",
+         "peer": "10.255.9.2", "peer_estado": "", "ac_if": "", "ac_estado": ""},
+        {"name": "SEM-ESTADOS", "estado": "", "vsi_id": "", "mtu": "",
+         "peer": "", "peer_estado": "", "ac_if": "Vlanif10", "ac_estado": ""},
+    ]}) == [{
+        "name": "SEM-ESTADOS", "vsi_id": 10, "estado": "up", "mtu": 1500,
+        "peers": [{"peer": "10.255.9.2", "estado": None}],
+        "acs": [{"interface": "Vlanif10", "estado": None}],
+    }]
+
+
 def test_merge_vazios_devolvem_lista() -> None:
     assert merge_parsed("mpls_ldp_peer", {}) == []
     assert merge_parsed("l2vc", {}) == []

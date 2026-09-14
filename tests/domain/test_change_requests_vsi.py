@@ -148,6 +148,46 @@ def test_rollback_vsi_provision_gera_filho_remove(db_session, vsi):
     assert comandos.count(f"undo l2 binding vsi {svc.vrp_name}") == 2
 
 
+def test_rollback_vsi_remocao_gera_filho_provision(db_session, vsi):
+    """Remoção aplicada nos dois PEs ⇒ filho provision com blocos `create`.
+
+    O filho replaneja o desejado pela coleta ATUAL (pós-remoção), como no
+    l2vc: herdar o `remove` do pai entregaria blocos `delete` a uma CR de
+    provision (o defeito que a Task 2 corrigiu no l2vc).
+    """
+    d1, d2, svc = vsi
+    # coleta em que a CR de remoção nasceu: o VSI e o AC constam nas duas pontas
+    for dev in (d1, d2):
+        _snapshot(db_session, dev, {"vsi": _vsi_coletado(svc, ["Vlanif800"]),
+                                    "interfaces": [], "config_backup": ""})
+    cr = create_change_request(db_session, ChangeRequestCreate(
+        escopo="vsi", vsi_id=svc.id, acao="remove", motivo="remover",
+    ), ator_id=None)
+    assert cr.acao == "remove"
+    cr.status = "aplicado"
+    for step in cr.steps:
+        step.status = "aplicado"
+    db_session.commit()
+    # coleta pós-execução: o VSI sumiu do encontrado
+    vazio = {"vsi": [], "interfaces": [], "config_backup": ""}
+    _snapshot(db_session, d1, vazio)
+    _snapshot(db_session, d2, vazio)
+    filho = gerar_rollback(db_session, cr.id, ator_id=None, actor="cli")
+    assert filho.escopo == "vsi"
+    assert filho.vsi_id == svc.id
+    assert filho.circuit_id is None
+    assert filho.acao == "provision"
+    assert filho.status == "aguardando_aprovacao"
+    assert filho.rollback_de == cr.id
+    assert {s.device_id for s in filho.steps} == {d1.id, d2.id}
+    blocos = [b for s in filho.steps for b in s.plano_json]
+    assert len(blocos) == 4  # explícito: o all() abaixo não pode passar vazio
+    assert all(b["acao"] == "create" for b in blocos)
+    comandos = [c for b in blocos for c in b["comandos"]]
+    assert comandos.count(f"vsi {svc.vrp_name} static") == 2
+    assert sum(1 for c in comandos if c.strip() == f"l2 binding vsi {svc.vrp_name}") == 2
+
+
 def test_rollback_vsi_sem_encontrado_eh_plano_vazio(db_session, vsi):
     d1, d2, svc = vsi
     vazio = {"vsi": [], "interfaces": [], "config_backup": ""}
