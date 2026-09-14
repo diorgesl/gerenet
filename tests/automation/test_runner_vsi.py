@@ -209,6 +209,6 @@ def test_run_change_vsi_falha_so_no_pe_b_vira_parcial(
     assert resultado["status"] == "parcial"
     db_session.refresh(cr)
     assert cr.status == "parcial"
-    assert {
-        next(s for s in cr.steps if s.device_id == dev.id).status for dev in (d1, d2)
-    } == {"aplicado", "falhou"}
+    por_device = {s.device_id: s.status for s in cr.steps}
+    assert por_device[d1.id] == "aplicado"
+    assert por_device[d2.id] == "falhou"

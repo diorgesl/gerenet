@@ -80,7 +80,7 @@ def estado_bloco_vsi(bloco: dict, recursos: dict) -> str:
     `vsi.j2` a renderiza dentro do bloco do VSI), então varrer o texto inteiro
     por `Vlanif\\d+` lia a descrição como se fosse o AC — uma descrição citando
     `Vlanif900` fazia o bloco do VSI ser julgado pelo AC de OUTRO serviço, e a
-    identidade real (nome VRP) nunca era consultada (revisão final, F1). Sem
+    identidade real (nome VRP) nunca era consultada (revisão final, I1). Sem
     `tipo` — bloco de chamada antiga —, o fallback varre o texto todo, na ordem
     antiga.
 
