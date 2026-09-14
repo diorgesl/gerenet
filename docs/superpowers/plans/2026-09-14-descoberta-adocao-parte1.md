@@ -530,7 +530,7 @@ bgp 65001
  peer 100.64.10.4 as-number 64514
  peer 100.64.10.4 description CLIENTE-BETA
  peer 100.64.10.4 shutdown
- peer 100.64.10.3 as-number 64501
+ peer 100.64.10.3 as-number 64515
  peer 100.64.10.3 description TRANSITO-GAMA
  peer 100.64.10.3 bfd enable
  peer 100.64.10.3 graceful-restart
@@ -1317,8 +1317,11 @@ def test_ignorado_nao_e_candidato(db_session, tmp_path) -> None:
 
 
 def test_classificacao_por_organizacao(db_session, tmp_path) -> None:
+    """O ASN 64515 (e não 64501): 64496–64511 é a faixa de documentação do
+    RFC 5398, e o validador do produto recusa — a organização precisa ser
+    criável pelo serviço, senão o teste afirma um ambiente que não existe."""
     dev = _ambiente(db_session)
-    create_organization(db_session, OrganizationCreate(name="Operadora Gama", asn=64501,
+    create_organization(db_session, OrganizationCreate(name="Operadora Gama", asn=64515,
                                                        kind="operadora"), actor="cli")
     create_organization(db_session, OrganizationCreate(name="Cliente Alfa", asn=64512),
                         actor="cli")

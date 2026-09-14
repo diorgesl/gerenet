@@ -39,7 +39,7 @@ bgp 65001
  peer 100.64.10.4 as-number 64514
  peer 100.64.10.4 description CLIENTE-BETA
  peer 100.64.10.4 shutdown
- peer 100.64.10.3 as-number 64501
+ peer 100.64.10.3 as-number 64515
  peer 100.64.10.3 description TRANSITO-GAMA
  peer 100.64.10.3 bfd enable
  peer 100.64.10.3 graceful-restart

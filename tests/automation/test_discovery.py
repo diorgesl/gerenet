@@ -119,12 +119,12 @@ def test_ignorado_nao_e_candidato(db_session, tmp_path) -> None:
 
 
 def test_classificacao_por_organizacao(db_session, tmp_path) -> None:
+    """O ASN é 64515, e não 64501: 64496-64511 é a faixa de documentação do
+    RFC 5398 e o validador a recusa. A organização precisa ser criável pelo
+    serviço, senão o teste afirma um ambiente que o produto não deixaria existir."""
     dev = _ambiente(db_session)
-    # 64501 é o ASN do par TRANSITO-GAMA da fixture, mas cai na faixa de
-    # documentação (64496-64511) e `create_organization` o recusa; a organização
-    # entra por ORM, como no `org_operadora` do conftest.
-    db_session.add(models.Organization(name="Operadora Gama", asn=64501, kind="operadora"))
-    db_session.commit()
+    create_organization(db_session, OrganizationCreate(name="Operadora Gama", asn=64515,
+                                                       kind="operadora"), actor="cli")
     create_organization(db_session, OrganizationCreate(name="Cliente Alfa", asn=64512),
                         actor="cli")
     _com_config(db_session, dev, tmp_path)
@@ -169,3 +169,79 @@ def test_captura_sem_bloco_bgp_avisa_o_que_nao_foi_lido(db_session, tmp_path) ->
     assert "bgp" in resultado.aviso  # o aviso da leitura, não o de "sem coleta"
     assert resultado.candidatos == []
     assert resultado.internos == []
+
+
+def test_endereco_ipv6_conhecido_independe_da_caixa(db_session, tmp_path) -> None:
+    """O parser guarda a forma do equipamento (`2804:194C:1000::...` na fixture)
+    e a SoT é digitada à mão: aqui em minúsculas e com os zeros expandidos."""
+    from gerenet.domain.schemas import CircuitCreate
+    from gerenet.domain.services.circuits import create_circuit
+
+    dev = _ambiente(db_session)
+    org = create_organization(db_session, OrganizationCreate(name="Cliente Alfa", asn=64512),
+                              actor="cli")
+    site = db_session.scalar(select(models.Site))
+    circ = create_circuit(db_session, CircuitCreate(
+        code="CIRC-DESC-V6", organization_id=org.id, site_id=site.id,
+        access_device_id=dev.id, access_port="GE0/0/1", edge_device_id=dev.id,
+    ), actor="cli")
+    db_session.add(models.BgpSession(
+        circuit_id=circ.id, device_id=dev.id, afi="ipv6",
+        local_address="2804:194c:1000:0:0:1100:73:1",
+        remote_address="2804:194c:1000:0:0:1100:73:2",
+        asn_local=65001, asn_remote=64512,
+    ))
+    db_session.commit()
+    _com_config(db_session, dev, tmp_path)
+
+    resultado = listar_candidatos(db_session, dev.id)
+    assert {p.remote_address for p in resultado.candidatos} == {
+        "100.64.10.1", "100.64.10.4", "100.64.10.3", "10.99.0.1",
+    }
+
+
+def test_vrf_faz_parte_da_identidade(db_session, tmp_path) -> None:
+    """A VRF do peer sai do circuito da sessão: sessão fora da VRF não cobre."""
+    from gerenet.domain.schemas import CircuitCreate
+    from gerenet.domain.services.circuits import create_circuit
+
+    dev = _ambiente(db_session)
+    org = create_organization(db_session, OrganizationCreate(name="Cliente Alfa", asn=64512),
+                              actor="cli")
+    site = db_session.scalar(select(models.Site))
+    publico = create_circuit(db_session, CircuitCreate(
+        code="CIRC-DESC-VRF-1", organization_id=org.id, site_id=site.id,
+        access_device_id=dev.id, access_port="GE0/0/1", edge_device_id=dev.id,
+    ), actor="cli")
+    na_vrf = create_circuit(db_session, CircuitCreate(
+        code="CIRC-DESC-VRF-2", organization_id=org.id, site_id=site.id,
+        access_device_id=dev.id, access_port="GE0/0/1", edge_device_id=dev.id, vrf="VPNA",
+    ), actor="cli")
+    # Cada sessão carrega o endereço remoto do peer que está do OUTRO lado.
+    db_session.add(models.BgpSession(
+        circuit_id=publico.id, device_id=dev.id, afi="ipv4",
+        local_address="100.64.10.0", remote_address="10.99.0.1",
+        asn_local=65001, asn_remote=64513,
+    ))
+    db_session.add(models.BgpSession(
+        circuit_id=na_vrf.id, device_id=dev.id, afi="ipv4",
+        local_address="100.64.10.0", remote_address="100.64.10.1",
+        asn_local=65001, asn_remote=64512,
+    ))
+    db_session.commit()
+    _com_config(db_session, dev, tmp_path)
+
+    por_endereco = {p.remote_address: p for p in listar_candidatos(db_session, dev.id).candidatos}
+    assert por_endereco["10.99.0.1"].vrf == "VPNA"   # sessão pública não cobre o peer da VRF
+    assert por_endereco["100.64.10.1"].vrf is None   # sessão na VRF não cobre o peer público
+
+    # A sessão na VRF do peer, essa sim, cobre.
+    db_session.add(models.BgpSession(
+        circuit_id=na_vrf.id, device_id=dev.id, afi="ipv4",
+        local_address="10.99.0.254", remote_address="10.99.0.1",
+        asn_local=65001, asn_remote=64513,
+    ))
+    db_session.commit()
+    assert "10.99.0.1" not in {
+        p.remote_address for p in listar_candidatos(db_session, dev.id).candidatos
+    }
