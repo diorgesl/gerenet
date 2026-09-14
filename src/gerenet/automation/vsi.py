@@ -171,11 +171,19 @@ def plan_remocao_vsi(session: Session, service: models.VsiService) -> list[chang
                 # `undo vsi` roda na visão de sistema: sem linha de contexto
                 item["comandos"] = [f"undo vsi {service.vrp_name}"]
             else:
-                # o binding mora dentro da interface: contexto + undo
-                item["comandos"] = [
-                    bloco.comandos[1],
-                    f"undo l2 binding vsi {service.vrp_name}",
-                ]
+                # o binding mora dentro da interface: contexto + undo. A linha de
+                # contexto sai por âncora de conteúdo, não por índice: inserir um
+                # comando antes da `interface` na criação deslocaria um índice
+                # fixo em silêncio, e o `undo` iria para a visão de sistema.
+                contexto = next(
+                    (c for c in bloco.comandos if c.startswith("interface ")), None
+                )
+                if contexto is None:
+                    raise ValidationError(
+                        f"Bloco do AC do VSI {service.name} sem a linha 'interface' — "
+                        "revalide o render antes de gerar a remoção."
+                    )
+                item["comandos"] = [contexto, f"undo l2 binding vsi {service.vrp_name}"]
             if estado_bloco_vsi(item, recursos) == "consta":
                 a_remover.append(item)
         plano.append(changes.PlanoDevice(

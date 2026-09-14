@@ -80,5 +80,25 @@ Parkados (registrados, sem correção agora):
 
 - `uv run pytest -q`: **865 passed** (a base era 863; +2 testes de render do MTU)
 - `uv run ruff check src tests`: limpo
-- `cd web && npm run test`: **135** (a base era 126; o arquivo do VSI foi de 1 para 11 testes)
+- `cd web && npm run test`: **136** (a base era 126; o arquivo do VSI foi de 1 para 11 testes)
 - `cd web && npm run build` e `npm run lint`: limpos
+
+## Re-revisão da onda de correção
+
+Segunda rodada independente (diff `ad1e075..edf2adc`), com as suítes remedidas do zero:
+**ADDRESSED** — os 3 Important e os 5 minors endereçados, render do AC correto (os quatro casos
+do template conferidos com o `_env` real, sem linha em branco e com a indentação certa), ausência
+de `undo mtu` na remoção provada pela via real (`plan_remocao_vsi`), fallback do MTU provado com
+`ep.mtu = None` gravado no banco, e idempotência preservada (o regex da `Vlanif` não é afetado).
+Nenhum achado novo Critical ou Important; 5 minors novos, todos corrigidos em seguida:
+
+- o comentário do teste prometia medir o reset do `onSubmit`, que é inobservável por aquele
+  caminho (quem limpa na reabertura é o `onClick`) — comentário corrigido para dizer o que mede;
+- a contagem de testes web na nota estava 135 e é 136;
+- o `CLAUDE.md` dizia "até um re-provisionamento", que se lê como "emitir nova CR" — e uma nova
+  CR de provisionamento só produz step **pulado** com 0 blocos; passou a "re-provisionamento
+  (remoção + provisionamento)";
+- a linha de contexto da remoção saiu do índice fixo `comandos[1]` para âncora de conteúdo
+  (`startswith("interface ")`): inserir um comando antes da `interface` deslocaria o índice em
+  silêncio e o `undo` iria para a visão de sistema;
+- formatação acidental num `it(...)`.

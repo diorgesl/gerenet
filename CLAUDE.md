@@ -275,9 +275,10 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   decisão registrada, visível na divergência). O cadastro de VSI pela web
   (2026-09-14) expôs o MTU por ponta e o render passou a emiti-lo no AC;
   como o re-diff identifica o AC pela `Vlanif`, serviços já provisionados
-  **não** ganham a linha até um re-provisionamento, e conferi-la exige a
-  config da Vlanif (o `display vsi verbose` não traz MTU por AC) — o
-  pós-check do AC fica como dívida.
+  **não** ganham a linha até um re-provisionamento (remoção + provisionamento)
+  — uma CR de provisionamento nova apenas pula o bloco, sem aplicar nada —, e
+  conferi-la exige a config da Vlanif (o `display vsi verbose` não traz MTU
+  por AC) — o pós-check do AC fica como dívida.
 - Fase 5 (upstreams): organizações com `kind='operadora'` (ASN + IRR AS-SET)
   e upstreams com tipo (`transito`/`ix`/`pni`/`contingencia`), capacidade,
   prioridade/custo, prefixos esperados v4/v6 e margem do maximum-prefix;

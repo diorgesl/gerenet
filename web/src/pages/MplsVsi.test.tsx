@@ -127,7 +127,9 @@ describe("MplsVsi", () => {
       });
     });
 
-    // O cadastro bem-sucedido fecha o modal e limpa o formulário.
+    // O cadastro bem-sucedido fecha o modal, e o formulário reaberto vem
+    // limpo. Note que o `setForm` do `onSubmit` é inobservável por este
+    // caminho: quem garante o vazio na reabertura é o `onClick` do botão.
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     await userEvent.click(screen.getByRole("button", { name: "Novo VSI" }));
     expect(screen.getByLabelText(/^Nome/, { selector: "input" })).toHaveValue("");
@@ -194,7 +196,8 @@ describe("MplsVsi", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("avisa que o provisionamento exige dois PEs", async () => {    renderVsi();
+  it("avisa que o provisionamento exige dois PEs", async () => {
+    renderVsi();
     await userEvent.click(await screen.findByRole("button", { name: "Novo VSI" }));
     expect(
       screen.getByText("O cadastro aceita um PE; o provisionamento exige dois ou mais."),
