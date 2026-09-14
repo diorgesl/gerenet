@@ -8,6 +8,7 @@ import ipaddress
 from dataclasses import dataclass, field
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from gerenet.automation import naming
@@ -26,6 +27,13 @@ from gerenet.domain.services.ipam import pontas_v4, pontas_v6
 
 AVISO_SEM_CONFIG = (
     "O equipamento não tem coleta com a configuração salva. Colete antes de descobrir."
+)
+
+# A proposta que não consegue nem ser ensaiada (conflito de reserva) não tem
+# comparação a fazer: esta mensagem vira a diferença de contexto `ensaio`.
+AVISO_SEM_ENSAIO = (
+    "o ensaio não consegue reservar o que a proposta pede: a proposta tem conflito "
+    "de reserva, e a comparação com a configuração não pôde ser feita."
 )
 
 
@@ -683,7 +691,7 @@ def listar_propostas(session: Session, device_id: int) -> ResultadoPropostas:
 
 @dataclass(frozen=True)
 class Diferenca:
-    contexto: str                  # "peer" | "subinterface"
+    contexto: str                  # "peer" | "subinterface" | "ensaio"
     sobrando: tuple[str, ...]      # o render produz e a configuração não tem
     faltando: tuple[str, ...]      # a configuração tem e o render não produz
 
@@ -826,6 +834,11 @@ def conferir_fidelidade(session: Session, proposta: Proposta) -> list[Diferenca]
     dos comandos: é o mesmo código que a adoção usaria, então a conferência não
     pode divergir do que ela produziria. O ensaio é desfeito no fim.
 
+    Proposta que não consegue ser ensaiada (conflito de reserva) devolve a
+    diferença de contexto `ensaio` dizendo isso, em vez de estourar: um
+    `IntegrityError` aqui chegaria a quem chamou esperando uma lista de
+    diferenças, e uma lista vazia leria como "está tudo fiel".
+
     O `rollback` do fim desfaz a transação INTEIRA, não só o ensaio: quem
     chamar isto com alterações pendentes na sessão perde as alterações. As
     superfícies desta frente são somente leitura e convivem com isso; um
@@ -837,7 +850,16 @@ def conferir_fidelidade(session: Session, proposta: Proposta) -> list[Diferenca]
     texto = texto_backup(snap)
     resultado: list[Diferenca] = []
     try:
-        criados = _ensaio(session, proposta)
+        try:
+            criados = _ensaio(session, proposta)
+        except IntegrityError:
+            # O índice único parcial recusou o que a proposta pede reservar
+            # (`vlan_tomada`/`prefixo_tomado`): sem ensaio não há comparação a
+            # fazer, e é isso que a diferença diz. O `finally` desfaz o que já
+            # tinha entrado na transação antes do estouro.
+            return [Diferenca(
+                contexto="ensaio", sobrando=(), faltando=(AVISO_SEM_ENSAIO,),
+            )]
         render = render_desejado(session, proposta.device_id)
         id_circuito = criados["circuito"].id
         ids_sessoes = {s.id for s in criados["sessoes"]}

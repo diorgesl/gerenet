@@ -853,3 +853,29 @@ def test_fidelidade_nao_grava_nada(db_session, tmp_path) -> None:
         db_session.query(models.IpPrefix).count(),
     )
     assert antes == depois
+
+
+def test_fidelidade_de_proposta_com_conflito_explica_em_vez_de_estourar(
+    db_session, tmp_path,
+) -> None:
+    """A conferência não pode explodir: quando o ensaio não consegue reservar o
+    que a proposta pede, o operador recebe a diferença que diz isso — nem lista
+    vazia (que se lê como "está tudo fiel") nem exceção."""
+    dev = _ambiente(db_session)
+    outro = _circuito_tomado(db_session, dev, code="CIRC-DESC-TOMADO-FID")
+    site = db_session.scalar(select(models.Site))
+    db_session.add(models.Vlan(site_id=site.id, vid=1001, kind="vlan", circuit_id=outro.id))
+    db_session.commit()
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+    assert "vlan_tomada" in {c.tipo for c in alfa.conflitos}
+
+    diferencas = conferir_fidelidade(db_session, alfa)
+
+    assert [d.contexto for d in diferencas] == ["ensaio"]
+    assert diferencas[0].sobrando == ()
+    assert "conflito de reserva" in diferencas[0].faltando[0]
+    # O ensaio que morreu no meio (organização e circuito já tinham ido para a
+    # transação) também é desfeito: sobra só o circuito tomado, com a VLAN dele.
+    assert db_session.query(models.Circuit).count() == 1
+    assert db_session.query(models.Vlan).count() == 1
