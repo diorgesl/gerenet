@@ -24,11 +24,14 @@ function formatarIdade(seconds: number | null | undefined): string {
 
 const SEVERIDADES_DASH = ["critica", "atencao", "aviso", "alerta"] as const;
 
-// "alerta" (anomalia de prefixos) compartilha o vermelho de "critica": é o
-// mesmo critério do SeverityBadge, e o LED segue a faixa de saúde do topo.
-function ledDivergencias(dv: DivergenciasAggOut): string {
+// "alerta" (anomalia de prefixos, Fase 5) compartilha o vermelho de "critica":
+// é o mesmo critério do SeverityBadge, e o LED segue a faixa de saúde do topo.
+// Verde só vale com a comparação inteira feita: "sem divergência" em quem não
+// foi comparado por completo (snapshot sem resumo ou coleta parcial) é o zero
+// enganoso que a frente evita, e o agregado da API não sabe dizer isso sozinho.
+function ledDivergencias(dv: DivergenciasAggOut, parciais: number): string {
   if (dv.critica + dv.alerta > 0) return "red";
-  if (dv.atencao + dv.aviso > 0) return "amber";
+  if (dv.atencao + dv.aviso > 0 || dv.devices_sem_resumo > 0 || parciais > 0) return "amber";
   return "green";
 }
 
@@ -47,7 +50,12 @@ export default function Dashboard() {
     .filter((x): x is number => x != null);
   const idadeMax = idades.length > 0 ? Math.max(...idades) : null;
 
-  const criticos = (data?.per_device ?? []).filter((d) => (d.divergencias?.critica ?? 0) > 0);
+  // "alerta" entra no filtro junto com "critica": os dois pintam a faixa de
+  // vermelho, e sem ele o operador veria o LED vermelho e nenhum equipamento
+  // listado para onde olhar.
+  const criticos = (data?.per_device ?? []).filter(
+    (d) => (d.divergencias?.critica ?? 0) + (d.divergencias?.alerta ?? 0) > 0,
+  );
   // A coleta parcial não tem roll-up no agregado da API: é derivada aqui, no
   // cliente, para o card não ler uma comparação incompleta como "sem
   // divergências".
@@ -114,7 +122,7 @@ export default function Dashboard() {
               <span className="label">upstreams<br />ativos</span>
             </div>
             <div className="metric">
-              <span className={`led ${ledDivergencias(data.divergencias)}`} aria-hidden="true" />
+              <span className={`led ${ledDivergencias(data.divergencias, parciais)}`} aria-hidden="true" />
               <span className="val">{data.divergencias.total}</span>
               <span className="label">divergências<br />na última coleta</span>
             </div>
@@ -147,7 +155,7 @@ export default function Dashboard() {
             </p>
             {criticos.length > 0 && (
               <p>
-                Com divergência crítica:{" "}
+                Com divergência crítica ou alerta:{" "}
                 {criticos.map((d: PerDeviceOut) => (
                   <span key={d.device_id}>
                     <Link to={`/reconcile?device_id=${d.device_id}`} aria-label={`Reconciliar ${d.name}`}>
@@ -182,7 +190,7 @@ export default function Dashboard() {
                       {d.divergencias ? (
                         <Link
                           to={`/reconcile?device_id=${d.device_id}`}
-                          aria-label={`Divergências de ${d.name}`}
+                          aria-label={`Divergências de ${d.name}: ${d.divergencias.total}`}
                         >
                           {d.divergencias.total}
                         </Link>
