@@ -78,3 +78,28 @@ def test_pontas_v6_roundtrip_golden_completo() -> None:
     local, remota = pontas_v6(rede)
     assert local == "2804:194C:1000::1100:73:1/126"
     assert remota == "2804:194C:1000::1100:73:2/126"
+
+
+def test_pontas_v4_respeitam_ponta_superior() -> None:
+    # /31: inferior .0, superior .1 — o circuito adotado pode ter o roteador em cima.
+    assert pontas_v4("100.64.0.0/31", "superior") == ("100.64.0.1", "100.64.0.0")
+    # /30: inferior .1, superior .2
+    assert pontas_v4("100.64.0.0/30", "superior") == ("100.64.0.2", "100.64.0.1")
+
+
+def test_pontas_v4_default_e_inferior() -> None:
+    assert pontas_v4("100.64.0.0/31") == pontas_v4("100.64.0.0/31", "inferior")
+
+
+def test_pontas_v6_respeitam_ponta_superior() -> None:
+    rede = "2804:194C:1000::1100:73:0/126"
+    inferior, superior = pontas_v6(rede, "inferior")[0], pontas_v6(rede, "superior")[0]
+    assert inferior.endswith("::1100:73:1/126")
+    assert superior.endswith("::1100:73:2/126")
+
+
+def test_pontas_recusam_orientacao_invalida() -> None:
+    with pytest.raises(ValidationError):
+        pontas_v4("100.64.0.0/31", "lateral")
+    with pytest.raises(ValidationError):
+        pontas_v6("2804:194C:1000::1100:73:0/126", "lateral")

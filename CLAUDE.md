@@ -368,5 +368,39 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   divergências no dashboard (lê o resumo, linka `/reconcile?device_id=N`).
   Dependência nova: `prometheus-client`. Runbook em
   `docs/runbook-observabilidade.md`.
+- Descoberta na configuração — parte 1 (2026-09-14): a página **Migrar**
+  (`/discovery`, grupo Operação) e o grupo `gerenet discovery` leem o
+  `display current-configuration` **já coletado** e propõem o que a SoT não
+  conhece; nenhum comando novo vai ao equipamento em nenhum caminho (o único
+  caminho de escrita é a lista de ignorados, na SoT). Parser novo
+  `automation/parsers/huawei_vrp/config_vrp.py` (linha a linha com contexto de
+  bloco; senha `cipher` nunca lida, só o flag `tem_password`; valores tortos
+  viram `avisos` em vez de estourar) e motor `automation/discovery.py`: candidato
+  = peer da config fora da SoT (sessão desativada conta como conhecida) e fora
+  dos ignorados, classificado por ASN (interno sai em lista separada, só no CLI);
+  proposta agrupada por **enlace** (VRF + subinterface — v4+v6 viram um dual
+  stack) com `veredito` (`adotavel` / `adotavel_com_pendencias` /
+  `nao_adotavel`), pendências (organização, `classificacao_nao_confirmada`,
+  acesso, código, senha, perfil de política, ASN do equipamento,
+  `peer_nao_habilitado`, mesmo ASN em outro enlace) e conflitos
+  (VLAN/prefixo reservados, par em uso, `enlace_nao_p2p`, `ponta_incoerente`,
+  `endereco_sem_subinterface`, `sem_site`, os três da conferência cruzada com a
+  interface brief e os dois da leitura: `vrf_nao_renderizavel` — esta versão do
+  render emite toda sessão na instância pública — e `asn_remoto_ausente`).
+  `conferir_fidelidade` (só no `discovery show`) ensaia o **render de verdade**
+  num SAVEPOINT desfeito e devolve o que sobra/falta por contexto (`peer`,
+  `subinterface`, ou `ensaio` quando a comparação não pôde ser feita). Coluna
+  nova `ip_prefixes.ponta_local` (migração `b2339435be24`, `inferior`/
+  `superior` — qual endereço do par é o do roteador) e `aviso` com dois estados
+  (sem coleta × leitura parcial), que a página e o CLI distinguem. Endereços são
+  comparados na forma canônica (`endereco_canonico`); `bgp_sessions` ainda grava
+  o texto como veio (dívida registrada). API `GET /api/v1/discovery?device_id=` +
+  `GET/POST/DELETE /api/v1/discovery/ignore` (o POST audita `discovery.ignore`, o
+  DELETE `discovery.unignore`); CLI `gerenet discovery
+  list|show|ignore|unignore` (`ignore` pega **um** peer, com `--afi`/`--vrf`/
+  `--motivo`; o "Não adotar" da página retira o **enlace inteiro**). A **parte 2
+  (adoção) não existe**. Docs: wiki `/wiki/descoberta` e a seção da descoberta em
+  `docs/runbook-validacao-ne8000.md` (checklist das 21 assunções do parser — a
+  fixture é derivada dos templates do próprio projeto, **não** uma captura real).
 - Convenções previstas no `.gitignore`: Python com venv e pytest (`.venv/`, `.pytest_cache/`), deploy via Docker Compose (`compose.yaml` na raiz) com `.env` ignorado (o `.gitignore` ainda prevê `deploy/docker/.env`), `config.yaml` local com segredos **fora do repositório**, logs em `logs/` ignorados.
 - `.claude/settings.local.json` contém token e aponta o harness para uma API externa: é arquivo local — não versionar nem alterar.

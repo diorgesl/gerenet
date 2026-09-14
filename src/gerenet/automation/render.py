@@ -94,17 +94,20 @@ def _reserva(session: Session, circuito: models.Circuit) -> dict[str, dict]:
             models.IpPrefix.status == "reservada",
         )
     ))
-    por_versao: dict[int, str] = {
-        ipaddress.ip_network(p.network).version: p.network for p in prefixos
+    por_versao: dict[int, tuple[str, str]] = {
+        ipaddress.ip_network(p.network).version: (p.network, p.ponta_local)
+        for p in prefixos
     }
     local_v4: tuple[str, str] | None = None
     local_v6: str | None = None
     if 4 in por_versao and circuito.stack != "ipv6":
-        rede = ipaddress.ip_network(por_versao[4])
-        ponta_local, _ = pontas_v4(por_versao[4])
-        local_v4 = (ponta_local, str(rede.netmask))
+        rede_texto, orientacao = por_versao[4]
+        rede = ipaddress.ip_network(rede_texto)
+        endereco_local, _ = pontas_v4(rede_texto, orientacao)
+        local_v4 = (endereco_local, str(rede.netmask))
     if 6 in por_versao:
-        local_v6 = pontas_v6(por_versao[6])[0]  # "address/126" (ponta local)
+        rede_texto, orientacao = por_versao[6]
+        local_v6 = pontas_v6(rede_texto, orientacao)[0]  # "address/126" (ponta local)
 
     familias: dict[str | None, int] = {}
     for vlan in vlans:

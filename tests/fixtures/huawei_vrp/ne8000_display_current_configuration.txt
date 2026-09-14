@@ -1,0 +1,68 @@
+#
+# Fixture DERIVADA, não capturada: foi escrita a partir dos templates de render
+# deste projeto (subinterface.j2 / bgp_peer.j2), para o parser ter uma entrada
+# com a forma do que o VRP escreve. Não é a configuração de um equipamento real
+# — a captura de verdade entra pelo runbook docs/runbook-validacao-ne8000.md.
+#
+sysname NE8000-SPO
+#
+interface Eth-Trunk127
+ description CORE-SPO
+ undo portswitch
+#
+interface Eth-Trunk127.1001
+ vlan-type dot1q 1001
+ description CLIENTE-ALFA
+ ip address 100.64.10.0 255.255.255.254
+ ipv6 enable
+ ipv6 address 2804:194C:1000::1100:73:1 126
+#
+interface Eth-Trunk127.2001
+ vlan-type dot1q 2001
+ description CLIENTE-BETA
+ ip address 100.64.10.5 255.255.255.254
+#
+interface Eth-Trunk127.3001
+ vlan-type dot1q 3001
+ description TRANSITO-GAMA
+ ip address 100.64.10.2 255.255.255.254
+#
+interface LoopBack0
+ ip address 10.0.0.1 255.255.255.255
+#
+bgp 65001
+ router-id 10.0.0.1
+ peer 10.0.0.9 as-number 65001
+ peer 10.0.0.9 description RR-INTERNO
+ peer 100.64.10.1 as-number 64512
+ peer 100.64.10.1 description CLIENTE-ALFA
+ peer 100.64.10.1 password cipher %^%#Kd8sLpQ2xR%^%#
+ peer 100.64.10.1 timer keepalive 30 hold 90
+ peer 100.64.10.1 route-policy RP-64512-IMPORT-V4 import
+ peer 100.64.10.1 ip-prefix IP-PFX-64512-IN-V4 import
+ peer 100.64.10.1 export route-policy IP-PFX-64512-EXPORT-V4
+ peer 100.64.10.4 as-number 64514
+ peer 100.64.10.4 description CLIENTE-BETA
+ peer 100.64.10.4 shutdown
+ peer 100.64.10.3 as-number 64515
+ peer 100.64.10.3 description TRANSITO-GAMA
+ peer 100.64.10.3 bfd enable
+ peer 100.64.10.3 graceful-restart
+ peer 2804:194C:1000::1100:73:2 as-number 64512
+ peer 2804:194C:1000::1100:73:2 description CLIENTE-ALFA-V6
+ ipv4-family unicast
+  undo synchronization
+  peer 10.0.0.9 enable
+  peer 100.64.10.1 enable
+  peer 100.64.10.1 maximum-prefix 100 80
+  peer 100.64.10.4 enable
+  peer 100.64.10.3 enable
+ ipv6-family unicast
+  peer 2804:194C:1000::1100:73:2 enable
+  peer 2804:194C:1000::1100:73:2 maximum-prefix 50 80
+ ipv4-family vpn-instance VPNA
+  peer 10.99.0.1 as-number 64513
+  peer 10.99.0.1 description CLIENTE-VRF
+  peer 10.99.0.1 enable
+#
+return

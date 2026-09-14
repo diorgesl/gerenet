@@ -47,6 +47,26 @@ def cidr_valido(cidr: str, familia: str | None = None) -> ipaddress.IPv4Network 
     return rede
 
 
+def endereco_canonico(endereco: str) -> str:
+    """Forma canônica de um IPv4/IPv6; o texto original quando não for endereço.
+
+    O endereço é a identidade do peer, e a caixa não faz parte dela: o
+    equipamento escreve o hex do IPv6 como digitado (`2804:194C:1000::...`) e o
+    cadastro à mão escreve minúsculo. Quem compara endereço de peer em memória
+    passa por aqui: a descoberta (os candidatos e a conferência de par em uso), a
+    lista de ignorados (gravação e busca) e o `show` do CLI. A conferência de
+    fidelidade fica de fora: ela compara linha de configuração, não endereço.
+
+    Não é a regra da escrita: `bgp_sessions` continua gravando o texto como
+    veio, e canonicalizar aquela escrita é frente própria. É por isso que a
+    conferência com ela é feita em Python, dos dois lados.
+    """
+    try:
+        return str(ipaddress.ip_address(endereco))
+    except ValueError:
+        return endereco
+
+
 def validar_vid(vid: int) -> None:
     """VID de VLAN: 2–4094 (1 é a nativa; 0/4095 reservados)."""
     if not 2 <= vid <= 4094:

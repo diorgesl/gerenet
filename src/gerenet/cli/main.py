@@ -9,6 +9,7 @@ from gerenet.cli import (
     contacts,
     credential_groups,
     devices,
+    discovery,
     hostkey,
     irr,
     mpls,
@@ -26,6 +27,7 @@ from gerenet.cli import users as cli_users
 
 app = typer.Typer(help="gerenet — Gerenciador de Rede Huawei VRP", no_args_is_help=True)
 app.add_typer(devices.app, name="devices", help="Cadastro e consulta de equipamentos.")
+app.add_typer(discovery.app, name="discovery", help="Descoberta de peers (migração de borda).")
 app.add_typer(sites.app, name="sites", help="Sites/POPs.")
 app.add_typer(organizations.app, name="organizations", help="Organizações.")
 app.add_typer(contacts.app, name="contacts", help="Contatos de organizações.")

@@ -70,7 +70,8 @@ export default function DeviceDetail() {
       <p>
         <Link to={`/snapshots?device_id=${device.id}`}>Snapshots</Link>{" "}
         <Link to={`/desired-config?device_id=${device.id}`}>Config desejada</Link>{" "}
-        <Link to={`/reconcile?device_id=${device.id}`}>Reconciliar</Link>
+        <Link to={`/reconcile?device_id=${device.id}`}>Reconciliar</Link>{" "}
+        <Link to={`/discovery?device_id=${device.id}`}>Migrar</Link>
       </p>
     </main>
   );

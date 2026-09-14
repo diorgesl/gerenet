@@ -16,6 +16,8 @@ import type {
   DashboardOut,
   DesiredConfigOut,
   DeviceOut,
+  DiscoveryIgnoradoOut,
+  DiscoveryOut,
   HostkeyScanOut,
   JobRunOut,
   L2vcCreateIn,
@@ -718,4 +720,121 @@ export function useWikiPagina(slug: string | undefined) {
     queryFn: () => apiFetch<WikiPagina>(`/api/v1/wiki/${slug}`),
     enabled: Boolean(slug),
   });
+}
+
+// ---- Descoberta de peers (§4–§5) ------------------------------------------
+// `retry: false` como no reconcile: a falha de leitura (equipamento sem coleta,
+// 404) é resposta, não instabilidade — repetir só atrasa o aviso.
+export function useDiscovery(deviceId: number) {
+  return useQuery({
+    queryKey: ["discovery", deviceId],
+    queryFn: () => apiFetch<DiscoveryOut>(`/api/v1/discovery?device_id=${deviceId}`),
+    enabled: deviceId > 0,
+    retry: false,
+  });
+}
+
+export const useDiscoveryIgnorados = (deviceId: number) =>
+  useQuery({
+    queryKey: ["discovery-ignorados", deviceId],
+    queryFn: () =>
+      apiFetch<DiscoveryIgnoradoOut[]>(`/api/v1/discovery/ignore?device_id=${deviceId}`),
+    enabled: deviceId > 0,
+  });
+
+/** Um peer da proposta: a quádrupla que identifica a linha de ignorados. */
+export type DiscoveryIgnorarIn = {
+  device_id: number;
+  vrf: string | null;
+  afi: string;
+  remote_address: string;
+  motivo: string | null;
+};
+
+/** O POST que falhou no meio da sequência: a mensagem diz quantos saíram. */
+function textoDaFalhaParcial(sairam: number, total: number, causa: string): string {
+  if (sairam === 0) return `Nenhum peer saiu da lista: ${causa}`;
+  return (
+    `${sairam} de ${total} peers foram ignorados e ficam fora: ` +
+    `a operação não é atômica. ${causa}`
+  );
+}
+
+export function useDiscoveryIgnorar() {
+  const qc = useQueryClient();
+  return useMutation({
+    // A decisão do operador é sobre o enlace, e um enlace dual stack são dois
+    // peers: os dois saem. A API de ignorados é por peer, então é um POST por
+    // candidato, em sequência.
+    mutationFn: async (peers: DiscoveryIgnorarIn[]) => {
+      const criadas: DiscoveryIgnoradoOut[] = [];
+      for (const peer of peers) {
+        try {
+          criadas.push(
+            await apiFetch<DiscoveryIgnoradoOut>("/api/v1/discovery/ignore", {
+              method: "POST",
+              body: peer,
+            }),
+          );
+        } catch (exc) {
+          // O que já saiu fica fora: a API não desfaz, e reinserir seria pior
+          // que a metade feita. A mensagem diz quantos saíram para o operador
+          // conferir a lista, que o `onSettled` refaz.
+          throw new Error(
+            textoDaFalhaParcial(
+              criadas.length,
+              peers.length,
+              exc instanceof Error ? exc.message : "falha ao ignorar o peer.",
+            ),
+          );
+        }
+      }
+      return criadas;
+    },
+    onSettled: (_d, _e, peers) => {
+      // Nos dois desfechos a lista da tela está velha — no sucesso pelo que
+      // saiu, na falha parcial pelo que saiu antes de falhar.
+      const deviceId = peers[0]?.device_id;
+      if (deviceId === undefined) return;
+      void qc.invalidateQueries({ queryKey: ["discovery", deviceId] });
+      void qc.invalidateQueries({ queryKey: ["discovery-ignorados", deviceId] });
+    },
+  });
+}
+
+export function useDiscoveryDesdesignorar() {
+  const qc = useQueryClient();
+  const mutation = useMutation({
+    // A quádrupla (device, VRF, família, endereço) é a identidade do peer: o
+    // DELETE que não a encontra responde 404 desde a Task 10, em vez do 204 que
+    // dizia ter apagado o que não existia.
+    mutationFn: ({
+      device_id,
+      vrf,
+      afi,
+      remote_address,
+    }: {
+      device_id: number;
+      vrf: string | null;
+      afi: string;
+      remote_address: string;
+    }) => {
+      const qs = new URLSearchParams({ device_id: String(device_id), afi, remote_address });
+      if (vrf) qs.set("vrf", vrf);
+      return apiFetch<void>(`/api/v1/discovery/ignore?${qs.toString()}`, { method: "DELETE" });
+    },
+    onSuccess: (_d, v) => {
+      void qc.invalidateQueries({ queryKey: ["discovery", v.device_id] });
+      void qc.invalidateQueries({ queryKey: ["discovery-ignorados", v.device_id] });
+    },
+    onError: (_e, v) => {
+      // O 404 diz que a linha da tela já não existe no servidor: refazer a
+      // lista é o que faz a linha fantasma sair. O `reset` espera essa lista,
+      // porque a mensagem não deve sobreviver ao motivo dela.
+      void qc
+        .invalidateQueries({ queryKey: ["discovery-ignorados", v.device_id] })
+        .then(() => mutation.reset());
+    },
+  });
+  return mutation;
 }

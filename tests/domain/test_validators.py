@@ -1,7 +1,13 @@
 import pytest
 
 from gerenet.domain.services.errors import ValidationError
-from gerenet.domain.validators import asn_valido, cidr_valido, email_valido, validar_vid
+from gerenet.domain.validators import (
+    asn_valido,
+    cidr_valido,
+    email_valido,
+    endereco_canonico,
+    validar_vid,
+)
 
 
 def test_asn_valido_aceita_faixa_publica() -> None:
@@ -42,6 +48,22 @@ def test_validar_vid_intervalo() -> None:
     for vid in (0, 1, 4095):
         with pytest.raises(ValidationError):
             validar_vid(vid)
+
+
+def test_endereco_canonico() -> None:
+    """A forma canônica é a do `ipaddress`: o equipamento escreve
+    `2804:194C:...` e o cadastro à mão escreve minúsculo, e a identidade do peer
+    não pode depender disso."""
+    assert endereco_canonico("2804:194C:1000::1100:73:2") == "2804:194c:1000::1100:73:2"
+    assert endereco_canonico("2001:0DB8:0000:0000:0000:0000:0000:0001") == "2001:db8::1"
+    assert endereco_canonico("100.64.10.1") == "100.64.10.1"
+
+
+def test_endereco_canonico_devolve_o_texto_quando_nao_e_endereco() -> None:
+    # `010.064.010.001` entra na lista porque o `ipaddress` recusa zero à
+    # esquerda: não é endereço para ele, e o texto volta como veio.
+    for texto in ("", "x.y.z.w", "2804:194C::zz", "10.0.0.1/31", "010.064.010.001"):
+        assert endereco_canonico(texto) == texto
 
 
 def test_email_valido() -> None:

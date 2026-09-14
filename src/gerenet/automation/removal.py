@@ -16,27 +16,13 @@ Regras de segurança:
 - Sem snapshot com os recursos `bgp_peers` E `interfaces` ⇒ [] (exige coleta
   fresca antes do planejamento §5.2; recursos vazios não inventam plano).
 """
-from pathlib import Path
-
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from gerenet.automation import naming
+from gerenet.automation.snapshots import texto_backup
 from gerenet.domain import models
 from gerenet.domain.services.bgp_sessions import list_sessions
-
-
-def texto_backup(snapshot: models.DeviceSnapshot | None) -> str:
-    """Texto do `display current-configuration` salvo no snapshot (ou "")."""
-    if snapshot is None:
-        return ""
-    arquivos = (snapshot.raw_files or {}).get("config_backup", [])
-    if not arquivos:
-        return ""
-    try:
-        return Path(str(arquivos[0])).read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return ""
 
 
 def _tem_prefix_list(texto: str, afi: str, nome: str) -> bool:

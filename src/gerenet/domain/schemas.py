@@ -975,3 +975,95 @@ class UpstreamDetailOut(UpstreamOut):
     circuitos: list[UpstreamCircuitOut] = Field(default_factory=list)
     sessoes: list[BgpSessionOut] = Field(default_factory=list)
     comunidades: list[UpstreamCommunityOut] = Field(default_factory=list)
+
+
+# ---- Descoberta (spec §13): leitura da proposta e lista de ignorados. ----
+# Os três primeiros validam as dataclasses do motor (`automation/discovery.py`),
+# por isso `from_attributes`.
+
+
+class CandidatoOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    device_id: int
+    vrf: str | None
+    afi: str
+    remote_address: str
+    asn_remote: int | None
+    descricao: str | None
+    snapshot_id: int
+    classificacao: str
+    motivo: str
+
+
+class PendenciaOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    tipo: str
+    descricao: str
+
+
+class ConflitoOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    tipo: str
+    descricao: str
+
+
+class PropostaOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    device_id: int
+    vrf: str | None
+    subinterface: str | None
+    vid: int | None
+    stack: str
+    vlan_mode: str
+    p2p_v4_len: int | None
+    qinq: bool
+    organizacao_id: int | None
+    organizacao_sugerida: str | None
+    site_id: int | None
+    circuit_code_sugerido: str | None
+    vlans: list[dict]
+    prefixos: list[dict]
+    sessoes: list[dict]
+    candidatos: list[CandidatoOut]
+    pendencias: list[PendenciaOut]
+    conflitos: list[ConflitoOut]
+    veredito: str
+
+
+class DiscoveryOut(BaseModel):
+    device_id: int
+    snapshot_id: int | None
+    aviso: str | None
+    gerado_em: datetime
+    propostas: list[PropostaOut]
+
+
+class IgnorarIn(BaseModel):
+    device_id: int
+    # Limites das colunas, como em `CircuitCreate.vrf`/`CircuitUpdate.vrf`: a
+    # coluna é `String(64)`, e o valor longo não chega ao cliente como 422 — o
+    # Postgres recusa no insert com `value too long for type character
+    # varying(64)`, que o SQLAlchemy embrulha como `DataError` (não
+    # `IntegrityError`), ou seja um 500 opaco.
+    vrf: str | None = Field(default=None, max_length=64)
+    # Fechado como nas sessões BGP: um valor fora das famílias do banco chegaria
+    # ao Postgres e voltaria como `DataError` — um 500 no caminho de escrita.
+    afi: Literal["ipv4", "ipv6"]
+    remote_address: str = Field(min_length=1, max_length=64)
+    motivo: str | None = Field(default=None, max_length=255)
+
+
+class IgnoradoOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    device_id: int
+    vrf: str | None
+    afi: str
+    remote_address: str
+    motivo: str | None
+    autor: str

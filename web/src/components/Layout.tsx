@@ -50,6 +50,7 @@ const GRUPOS_NAV: GrupoNav[] = [
       { para: "/snapshots", rotulo: "Snapshots" },
       { para: "/desired-config", rotulo: "Config desejada" },
       { para: "/reconcile", rotulo: "Reconciliação" },
+      { para: "/discovery", rotulo: "Migrar" },
       { para: "/jobs", rotulo: "Jobs" },
     ],
   },

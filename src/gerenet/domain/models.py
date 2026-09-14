@@ -29,6 +29,10 @@ VLAN_MODE = ("unica", "separada", "none")
 FAMILY = ("ipv4", "ipv6")
 ALLOC_STATUS = ("reservada", "liberada")
 PREFIX_KIND = ("p2p",)
+# Orientação da ponta do par p2p (spec §7): qual dos dois endereços é o do
+# roteador. `inferior` é a convenção do alocador; `superior` existe para o
+# circuito adotado cujo lado local é o endereço de cima.
+PONTA_LOCAL = ("inferior", "superior")
 DIRECTION = ("import", "export")
 PROFILE_KIND = ("produto",)
 AUTH_ORIGIN = ("manual", "irr", "rpki")
@@ -319,6 +323,9 @@ class IpPrefix(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     network: Mapped[str] = mapped_column(String(64), nullable=False)  # CIDR canônico alinhado
     kind: Mapped[str] = mapped_column(Enum(*PREFIX_KIND, name="prefix_kind"), default="p2p", nullable=False)
+    ponta_local: Mapped[str] = mapped_column(
+        Enum(*PONTA_LOCAL, name="ponta_local"), default="inferior", nullable=False
+    )
     site_id: Mapped[int] = mapped_column(ForeignKey("sites.id"), nullable=False)
     circuit_id: Mapped[int | None] = mapped_column(ForeignKey("circuits.id"))
     status: Mapped[str] = mapped_column(
@@ -905,3 +912,36 @@ class IrrCache(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+# ---- Descoberta (spec §11): candidato que o operador decidiu não adotar. ----
+
+
+class DiscoveryIgnoredPeer(Base):
+    """Peer que o operador decidiu não adotar (spec §11).
+
+    A quádrupla é a mesma de `bgp_sessions` (device, VRF, família, endereço
+    remoto). `vrf` NULL é a instância pública, e NULL não colide em índice
+    único no Postgres, então a exclusividade da instância pública precisa de
+    índice parcial próprio.
+    """
+
+    __tablename__ = "discovery_ignored_peers"
+
+    __table_args__ = (
+        Index("uq_discovery_ignored_vrf", "device_id", "vrf", "afi", "remote_address",
+              unique=True, postgresql_where=text("vrf IS NOT NULL")),
+        Index("uq_discovery_ignored_publico", "device_id", "afi", "remote_address",
+              unique=True, postgresql_where=text("vrf IS NULL")),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    device_id: Mapped[int] = mapped_column(ForeignKey("devices.id"), nullable=False)
+    vrf: Mapped[str | None] = mapped_column(String(64))
+    afi: Mapped[str] = mapped_column(Enum(*FAMILY, name="family"), nullable=False)
+    remote_address: Mapped[str] = mapped_column(String(64), nullable=False)
+    motivo: Mapped[str | None] = mapped_column(Text())
+    autor: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

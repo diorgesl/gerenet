@@ -137,6 +137,12 @@ export const HELP = {
   "user.username": "Nome de login (1–64), único.",
   "user.password": "Senha com mínimo de 8 caracteres — jamais registrada em log ou auditoria.",
   "user.role": "Perfil de permissão: visualizador, operador, aprovador, executor ou administrador.",
+
+  // Discovery
+  "discovery.equipamento": "A leitura sai do snapshot mais recente que tenha a configuração salva.",
+  "discovery.veredito": "adotavel, adotavel_com_pendencias ou nao_adotavel — sempre com o motivo ao lado.",
+  "discovery.nao_adotar":
+    "O botão retira o enlace inteiro: no dual stack os dois peers saem juntos. Para ignorar um peer só (o IPv6 sem o IPv4, por exemplo), use o `--afi` do CLI — `gerenet discovery ignore DEVICE PEER --afi ipv6`.",
 } as const;
 
 export type HelpKey = keyof typeof HELP;

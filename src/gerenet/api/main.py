@@ -13,6 +13,7 @@ from gerenet.api.routers import (
     contacts,
     credential_groups,
     devices,
+    discovery,
     mpls,
     organizations,
     policy_profiles,
@@ -52,6 +53,7 @@ def create_app() -> FastAPI:
     app.include_router(communities.router)
     app.include_router(reconciliation.router)
     app.include_router(reconciliation.config_router)
+    app.include_router(discovery.router)
     app.include_router(policy_profiles.router)
     app.include_router(prefix_authorizations.router)
     app.include_router(upstreams.router)
