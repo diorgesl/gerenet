@@ -832,6 +832,10 @@ def test_fidelidade_mascara_a_linha_da_senha(db_session, tmp_path) -> None:
     senha = [linha for linha in linhas if "password" in linha]
     assert senha, "a linha da senha deveria aparecer como diferença"
     assert all("cipher" not in linha for linha in senha)
+    # O que o §19 exige é que o valor não apareça: `%^%#` é o delimitador com
+    # que o VRP escreve o hash, e uma máscara que o deixasse passaria na
+    # asserção de cima.
+    assert all("%^%#" not in linha for linha in senha)
 
 
 def test_fidelidade_nao_grava_nada(db_session, tmp_path) -> None:
@@ -874,8 +878,128 @@ def test_fidelidade_de_proposta_com_conflito_explica_em_vez_de_estourar(
 
     assert [d.contexto for d in diferencas] == ["ensaio"]
     assert diferencas[0].sobrando == ()
-    assert "conflito de reserva" in diferencas[0].faltando[0]
+    # A mensagem diz o que a função sabe (uma restrição de unicidade recusou o
+    # ensaio), e não uma causa que ela não pode conhecer: qualquer colisão de
+    # unicidade do ensaio cai na mesma captura, e o `prefixo_tomado` na mesma
+    # grafia é só a mais provável.
+    assert "restrição de unicidade" in diferencas[0].faltando[0]
     # O ensaio que morreu no meio (organização e circuito já tinham ido para a
     # transação) também é desfeito: sobra só o circuito tomado, com a VLAN dele.
     assert db_session.query(models.Circuit).count() == 1
     assert db_session.query(models.Vlan).count() == 1
+
+
+def test_peer_em_vrf_e_conflito_de_render(db_session, tmp_path) -> None:
+    """Esta versão do render emite toda sessão na instância pública (§25.3):
+    uma sessão em VRF não é reproduzível, e adotá-la faria a renderização
+    seguinte mudar a instância do peer no equipamento."""
+    dev = _ambiente(db_session)
+    _com_config(db_session, dev, tmp_path)
+    propostas = listar_propostas(db_session, dev.id).propostas
+    na_vrf = next(p for p in propostas if p.vrf == "VPNA")
+    assert "vrf_nao_renderizavel" in {c.tipo for c in na_vrf.conflitos}
+    assert na_vrf.veredito == "nao_adotavel"
+
+
+def test_fidelidade_de_peer_em_vrf_avisa_que_a_comparacao_nao_vale(
+    db_session, tmp_path,
+) -> None:
+    """Defesa em profundidade: a conferência é chamada para qualquer peer,
+    inclusive o não adotável, e uma comparação em que o render mudaria a
+    instância do peer não pode sair como fiel."""
+    dev = _ambiente(db_session)
+    _com_config(db_session, dev, tmp_path)
+    propostas = listar_propostas(db_session, dev.id).propostas
+    na_vrf = next(p for p in propostas if p.vrf == "VPNA")
+
+    diferencas = conferir_fidelidade(db_session, na_vrf)
+
+    assert [d.contexto for d in diferencas] == ["ensaio"]
+    assert diferencas[0].sobrando == ()
+    assert "VPNA" in diferencas[0].faltando[0]
+    assert "instância pública" in diferencas[0].faltando[0]
+
+
+def test_fidelidade_nao_acusa_as_duas_formas_da_mesma_linha(db_session, tmp_path) -> None:
+    """`vlan-type dot1q 6001` e `vlan-type dot1q vid 6001` são a mesma linha, e
+    o mesmo vale para `ipv6 address <endereço> 126` e `<endereço>/126`: o
+    equipamento escreve a primeira forma, o render a segunda. Sem a
+    equivalência, toda proposta com VLAN e IPv6 nasceria com dois falsos
+    `sobrando` e dois falsos `faltando`, e o contexto da subinterface — onde a
+    mudança de estado da interface tem de aparecer — ficaria sempre sujo."""
+    dev = _ambiente(db_session)
+    _com_texto(db_session, dev, tmp_path,
+               "interface Eth-Trunk127.6001\n"
+               " vlan-type dot1q 6001\n"
+               " ip address 100.64.10.0 255.255.255.254\n"
+               " ipv6 enable\n"
+               " ipv6 address 2804:194C:1000::1100:73:1 126\n"
+               "#\n"
+               "bgp 65001\n"
+               " peer 100.64.10.1 as-number 64512\n"
+               " peer 2804:194C:1000::1100:73:2 as-number 64512\n"
+               " ipv4-family unicast\n"
+               "  peer 100.64.10.1 enable\n"
+               " ipv6-family unicast\n"
+               "  peer 2804:194C:1000::1100:73:2 enable\n")
+    (prop,) = listar_propostas(db_session, dev.id).propostas
+    sub = next(d for d in conferir_fidelidade(db_session, prop) if d.contexto == "subinterface")
+    assert sub.sobrando == ()
+    assert sub.faltando == ()
+
+
+def test_fidelidade_de_prefixo_tomado_com_caixa_divergente_compara_normalmente(
+    db_session, tmp_path,
+) -> None:
+    """O `prefixo_tomado` que só difere na caixa não derruba o ensaio: o índice
+    único do banco é sensível à caixa e o `flush` passa. A conferência compara
+    normalmente — quem impede a adoção é o conflito da proposta, não a
+    conferência."""
+    dev = _ambiente(db_session)
+    outro = _circuito_tomado(db_session, dev, code="CIRC-V6-FID")
+    site = db_session.scalar(select(models.Site))
+    db_session.add(models.IpPrefix(site_id=site.id, network="2804:194c:1000::1100:73:0/126",
+                                   kind="p2p", circuit_id=outro.id))
+    db_session.commit()
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+    assert "prefixo_tomado" in {c.tipo for c in alfa.conflitos}
+
+    diferencas = conferir_fidelidade(db_session, alfa)
+
+    assert "ensaio" not in {d.contexto for d in diferencas}
+    peer = next(d for d in diferencas if d.contexto == "peer")
+    assert any("route-policy RP-64512-IMPORT-V4" in linha for linha in peer.faltando)
+
+
+def test_fidelidade_preserva_o_trabalho_pendente_do_chamador(db_session, tmp_path) -> None:
+    """O ensaio roda num SAVEPOINT: o que o chamador tem pendente na sessão
+    sobrevive à conferência. A §10 chama isto dentro da transação de adoção, e
+    um `rollback` da sessão inteira ali viraria adoção parcial silenciosa."""
+    dev = _ambiente(db_session)
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+    pendente = models.Organization(name="Pendente do Chamador", asn=64998)
+    db_session.add(pendente)
+
+    conferir_fidelidade(db_session, alfa)
+
+    # Sem `flush` do chamador de propósito: é o savepoint que devolve a ele o
+    # que era dele, e o `commit` seguinte é quem escreve.
+    db_session.commit()
+    assert db_session.query(models.Organization).filter_by(
+        name="Pendente do Chamador"
+    ).count() == 1
+    # e o ensaio não foi junto no commit
+    assert db_session.query(models.Circuit).count() == 0
+    assert db_session.query(models.Vlan).count() == 0
+
+
+def test_peer_sem_as_number_e_conflito(db_session, tmp_path) -> None:
+    """A leitura pegou o peer sem a definição de `as-number`: `bgp_sessions`
+    exige o ASN remoto, então não há sessão a criar e a adoção não nasce."""
+    dev = _ambiente(db_session)
+    _com_texto(db_session, dev, tmp_path, _SEM_ASN)
+    (prop,) = listar_propostas(db_session, dev.id).propostas
+    assert "asn_remoto_ausente" in {c.tipo for c in prop.conflitos}
+    assert prop.veredito == "nao_adotavel"

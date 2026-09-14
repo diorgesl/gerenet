@@ -29,11 +29,12 @@ AVISO_SEM_CONFIG = (
     "O equipamento não tem coleta com a configuração salva. Colete antes de descobrir."
 )
 
-# A proposta que não consegue nem ser ensaiada (conflito de reserva) não tem
-# comparação a fazer: esta mensagem vira a diferença de contexto `ensaio`.
+# A proposta que não consegue nem ser ensaiada não tem comparação a fazer: esta
+# mensagem vira a diferença de contexto `ensaio`. Não nomeia causa porque a
+# captura não a conhece: qualquer restrição de unicidade do ensaio cai aqui.
 AVISO_SEM_ENSAIO = (
-    "o ensaio não consegue reservar o que a proposta pede: a proposta tem conflito "
-    "de reserva, e a comparação com a configuração não pôde ser feita."
+    "uma restrição de unicidade recusou o ensaio (reserva já existente, por exemplo): "
+    "sem o ensaio, a comparação com a configuração não pôde ser feita."
 )
 
 
@@ -541,6 +542,37 @@ def _conflitos_de_coleta(
     return conflitos
 
 
+def _conflitos_da_leitura(peer: PeerConfig, vrf: str | None) -> list[Conflito]:
+    """O que a leitura não entrega e a adoção exige (§6.3, §25.3).
+
+    A VRF: esta versão do render emite toda sessão na instância pública, então
+    uma sessão em VRF não é reproduzível — adotá-la faria a renderização
+    seguinte mandar o equipamento mudar a instância do peer, que é o estado que
+    ninguém pediu. O `as-number`: sem ele não há sessão a criar, porque
+    `bgp_sessions.asn_remote` é NOT NULL.
+
+    Nenhum dos dois se resolve na revisão (o primeiro depende do render e o
+    segundo, do equipamento), então os dois são conflito, e não pendência.
+    """
+    conflitos: list[Conflito] = []
+    if vrf is not None:
+        conflitos.append(Conflito(
+            "vrf_nao_renderizavel",
+            f"O peer está na VRF {vrf} e esta versão do render emite as sessões na "
+            "instância pública: uma sessão em VRF não é reproduzível. Adotá-la faria "
+            "a renderização seguinte mudar a instância do peer no equipamento, então "
+            "ela não é adotável hoje.",
+        ))
+    if peer.asn_remote is None:
+        conflitos.append(Conflito(
+            "asn_remoto_ausente",
+            "A leitura da configuração pegou o peer sem a definição de `as-number`: "
+            "a sessão na SoT exige o ASN remoto, então não há sessão a criar. Resolva "
+            "o `as-number` no equipamento e colete de novo.",
+        ))
+    return conflitos
+
+
 def _marca_mesmo_asn(por_enlace: dict) -> None:
     """Dois enlaces com o mesmo ASN no mesmo equipamento: o sistema não decide se
     são um dual stack com VLAN separada (um circuito) ou dois circuitos; ele avisa
@@ -673,6 +705,7 @@ def listar_propostas(session: Session, device_id: int) -> ResultadoPropostas:
                 )])
 
         proposta.candidatos.append(candidato)
+        _acrescenta(proposta.conflitos, _conflitos_da_leitura(peer, candidato.vrf))
         _acrescenta(proposta.pendencias, _pendencias_de(
             session, device, peer, candidato,
             codigo_sugerido=proposta.circuit_code_sugerido,
@@ -696,6 +729,25 @@ class Diferenca:
     faltando: tuple[str, ...]      # a configuração tem e o render não produz
 
 
+def _equivalencia_vrp(texto: str) -> str:
+    """Duas linhas que o VRP escreve de duas formas, na forma do render.
+
+    `vlan-type dot1q 1001` e `vlan-type dot1q vid 1001` são a mesma linha, e o
+    mesmo vale para `ipv6 address <endereço> 126` e `<endereço>/126`. O parser
+    lê as duas formas e o render escreve a segunda, então sem a equivalência
+    toda proposta com VLAN e IPv6 nasce com dois falsos `sobrando` e dois falsos
+    `faltando` no contexto da subinterface, que é onde a mudança de estado da
+    interface tem de aparecer. São a mesma linha escrita de dois jeitos, não
+    dois estados: por isso é equivalência, e não normalização de conveniência.
+    """
+    partes = texto.split()
+    if len(partes) == 3 and partes[:2] == ["vlan-type", "dot1q"] and partes[2].isdigit():
+        return f"vlan-type dot1q vid {partes[2]}"
+    if len(partes) == 4 and partes[:2] == ["ipv6", "address"] and partes[3].isdigit():
+        return f"ipv6 address {partes[2]}/{partes[3]}"
+    return texto
+
+
 def _contexto_interface(texto: str, nome: str) -> set[str]:
     """Linhas da configuração dentro do bloco `interface <nome>`.
 
@@ -713,7 +765,7 @@ def _contexto_interface(texto: str, nome: str) -> set[str]:
             dentro = linha == f"interface {nome}"
             continue
         if dentro:
-            linhas.add(linha)
+            linhas.add(_equivalencia_vrp(linha))
     return linhas
 
 
@@ -759,7 +811,7 @@ def _normaliza_linhas(linhas: list[str]) -> set[str]:
         texto = " ".join(linha.split())
         if not texto or texto.startswith(("#", "undo ")):
             continue
-        saida.add(texto)
+        saida.add(_equivalencia_vrp(texto))
     return saida
 
 
@@ -832,31 +884,47 @@ def conferir_fidelidade(session: Session, proposta: Proposta) -> list[Diferenca]
 
     O ensaio roda o render de verdade, e não uma reimplementação da montagem
     dos comandos: é o mesmo código que a adoção usaria, então a conferência não
-    pode divergir do que ela produziria. O ensaio é desfeito no fim.
+    pode divergir do que ela produziria.
 
-    Proposta que não consegue ser ensaiada (conflito de reserva) devolve a
-    diferença de contexto `ensaio` dizendo isso, em vez de estourar: um
-    `IntegrityError` aqui chegaria a quem chamou esperando uma lista de
-    diferenças, e uma lista vazia leria como "está tudo fiel".
+    O ensaio roda num SAVEPOINT e o que é desfeito no fim é só ele. Um
+    `rollback` da sessão inteira levaria junto o que o chamador tem pendente —
+    a §10 chama esta conferência dentro da transação da adoção, e o descarte
+    silencioso de um `commit` posterior viraria adoção parcial — e deixaria a
+    transação externa morta depois de um `IntegrityError` do ensaio. Com o
+    savepoint, o que o chamador tinha pendente continua sendo escrito pelo
+    `commit` dele (conferido nos dois caminhos, o de sucesso e o do estouro) e
+    nada do ensaio escapa.
 
-    O `rollback` do fim desfaz a transação INTEIRA, não só o ensaio: quem
-    chamar isto com alterações pendentes na sessão perde as alterações. As
-    superfícies desta frente são somente leitura e convivem com isso; um
-    chamador que escreva tem de conferir antes de abrir a própria transação.
+    Proposta que não consegue ser ensaiada, ou cuja comparação não vale (peer
+    em VRF, que o render não reproduz), devolve a diferença de contexto
+    `ensaio` dizendo isso, em vez de estourar: uma exceção aqui chegaria a quem
+    chamou esperando uma lista de diferenças, e uma lista vazia leria como
+    "está tudo fiel".
     """
     if not proposta.candidatos or proposta.site_id is None:
         return []
+    if proposta.vrf is not None:
+        # Defesa em profundidade: a proposta já carrega o conflito
+        # `vrf_nao_renderizavel`, mas a conferência é chamada para qualquer
+        # peer, inclusive os não adotáveis, e uma comparação que ignorasse a
+        # instância sairia como fiel.
+        mensagem = (
+            f"o peer está na VRF {proposta.vrf} e esta versão do render emite as "
+            "sessões na instância pública: a comparação não é confiável para uma "
+            "sessão em VRF."
+        )
+        return [Diferenca(contexto="ensaio", sobrando=(), faltando=(mensagem,))]
     snap = session.get(models.DeviceSnapshot, proposta.candidatos[0].snapshot_id)
     texto = texto_backup(snap)
     resultado: list[Diferenca] = []
+    ensaio = session.begin_nested()
     try:
         try:
             criados = _ensaio(session, proposta)
         except IntegrityError:
-            # O índice único parcial recusou o que a proposta pede reservar
-            # (`vlan_tomada`/`prefixo_tomado`): sem ensaio não há comparação a
-            # fazer, e é isso que a diferença diz. O `finally` desfaz o que já
-            # tinha entrado na transação antes do estouro.
+            # Uma restrição de unicidade recusou o ensaio (a reserva que a
+            # proposta pede já existe, na mesma grafia, é o caso comum): sem
+            # ensaio não há comparação a fazer, e é isso que a diferença diz.
             return [Diferenca(
                 contexto="ensaio", sobrando=(), faltando=(AVISO_SEM_ENSAIO,),
             )]
@@ -894,8 +962,7 @@ def conferir_fidelidade(session: Session, proposta: Proposta) -> list[Diferenca]
                 faltando=tuple(sorted(encontrado - esperado)),
             ))
     finally:
-        # Descarta o ensaio e a transação do chamador junto (ver a docstring):
-        # é o que garante que nada do ensaio escape, e o preço é o que o
-        # chamador tiver pendente na sessão.
-        session.rollback()
+        # Desfaz só o ensaio (o SAVEPOINT), pela razão da docstring: o
+        # `rollback` da sessão levaria o pendente do chamador junto.
+        ensaio.rollback()
     return resultado
