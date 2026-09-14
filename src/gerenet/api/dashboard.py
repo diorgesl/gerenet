@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -36,7 +37,7 @@ def dashboard(session: SessionDep) -> DashboardOut:
         by_status[status] = sum(1 for d in devices if d.comm_status == status)
 
     per_device: list[PerDeviceOut] = []
-    resumos: list[tuple[models.Device, models.DeviceSnapshot, DivergenciasResumoOut]] = []
+    resumos: list[tuple[models.DeviceSnapshot, DivergenciasResumoOut]] = []
     sem_resumo = 0
     for d in devices:
         snap = session.scalar(
@@ -61,11 +62,20 @@ def dashboard(session: SessionDep) -> DashboardOut:
         # de "zero divergência". Equipamento nunca coletado não entra em nenhuma das
         # duas contagens — a idade dele já aparece em snapshot_age_seconds.
         dado = (snap.resources or {}).get("divergencias") if snap is not None else None
-        resumo = DivergenciasResumoOut(**dado) if isinstance(dado, dict) else None
+        resumo = None
+        if isinstance(dado, dict):
+            try:
+                resumo = DivergenciasResumoOut(**dado)
+            except ValidationError:
+                # Resumo incompleto cai no caminho "sem resumo", como o snapshot sem a
+                # chave: mostrar zero no que não foi comparado seria a mentira que a
+                # frente evita, e derrubar o payload inteiro por causa de um resumo
+                # estranho seria pior ainda.
+                resumo = None
         if snap is not None and resumo is None:
             sem_resumo += 1
         if snap is not None and resumo is not None:
-            resumos.append((d, snap, resumo))
+            resumos.append((snap, resumo))
         per_device.append(
             PerDeviceOut(
                 device_id=d.id,
@@ -90,15 +100,15 @@ def dashboard(session: SessionDep) -> DashboardOut:
         )
 
     divergencias = DivergenciasAggOut(
-        total=sum(r.total for _, _, r in resumos),
-        critica=sum(r.critica for _, _, r in resumos),
-        atencao=sum(r.atencao for _, _, r in resumos),
-        aviso=sum(r.aviso for _, _, r in resumos),
-        alerta=sum(r.alerta for _, _, r in resumos),
-        devices_com_critica=sum(1 for _, _, r in resumos if r.critica > 0),
+        total=sum(r.total for _, r in resumos),
+        critica=sum(r.critica for _, r in resumos),
+        atencao=sum(r.atencao for _, r in resumos),
+        aviso=sum(r.aviso for _, r in resumos),
+        alerta=sum(r.alerta for _, r in resumos),
+        devices_com_critica=sum(1 for _, r in resumos if r.critica > 0),
         devices_sem_resumo=sem_resumo,
         idade_max_seconds=(
-            max((agora - snap.started_at).total_seconds() for _, snap, _ in resumos)
+            max((agora - snap.started_at).total_seconds() for snap, _ in resumos)
             if resumos
             else None
         ),
