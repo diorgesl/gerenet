@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -13,6 +14,8 @@ from gerenet.domain.schemas import (
     CircuitsAggOut,
     DashboardOut,
     DevicesAggOut,
+    DivergenciasAggOut,
+    DivergenciasResumoOut,
     JobResumoOut,
     PerDeviceOut,
     SnapshotResumoOut,
@@ -34,6 +37,8 @@ def dashboard(session: SessionDep) -> DashboardOut:
         by_status[status] = sum(1 for d in devices if d.comm_status == status)
 
     per_device: list[PerDeviceOut] = []
+    resumos: list[tuple[models.DeviceSnapshot, DivergenciasResumoOut]] = []
+    sem_resumo = 0
     for d in devices:
         snap = session.scalar(
             select(models.DeviceSnapshot)
@@ -52,6 +57,25 @@ def dashboard(session: SessionDep) -> DashboardOut:
             .limit(1)
         )
         idade = (agora - snap.started_at).total_seconds() if snap is not None else None
+        # O resumo de divergências (F6) vem do próprio snapshot já em mãos: sem ele
+        # não há o que somar, e "sem resumo" (coleta anterior à frente) é diferente
+        # de "zero divergência". Equipamento nunca coletado não entra em nenhuma das
+        # duas contagens — a idade dele já aparece em snapshot_age_seconds.
+        dado = (snap.resources or {}).get("divergencias") if snap is not None else None
+        resumo = None
+        if isinstance(dado, dict):
+            try:
+                resumo = DivergenciasResumoOut(**dado)
+            except ValidationError:
+                # Resumo incompleto cai no caminho "sem resumo", como o snapshot sem a
+                # chave: mostrar zero no que não foi comparado seria a mentira que a
+                # frente evita, e derrubar o payload inteiro por causa de um resumo
+                # estranho seria pior ainda.
+                resumo = None
+        if snap is not None and resumo is None:
+            sem_resumo += 1
+        if snap is not None and resumo is not None:
+            resumos.append((snap, resumo))
         per_device.append(
             PerDeviceOut(
                 device_id=d.id,
@@ -71,8 +95,24 @@ def dashboard(session: SessionDep) -> DashboardOut:
                     if snap is not None else None
                 ),
                 active_job=JobResumoOut(id=job.id, status=job.status) if job is not None else None,
+                divergencias=resumo,
             )
         )
+
+    divergencias = DivergenciasAggOut(
+        total=sum(r.total for _, r in resumos),
+        critica=sum(r.critica for _, r in resumos),
+        atencao=sum(r.atencao for _, r in resumos),
+        aviso=sum(r.aviso for _, r in resumos),
+        alerta=sum(r.alerta for _, r in resumos),
+        devices_com_critica=sum(1 for _, r in resumos if r.critica > 0),
+        devices_sem_resumo=sem_resumo,
+        idade_max_seconds=(
+            max((agora - snap.started_at).total_seconds() for snap, _ in resumos)
+            if resumos
+            else None
+        ),
+    )
 
     sessoes = list(session.scalars(select(models.BgpSession)))
     circuitos = list(session.scalars(select(models.Circuit)))
@@ -92,6 +132,7 @@ def dashboard(session: SessionDep) -> DashboardOut:
             by_comm_status=by_status,
         ),
         per_device=per_device,
+        divergencias=divergencias,
         bgp_sessions=BgpSessionsAggOut(
             total=len(sessoes),
             active=sum(1 for s in sessoes if s.admin_status and not s.shutdown),

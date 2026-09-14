@@ -576,3 +576,116 @@ def test_lock_ativo_registra_audit_skipped(db_session: Session) -> None:
     assert evento.details["device_id"] == dev.id
     # Nenhum JobRun novo criado: o dono do lock (outro job) é quem tem a execução.
     assert db_session.query(JobRun).filter_by(device_id=dev.id).count() == 0
+
+
+def test_coleta_grava_resumo_das_divergencias(
+    db_session: Session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F6: o resumo do desejado × encontrado nasce na coleta, não na leitura."""
+    dev = _dev_com_grupo(db_session, "r-resumo", "10.0.0.20")
+    settings = Settings(_env_file=None, backups_dir=tmp_path)
+
+    monkeypatch.setattr("gerenet.automation.runner.VaultSecretStore", VaultFake)
+    monkeypatch.setattr(
+        "gerenet.automation.runner._conectar_e_executar",
+        lambda device, username, password, commands, settings: {cmd: SAIDAS[cmd] for cmd in commands},
+    )
+
+    resultado = run_collection(dev.id, settings=settings, session_override=db_session)
+    assert resultado["status"] == "success"
+
+    snap = (
+        db_session.query(DeviceSnapshot)
+        .filter_by(device_id=dev.id)
+        .order_by(DeviceSnapshot.id.desc())
+        .first()
+    )
+    resumo = snap.resources["divergencias"]
+    # Sem serviço cadastrado no SoT não há bloco desejado, mas a divergência
+    # nasce dos DOIS lados: todo peer coletado sem sessão cadastrada é órfão
+    # (`peer.orfaos`, atenção §6) — o total acompanha os peers das fixtures.
+    # O que este teste prova é a chave existir já na coleta.
+    total_peers = len(snap.resources["bgp_peers"])
+    assert total_peers == 22
+    assert resumo["total"] == total_peers
+    assert (resumo["critica"], resumo["atencao"], resumo["aviso"], resumo["alerta"]) == (
+        0, total_peers, 0, 0,
+    )
+    assert isinstance(resumo["parcial"], bool)
+
+
+def test_resumo_conta_severidades_e_marca_parcial(
+    db_session: Session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gerenet.automation.reconcile import ReconcileItem, ReconcileResult
+
+    dev = _dev_com_grupo(db_session, "r-resumo2", "10.0.0.21")
+    settings = Settings(_env_file=None, backups_dir=tmp_path)
+
+    monkeypatch.setattr("gerenet.automation.runner.VaultSecretStore", VaultFake)
+    monkeypatch.setattr(
+        "gerenet.automation.runner._conectar_e_executar",
+        lambda device, username, password, commands, settings: {cmd: SAIDAS[cmd] for cmd in commands},
+    )
+
+    def _resultado(session, device_id, *, snapshot_id=None):
+        return ReconcileResult(
+            device_id=device_id,
+            snapshot_id=snapshot_id,
+            aviso="Snapshot sem o recurso 'bgp_peers' — comparação parcial.",
+            items=[
+                ReconcileItem("subinterface.ausente", "critica", "GE0/0/1.10", "não listada", "recriar"),
+                ReconcileItem("peer.orfao", "atencao", "100.64.0.2", "sem sessão", "conferir"),
+                ReconcileItem("peer.para_baixo", "alerta", "2001:db8::2", "down", "conferir"),
+            ],
+        )
+
+    monkeypatch.setattr("gerenet.automation.runner.reconciliar_device", _resultado)
+
+    run_collection(dev.id, settings=settings, session_override=db_session)
+
+    snap = (
+        db_session.query(DeviceSnapshot)
+        .filter_by(device_id=dev.id)
+        .order_by(DeviceSnapshot.id.desc())
+        .first()
+    )
+    resumo = snap.resources["divergencias"]
+    assert resumo["total"] == 3
+    assert (resumo["critica"], resumo["atencao"], resumo["aviso"], resumo["alerta"]) == (1, 1, 0, 1)
+    assert resumo["parcial"] is True
+    assert resumo["motivo"].startswith("Snapshot sem o recurso")
+
+
+def test_falha_do_reconcile_nao_derruba_a_coleta(
+    db_session: Session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Coleta que trouxe dado do equipamento não vira `error` por cálculo derivado."""
+    dev = _dev_com_grupo(db_session, "r-resumo3", "10.0.0.22")
+    settings = Settings(_env_file=None, backups_dir=tmp_path)
+
+    monkeypatch.setattr("gerenet.automation.runner.VaultSecretStore", VaultFake)
+    monkeypatch.setattr(
+        "gerenet.automation.runner._conectar_e_executar",
+        lambda device, username, password, commands, settings: {cmd: SAIDAS[cmd] for cmd in commands},
+    )
+
+    def _explode(*args, **kwargs):
+        raise RuntimeError("render quebrou")
+
+    monkeypatch.setattr("gerenet.automation.runner.reconciliar_device", _explode)
+
+    resultado = run_collection(dev.id, settings=settings, session_override=db_session)
+    assert resultado["status"] == "success"
+
+    snap = (
+        db_session.query(DeviceSnapshot)
+        .filter_by(device_id=dev.id)
+        .order_by(DeviceSnapshot.id.desc())
+        .first()
+    )
+    assert snap.status == "success"
+    assert "divergencias" not in snap.resources
+    evento = db_session.query(AuditEvent).filter_by(type="collect.reconcile_failed").one()
+    assert evento.details["device_id"] == dev.id
+    assert "render quebrou" in evento.details["error"]

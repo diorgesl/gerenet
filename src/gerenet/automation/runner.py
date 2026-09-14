@@ -56,7 +56,7 @@ return 0
 """
 
 
-def _liberta_lock(redis: Redis, chave_lock: str, token: str) -> None:
+def liberta_lock(redis: Redis, chave_lock: str, token: str) -> None:
     """Libera o lock via compare-and-delete: só apaga se o valor ainda for o nosso token.
 
     Se o TTL expirou e outro worker readquiriu, o lock dele não é tocado. Falha de
@@ -109,6 +109,45 @@ def _chaves_incompletas(recursos: dict, erros: dict, escopo: str = "circuito") -
     """Chaves do re-diff ausentes ou com falha de coleta (gate §5.3)."""
     chaves = _CHAVES_POR_ESCOPO.get(escopo, _CHAVES_POR_ESCOPO["circuito"])
     return [k for k in chaves if k in erros or k not in recursos]
+
+
+def _resumo_divergencias(
+    session: Session, device_id: int, snapshot_id: int, actor: str
+) -> dict | None:
+    """Contagem por severidade do desejado × encontrado, gravada na coleta (F6).
+
+    Falha do reconcile NÃO derruba a coleta: o que veio do equipamento já está
+    gravado e a divergência é derivada — marcar `job_runs` como `error` por causa
+    dela seria mentira no histórico (§18). Devolve None quando não há resumo.
+    """
+    try:
+        resultado = reconciliar_device(session, device_id, snapshot_id=snapshot_id)
+    except Exception as exc:  # noqa: BLE001 — qualquer falha do cálculo é registrada e engolida
+        # Transação suja (ex.: falha de banco no meio do render) é descartada
+        # antes do evento: sem isso o commit abaixo levantaria PendingRollbackError
+        # e a falha do cálculo derrubaria a coleta — o oposto do contrato acima.
+        session.rollback()
+        session.add(
+            AuditEvent(
+                type="collect.reconcile_failed",
+                actor=actor,
+                details={"device_id": device_id, "snapshot_id": snapshot_id, "error": str(exc)},
+            )
+        )
+        session.commit()
+        return None
+    resumo = {
+        "total": len(resultado.items),
+        "critica": 0,
+        "atencao": 0,
+        "aviso": 0,
+        "alerta": 0,
+        "parcial": resultado.aviso is not None,
+        "motivo": resultado.aviso,
+    }
+    for item in resultado.items:
+        resumo[item.severidade] = resumo.get(item.severidade, 0) + 1
+    return resumo
 
 
 def run_collection(
@@ -204,6 +243,13 @@ def run_collection(
             # Após o commit do snapshot: estado operacional MPLS (coleta → SoT §8).
             sincronizar_mpls(session, snapshot)
 
+            # F6: resumo da divergência na própria coleta — dashboard e /metrics
+            # leem daqui em vez de recalcular o desejado de todos (§20.1).
+            resumo = _resumo_divergencias(session, dev.id, snapshot.id, actor)
+            if resumo is not None:
+                snapshot.resources = {**(snapshot.resources or {}), "divergencias": resumo}
+                session.commit()
+
             return {"status": snapshot.status, "snapshot_id": snapshot.id}
         except Exception as exc:  # noqa: BLE001 — contrato dict preservado em qualquer falha
             if job is not None:
@@ -217,7 +263,7 @@ def run_collection(
                 session.commit()
             return {"status": "error", "snapshot_id": snapshot.id if snapshot else None, "error": str(exc)}
         finally:
-            _liberta_lock(redis, chave_lock, token)
+            liberta_lock(redis, chave_lock, token)
     except Exception as exc:  # noqa: BLE001 — falha pré-lock mantém contrato dict
         # Falha ANTES de adquirir o lock (Redis fora do ar etc.): o contrato dict
         # é mantido; sessão e client são fechados no finally externo.
@@ -922,7 +968,7 @@ def run_change(
                     )
                     resultados.append(resultado_do_step)
                 finally:
-                    _liberta_lock(redis, chave_dev, token)
+                    liberta_lock(redis, chave_dev, token)
 
             if resultados:
                 status_cr = _classifica(cr, resultados)
@@ -959,7 +1005,7 @@ def run_change(
                 session.commit()
             return {"status": "error", "error": _mascarar_texto(str(exc))}
         finally:
-            _liberta_lock(redis, chave_cr, token)
+            liberta_lock(redis, chave_cr, token)
     except Exception as exc:  # noqa: BLE001 — falha pré-lock
         return {"status": "error", "error": _mascarar_texto(str(exc))}
     finally:

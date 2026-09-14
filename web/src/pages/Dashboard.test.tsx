@@ -22,14 +22,71 @@ const DASH = {
         error: "Authentication to device failed.",
       },
       active_job: null,
+      divergencias: {
+        total: 1,
+        critica: 1,
+        atencao: 0,
+        aviso: 0,
+        alerta: 0,
+        parcial: false,
+        motivo: null,
+      },
     },
   ],
+  divergencias: {
+    total: 1,
+    critica: 1,
+    atencao: 0,
+    aviso: 0,
+    alerta: 0,
+    devices_com_critica: 1,
+    devices_sem_resumo: 1,
+    idade_max_seconds: 3600,
+  },
   bgp_sessions: { total: 4, active: 3, shutdown: 1 },
   circuits: { total: 2, active: 1 },
   vlans: { reserved: 5, freed: 0 },
   ip_prefixes: { reserved: 7, freed: 0 },
   recent_audit: [{ id: 1, type: "coleta", actor: "boss", details: {}, created_at: "2026-09-04T00:00:00Z" }],
 };
+
+// Mock mínimo para os testes do card de divergências: só o dashboard responde
+// com dado; os demais endpoints da página (CRs, l2vc, vsi, upstreams) vêm vazios.
+function mockDashboard(fixture: unknown): void {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url === "/api/v1/dashboard") {
+        return new Response(JSON.stringify(fixture), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify([]), { status: 200, headers: { "Content-Type": "application/json" } });
+    }),
+  );
+}
+
+// O bloco da faixa de saúde cujo rótulo contém o texto dado (a label é
+// "divergências<br/>na última coleta" — textContent sem espaço, o <br/> separa
+// na renderização).
+function metricDaFaixa(rotulo: string): HTMLElement {
+  const label = screen.getByText(
+    (_texto, el) => el?.classList.contains("label") === true && el.textContent?.includes(rotulo) === true,
+  );
+  return label.closest(".metric") as HTMLElement;
+}
+
+function renderDashboard(): void {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
 
 describe("Dashboard", () => {
   afterEach(() => {
@@ -78,7 +135,10 @@ describe("Dashboard", () => {
         </MemoryRouter>
       </QueryClientProvider>,
     );
-    expect(await screen.findByText("ne8000-01")).toBeTruthy();
+    // A célula (e não o texto solto): com o card de divergências, o nome do
+    // equipamento aparece duas vezes na página — no link do card e no link da
+    // tabela — e getByText estouraria com múltiplos matchs.
+    expect(await screen.findByRole("cell", { name: "ne8000-01" })).toBeTruthy();
     expect(screen.getByText("2/3")).toBeTruthy();
     expect(screen.getByText("3 equipamento(s): 1 ok · 1 com falha · 1 desconhecido")).toBeTruthy();
     expect(screen.getByText("25.0 h")).toBeTruthy();
@@ -97,5 +157,135 @@ describe("Dashboard", () => {
     const cardUpstreams = labelUpstream.closest(".metric") as HTMLElement;
     expect(within(cardUpstreams).getByText("1")).toBeTruthy();
     expect(vi.mocked(fetch).mock.calls.some((c) => String(c[0]) === "/api/v1/upstreams")).toBe(true);
+    // Coluna e faixa de saúde novas (F6): a contagem por equipamento linka o
+    // Reconcile dele (nome acessível distinto do "Reconciliar" das ações) e o
+    // LED da faixa segue o agregado — crítica > 0 = vermelho.
+    expect(screen.getByRole("columnheader", { name: "Divergências" })).toBeTruthy();
+    // O nome acessível da contagem inclui o texto visível (WCAG 2.5.3): quem
+    // navega por voz lê "1" e alcança o link por ele.
+    expect(screen.getByRole("link", { name: "Divergências de ne8000-01: 1" }).getAttribute("href")).toBe(
+      "/reconcile?device_id=1",
+    );
+    const cardDivergencias = metricDaFaixa("divergências");
+    expect(within(cardDivergencias).getByText("1")).toBeTruthy();
+    expect(cardDivergencias.querySelector(".led.red")).toBeTruthy();
+  });
+
+  it("mostra o card de divergências com o link do equipamento crítico", async () => {
+    mockDashboard(DASH);
+    renderDashboard();
+
+    expect(await screen.findByRole("heading", { name: "Divergências da última coleta" })).toBeTruthy();
+    expect(screen.getByText(/1 equipamento\(s\) sem resumo/)).toBeTruthy();
+    expect(screen.getByText(/resumo mais antigo há 1.0 h/)).toBeTruthy();
+    // A fixture deste teste é `parcial: false` — a nota da parcial não pode
+    // aparecer só porque o card foi renderizado.
+    expect(screen.queryByText(/comparação parcial/)).toBeNull();
+    // O nome acessível do link do card é "Reconciliar <equipamento>": o nome
+    // puro colidiria com o link da tabela (que leva a /devices/1) e o nome
+    // acessível sozinho apontaria para a rota errada.
+    const link = screen.getByRole("link", { name: "Reconciliar ne8000-01" });
+    expect(link.getAttribute("href")).toBe("/reconcile?device_id=1");
+  });
+
+  it("mostra a nota de comparação parcial e o LED âmbar quando a coleta não trouxe tudo", async () => {
+    mockDashboard({
+      ...DASH,
+      divergencias: {
+        ...DASH.divergencias,
+        total: 0,
+        critica: 0,
+        devices_com_critica: 0,
+        devices_sem_resumo: 0,
+        idade_max_seconds: null,
+      },
+      per_device: [
+        {
+          ...DASH.per_device[0],
+          divergencias: { ...DASH.per_device[0].divergencias, total: 0, critica: 0, parcial: true, motivo: "vsi" },
+        },
+      ],
+    });
+    renderDashboard();
+
+    expect(await screen.findByRole("heading", { name: "Divergências da última coleta" })).toBeTruthy();
+    expect(screen.getByText(/1 equipamento\(s\) com comparação parcial/)).toBeTruthy();
+    // Zero divergência com comparação parcial não é "sem divergência": o LED
+    // não pode ficar verde.
+    expect(metricDaFaixa("divergências").querySelector(".led.amber")).toBeTruthy();
+  });
+
+  it("mostra o LED âmbar quando o zero vem de coleta sem resumo", async () => {
+    mockDashboard({
+      ...DASH,
+      divergencias: {
+        ...DASH.divergencias,
+        total: 0,
+        critica: 0,
+        devices_com_critica: 0,
+        devices_sem_resumo: 1,
+        idade_max_seconds: null,
+      },
+      per_device: [{ ...DASH.per_device[0], divergencias: null }],
+    });
+    renderDashboard();
+
+    expect(await screen.findByRole("heading", { name: "Divergências da última coleta" })).toBeTruthy();
+    expect(metricDaFaixa("divergências").querySelector(".led.amber")).toBeTruthy();
+  });
+
+  it("mostra o LED âmbar e a nota quando há equipamento nunca coletado", async () => {
+    // Instalação nova: dois equipamentos cadastrados, um com snapshot. O
+    // `devices_sem_resumo` não conta quem nunca foi coletado, então sem esta
+    // contagem o card leria "0 divergências" verde para a frota inteira.
+    mockDashboard({
+      ...DASH,
+      devices: { ...DASH.devices, total: 2, with_snapshot: 1 },
+      divergencias: {
+        ...DASH.divergencias,
+        total: 0,
+        critica: 0,
+        devices_com_critica: 0,
+        devices_sem_resumo: 0,
+        idade_max_seconds: null,
+      },
+      per_device: [
+        { ...DASH.per_device[0], divergencias: { ...DASH.per_device[0].divergencias, total: 0, critica: 0 } },
+      ],
+    });
+    renderDashboard();
+
+    expect(await screen.findByRole("heading", { name: "Divergências da última coleta" })).toBeTruthy();
+    expect(screen.getByText(/1 equipamento\(s\) sem coleta/)).toBeTruthy();
+    expect(metricDaFaixa("divergências").querySelector(".led.amber")).toBeTruthy();
+  });
+
+  it("lista no card o equipamento cujo único sinal vermelho é alerta", async () => {
+    mockDashboard({
+      ...DASH,
+      divergencias: {
+        ...DASH.divergencias,
+        total: 1,
+        critica: 0,
+        alerta: 1,
+        devices_com_critica: 0,
+        devices_sem_resumo: 0,
+      },
+      per_device: [
+        {
+          ...DASH.per_device[0],
+          divergencias: { ...DASH.per_device[0].divergencias, total: 1, critica: 0, alerta: 1 },
+        },
+      ],
+    });
+    renderDashboard();
+
+    expect(await screen.findByRole("heading", { name: "Divergências da última coleta" })).toBeTruthy();
+    expect(screen.getByText(/Com divergência crítica ou alerta/)).toBeTruthy();
+    // A faixa pinta de vermelho com alerta; o card precisa dizer de quem é.
+    expect(metricDaFaixa("divergências").querySelector(".led.red")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Reconciliar ne8000-01" }).getAttribute("href")).toBe(
+      "/reconcile?device_id=1",
+    );
   });
 });

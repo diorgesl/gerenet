@@ -125,6 +125,13 @@ def test_dashboard_agrega(client: TestClient, db_session) -> None:
     assert p["r1"]["active_job"] is None
     assert p["r3"]["latest_snapshot"] is None and p["r3"]["active_job"] is None
 
+    # Só r1 tem snapshot, e os dois são sem resumo: nada a somar (idade nula — o
+    # "sem resumo" de r1 é o que sobra, e não vira zero em severidade nenhuma).
+    assert dados["divergencias"] == {
+        "total": 0, "critica": 0, "atencao": 0, "aviso": 0, "alerta": 0,
+        "devices_com_critica": 0, "devices_sem_resumo": 1, "idade_max_seconds": None,
+    }
+
     assert dados["bgp_sessions"] == {"total": 2, "active": 1, "shutdown": 1}
     assert dados["circuits"] == {"total": 1, "active": 1}
     assert dados["vlans"] == {"reserved": 1, "freed": 1}
@@ -135,3 +142,73 @@ def test_dashboard_agrega(client: TestClient, db_session) -> None:
 
 def test_dashboard_exige_autenticacao(client: TestClient) -> None:
     assert client.get("/api/v1/dashboard").status_code == 401
+
+
+def test_dashboard_agrega_divergencias_da_coleta(client: TestClient, db_session) -> None:
+    _ambiente(db_session)  # sw-dash e os 2 NE8000 ficam sem coleta: fora das duas contagens
+    com_resumo = create_device(
+        db_session, DeviceCreate(name="dv1", management_address="10.0.0.11"), actor="cli"
+    )
+    sem_resumo = create_device(
+        db_session, DeviceCreate(name="dv2", management_address="10.0.0.12"), actor="cli"
+    )
+    nao_coletado = create_device(
+        db_session, DeviceCreate(name="dv3", management_address="10.0.0.13"), actor="cli"
+    )
+    started = datetime.now(UTC) - timedelta(minutes=30)
+    db_session.add_all([
+        models.DeviceSnapshot(
+            device_id=com_resumo.id,
+            status="success",
+            resources={
+                "divergencias": {
+                    "total": 3, "critica": 1, "atencao": 2, "aviso": 0, "alerta": 0,
+                    "parcial": False, "motivo": None,
+                }
+            },
+            started_at=started,
+        ),
+        models.DeviceSnapshot(device_id=sem_resumo.id, status="success", resources={}),
+    ])
+    db_session.commit()
+    assert nao_coletado.id  # sem snapshot: nem divergência, nem "sem resumo"
+
+    dados = client.get("/api/v1/dashboard", headers=_auth()).json()
+
+    assert dados["divergencias"] == {
+        "total": 3,
+        "critica": 1,
+        "atencao": 2,
+        "aviso": 0,
+        "alerta": 0,
+        "devices_com_critica": 1,
+        "devices_sem_resumo": 1,
+        "idade_max_seconds": pytest.approx(1800, abs=5),
+    }
+    por_nome = {p["name"]: p for p in dados["per_device"]}
+    assert por_nome["dv1"]["divergencias"]["critica"] == 1
+    assert por_nome["dv2"]["divergencias"] is None
+    assert por_nome["dv3"]["divergencias"] is None
+
+
+def test_dashboard_resumo_malformado_nao_derruba(client: TestClient, db_session) -> None:
+    """Resumo incompleto no snapshot vira "sem resumo" — nunca zero nem 500."""
+    dev = create_device(
+        db_session, DeviceCreate(name="dv-parcial", management_address="10.0.0.21"), actor="cli"
+    )
+    db_session.add(
+        models.DeviceSnapshot(
+            device_id=dev.id, status="success", resources={"divergencias": {"total": 3}}
+        )
+    )
+    db_session.commit()
+
+    resp = client.get("/api/v1/dashboard", headers=_auth())
+
+    assert resp.status_code == 200
+    dados = resp.json()
+    assert dados["divergencias"] == {
+        "total": 0, "critica": 0, "atencao": 0, "aviso": 0, "alerta": 0,
+        "devices_com_critica": 0, "devices_sem_resumo": 1, "idade_max_seconds": None,
+    }
+    assert dados["per_device"][0]["divergencias"] is None

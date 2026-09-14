@@ -35,6 +35,18 @@ Comandos dentro do container:
 Ao alterar `pyproject.toml`/`Dockerfile.dev` (dependências), recriar:
 `docker compose up -d --build`.
 
+Observabilidade de dev: `docker compose up -d prometheus grafana` sobe o
+Prometheus (http://localhost:9090) e o Grafana (http://localhost:3000, leitura
+anônima como viewer e o login de admin do primeiro boot para editar e exportar)
+com o dashboard `gerenet — operação` provisionado, raspando `api:8000/metrics` a
+cada 30 s. A plataforma expõe os itens do §20.1 no `/metrics`, sem autenticação
+na rede de gerência; ligar o `GERENET_METRICS_TOKEN` pede duas edições (a
+variável no serviço `api` e o token no scrape, por arquivo montado de fora do
+repositório), descritas no runbook de observabilidade. O worker do compose já
+sobe com a coleta periódica ligada (`GERENET_COLLECT_INTERVAL_MINUTES: "60"` —
+coleta a frota do banco dev a cada hora; `"0"` desliga), com as regras em
+`/wiki/equipamentos`.
+
 ⚠️ **`npm run test:e2e` (host): pare o compose antes** — o Playwright sobe o
 próprio uvicorn na :8000 e usa o banco dedicado `gerenet_e2e`; a api do compose
 ocupando a porta/banco de dev quebra esse fluxo.
