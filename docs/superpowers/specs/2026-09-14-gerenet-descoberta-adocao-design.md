@@ -465,6 +465,33 @@ entra a seção "fora da SoT", com link para a nova página já filtrada.
 - **Índices de route-policy não são descobertos.** O parser lê o nome, não o
   conteúdo da policy. Mapear nome para perfil é o alcance desta frente.
 
+## 17.1 Decisões tomadas pela revisão final da parte 1 (2026-09-14)
+
+Duas lacunas da conferência de fidelidade foram encontradas na revisão final e
+**não** foram corrigidas na parte 1, porque nada é escrito nela: a decisão vale
+para a parte 2, e a wiki passou a declarar o limite em vez de deixá-lo
+implícito. Estão aqui para não se perderem.
+
+- **A conferência compara o peer e a subinterface, não o corpo das definições.**
+  Os blocos que o render emite para uma sessão (prefix-list, corpo das
+  route-policies de import e export, community-filter, as-path-filter) têm
+  `objeto == "session"` e caem fora do filtro por linha de peer, então o
+  **conteúdo** deles nunca é comparado. O efeito é estreito e real: o nome da
+  route-policy deriva do ASN do par, então escolher o produto errado na revisão
+  produz linhas de peer idênticas byte a byte com um corpo de política
+  completamente diferente. A parte 2 estende a comparação a esses blocos — os
+  blocos já estão em `render.blocos` com o id da sessão, então é barato — ou, se
+  não estender, diz no texto do `ciente` o que está e o que não está coberto.
+
+- **Descrição e MTU da subinterface são diferenças que não gerenciamos.** O
+  render não emite `description` de subinterface (o slot existe no template e
+  nada o preenche) nem `mtu`, e o parser lê os dois. Numa borda real toda
+  subinterface tem descrição, então **toda** proposta sai com diferença, e
+  "diferença exige `ciente`" degenera em "marque sempre", que é o modo de falha
+  que a conferência existe para evitar. A parte 2 separa as diferenças que a SoT
+  **vai mudar** no equipamento das que ela meramente não gerencia, e só as
+  primeiras gateiam o `ciente`.
+
 ## 18. Ordem de implementação
 
 A frente é grande para um plano só, e as duas metades têm valor próprio. Sugiro
