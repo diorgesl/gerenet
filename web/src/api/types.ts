@@ -206,6 +206,25 @@ export interface ReconcileOut {
   gerado_em: string;
   items: ReconcileItemOut[];
 }
+export interface DivergenciasResumoOut {
+  total: number;
+  critica: number;
+  atencao: number;
+  aviso: number;
+  alerta: number;
+  parcial: boolean;
+  motivo: string | null;
+}
+export interface DivergenciasAggOut {
+  total: number;
+  critica: number;
+  atencao: number;
+  aviso: number;
+  alerta: number;
+  devices_com_critica: number;
+  devices_sem_resumo: number;
+  idade_max_seconds: number | null;
+}
 export interface PerDeviceOut {
   device_id: number;
   name: string;
@@ -216,6 +235,7 @@ export interface PerDeviceOut {
   snapshot_age_seconds: number | null;
   latest_snapshot: { id: number; status: string; started_at: string; error: string | null } | null;
   active_job: { id: number; status: string } | null;
+  divergencias: DivergenciasResumoOut | null;
 }
 export interface DashboardOut {
   devices: {
@@ -225,6 +245,7 @@ export interface DashboardOut {
     by_comm_status: Record<"unknown" | "ok" | "fail", number>;
   };
   per_device: PerDeviceOut[];
+  divergencias: DivergenciasAggOut;
   bgp_sessions: { total: number; active: number; shutdown: number };
   circuits: { total: number; active: number };
   vlans: { reserved: number; freed: number };

@@ -17,6 +17,9 @@ async function entrar(page: Page): Promise<void> {
 
 test("criar e desativar site", async ({ page }) => {
   await entrar(page);
+  // Card de divergências (F6): o heading existe sempre — sem snapshot o card
+  // mostra zero e a nota de "sem resumo".
+  await expect(page.getByRole("heading", { name: "Divergências da última coleta" })).toBeVisible();
   await page.getByRole("button", { name: "Infraestrutura" }).click();
   await page.getByRole("link", { name: "Sites" }).click();
   await expect(page).toHaveURL(/\/sites/);
