@@ -16,6 +16,8 @@ import type {
   DashboardOut,
   DesiredConfigOut,
   DeviceOut,
+  DiscoveryAdocaoIn,
+  DiscoveryFidelidadeOut,
   DiscoveryIgnoradoOut,
   DiscoveryOut,
   HostkeyScanOut,
@@ -837,4 +839,45 @@ export function useDiscoveryDesdesignorar() {
     },
   });
   return mutation;
+}
+
+/** Os perfis entram na chave de propósito: trocar um `select` de perfil refaz a
+ * conferência, porque o corpo da política de exportação muda com ele. */
+export const useFidelidade = (
+  deviceId: number,
+  vrf: string | null,
+  subinterface: string | null,
+  perfis: Record<string, { import?: number; export?: number }> = {},
+  edgeTrunk: string | null = null,
+) =>
+  useQuery({
+    queryKey: ["fidelidade", deviceId, vrf, subinterface, perfis, edgeTrunk],
+    queryFn: () => {
+      const qs = new URLSearchParams({ device_id: String(deviceId) });
+      if (vrf) qs.set("vrf", vrf);
+      if (subinterface) qs.set("subinterface", subinterface);
+      if (edgeTrunk) qs.set("edge_trunk", edgeTrunk);
+      for (const [afi, p] of Object.entries(perfis)) {
+        if (p.import) qs.set(`import_${afi}`, String(p.import));
+        if (p.export) qs.set(`export_${afi}`, String(p.export));
+      }
+      return apiFetch<DiscoveryFidelidadeOut>(`/api/v1/discovery/fidelidade?${qs.toString()}`);
+    },
+    enabled: deviceId > 0 && subinterface !== null,
+    // Como as outras leituras de descoberta: a recusa (proposta que já não
+    // existe, proposta ambígua) é resposta, não instabilidade.
+    retry: false,
+  });
+
+export function useAdotar() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: DiscoveryAdocaoIn) =>
+      apiFetch<{ circuit_id: number }>("/api/v1/discovery/adopt", { method: "POST", body }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["discovery"] });
+      void qc.invalidateQueries({ queryKey: ["circuits"] });
+      void qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
 }

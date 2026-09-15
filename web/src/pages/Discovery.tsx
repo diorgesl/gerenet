@@ -13,6 +13,7 @@ import { FormField } from "@/components/FormField";
 import { Modal } from "@/components/Modal";
 import { PageHeader } from "@/components/PageHeader";
 import { help } from "@/help";
+import { AdocaoDialog } from "./DiscoveryAdopt";
 import type { DiscoveryOut, DiscoveryPropostaOut } from "@/api/types";
 
 // A conclusão chata ("não há peer fora da SoT") só sai quando a leitura
@@ -46,6 +47,7 @@ export default function Discovery() {
   const deviceParam = Number(params.get("device_id") ?? 0);
   const [deviceSel, setDeviceSel] = useState<number>(deviceParam);
   const [detalhe, setDetalhe] = useState<DiscoveryPropostaOut | null>(null);
+  const [revisando, setRevisando] = useState<DiscoveryPropostaOut | null>(null);
   const [ignorando, setIgnorando] = useState<DiscoveryPropostaOut | null>(null);
   const [motivo, setMotivo] = useState("");
   const [resultado, setResultado] = useState<string | null>(null);
@@ -163,6 +165,21 @@ export default function Discovery() {
               </button>
               <button
                 type="button"
+                // A adoção é o fluxo da proposta sem conflito: a com conflito
+                // não tem revisão a fazer (o serviço recusa), e o motivo está
+                // nos conflitos do detalhe.
+                disabled={p.veredito === "nao_adotavel"}
+                title={
+                  p.veredito === "nao_adotavel"
+                    ? "A proposta não é adotável: veja os conflitos em Detalhes."
+                    : undefined
+                }
+                onClick={() => setRevisando(p)}
+              >
+                Adotar
+              </button>
+              <button
+                type="button"
                 // A proposta órfã (endereço sem subinterface) vem sem candidato:
                 // sem peer identificado não há o que mandar à lista de ignorados.
                 disabled={p.candidatos.length === 0}
@@ -252,6 +269,16 @@ export default function Discovery() {
           </div>
         )}
       </Modal>
+
+      {/* A `key` por proposta é o que reabre o formulário do zero: sem ela o
+          estado da revisão anterior sobrevive à troca de linha. */}
+      {revisando && (
+        <AdocaoDialog
+          key={revisando.vid ?? revisando.subinterface}
+          proposta={revisando}
+          onFechar={() => setRevisando(null)}
+        />
+      )}
 
       <Modal
         aberto={ignorando !== null}

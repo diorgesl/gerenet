@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -104,6 +104,42 @@ const IGNORADO = {
   autor: "admin",
 };
 
+// O diff da conferência de fidelidade. A linha de `faltando` é o que a SoT
+// mudaria no equipamento (é ela que levanta o gate do aceite); a de
+// `nao_gerenciado` é o que a SoT não emite — visível, e sem bloquear. As duas
+// moram no MESMO contexto, como no `subinterface` do motor: `description` e
+// `mtu` não gateiam nem quando o bloco tem diferença que gateia.
+const DIFERENCA_MUDA = {
+  contexto: "subinterface",
+  sobrando: [],
+  faltando: ["vlan-type dot1q vid 1001"],
+  nao_gerenciado: ["description CLIENTE-ALFA"],
+  explicacao: null,
+  exige_ciente: true,
+};
+
+const DIFERENCA_SO_NAO_GERENCIADA = {
+  contexto: "subinterface",
+  sobrando: [],
+  faltando: [],
+  nao_gerenciado: ["description CLIENTE-ALFA"],
+  explicacao: null,
+  exige_ciente: false,
+};
+
+// A comparação que não pôde ser feita: o motivo mora na `explicacao`, com
+// `sobrando`/`faltando` vazios de propósito (nada aqui muda o equipamento).
+const DIFERENCA_ENSAIO = {
+  contexto: "ensaio",
+  sobrando: [],
+  faltando: [],
+  nao_gerenciado: [],
+  explicacao:
+    "uma restrição de unicidade recusou o ensaio (reserva já existente, por exemplo): "
+    + "sem o ensaio, a comparação com a configuração não pôde ser feita.",
+  exige_ciente: false,
+};
+
 function mockFetch(
   opts: {
     descoberta?: unknown;
@@ -112,6 +148,8 @@ function mockFetch(
     ignoradosApos?: unknown[];
     deleteStatus?: number;
     postFalhaPara?: string;
+    /** O diff que o `GET /fidelidade` devolve para a revisão aberta. */
+    diferencas?: unknown[];
   } = {},
 ) {
   let leituras = 0;
@@ -121,6 +159,13 @@ function mockFetch(
       const json = (corpo: unknown, status = 200) =>
         new Response(JSON.stringify(corpo), { status, headers: { "Content-Type": "application/json" } });
       if (url === "/api/v1/devices") return json(DEVICES);
+      if (url.startsWith("/api/v1/discovery/fidelidade")) {
+        return json({
+          device_id: 1,
+          subinterface: "Eth-Trunk127.1001",
+          diferencas: opts.diferencas ?? [],
+        });
+      }
       if (url.startsWith("/api/v1/discovery/ignore")) {
         if (init?.method === "DELETE") {
           return opts.deleteStatus === 404
@@ -140,6 +185,30 @@ function mockFetch(
       return json({ detail: "Não encontrado." }, 404);
     }),
   );
+}
+
+/** A revisão aberta, com o diff que o `GET /fidelidade` devolve.
+ *
+ * Com `exigeCiente` a conferência traz uma linha no grupo que muda o
+ * equipamento (a que o aceite tem de assumir); sem ele, só o grupo que a SoT
+ * não gerencia. Com `ensaio`, a comparação não pôde ser feita. */
+function mockFetchComFidelidade({ exigeCiente = false, ensaio = false } = {}) {
+  mockFetch({
+    diferencas: ensaio
+      ? [DIFERENCA_ENSAIO]
+      : [exigeCiente ? DIFERENCA_MUDA : DIFERENCA_SO_NAO_GERENCIADA],
+  });
+}
+
+/** O equipamento de acesso, a porta e o trunk: os campos que a configuração do
+ * edge não tem e que a revisão preenche (o `code` já vem sugerido). */
+async function preencheAcesso(dialog: HTMLElement) {
+  await userEvent.selectOptions(
+    within(dialog).getByRole("combobox", { name: /Equipamento de acesso/ }),
+    "1",
+  );
+  await userEvent.type(within(dialog).getByRole("textbox", { name: /Porta de acesso/ }), "GE0/0/1");
+  await userEvent.type(within(dialog).getByRole("textbox", { name: /Trunk do edge/ }), "Eth-Trunk127");
 }
 
 function renderDiscovery(entrada: string) {
@@ -301,6 +370,77 @@ describe("Discovery", () => {
     await userEvent.click(screen.getByRole("button", { name: "Detalhes" }));
     expect(screen.getByText("Proposta sem enlace")).toBeInTheDocument();
     expect(screen.getByText(/endereco_sem_subinterface/)).toBeInTheDocument();
+  });
+
+  it("o botão Adotar fica habilitado na proposta adotável", async () => {
+    mockFetch();
+    renderDiscovery("/discovery?device_id=1");
+    expect(await screen.findByRole("button", { name: "Adotar" })).toBeEnabled();
+  });
+
+  it("a proposta não adotável deixa o Adotar barrado", async () => {
+    mockFetch({ descoberta: { ...DISCOVERY, propostas: [ORFA] } });
+    renderDiscovery("/discovery?device_id=1");
+    // O mesmo enlace cujo "Não adotar" já sai desabilitado: a adoção não é
+    // caminho para uma proposta com conflito, e o motivo está em Detalhes.
+    expect(await screen.findByRole("button", { name: "Não adotar" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Adotar" })).toBeDisabled();
+  });
+
+  it("a revisão pede o aceite quando a diferença muda o equipamento", async () => {
+    mockFetchComFidelidade({ exigeCiente: true });
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+    expect(await within(dialog).findByText(/mudariam o equipamento/)).toBeInTheDocument();
+    expect(within(dialog).getByText("vlan-type dot1q vid 1001")).toBeInTheDocument();
+    // O grupo que não gateia aparece junto, mesmo vindo do mesmo contexto: o
+    // que a SoT não gerencia é informação, e a linha não some por haver
+    // diferença que gateia no mesmo bloco.
+    expect(await within(dialog).findByText(/não gerencia/)).toBeInTheDocument();
+    expect(within(dialog).getByText("description CLIENTE-ALFA")).toBeInTheDocument();
+
+    await preencheAcesso(dialog);
+    // O trunk entra na conferência, então o diff é refeito com ele: esperar a
+    // resposta nova é o que faz a asserção seguinte falar do gate do aceite.
+    expect(await within(dialog).findByText(/mudariam o equipamento/)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeDisabled();
+
+    await userEvent.click(within(dialog).getByLabelText(/ciente/i));
+    expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeEnabled();
+  });
+
+  it("o que a SoT não gerencia aparece sem pedir aceite", async () => {
+    mockFetchComFidelidade();
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+    expect(await within(dialog).findByText(/não gerencia/)).toBeInTheDocument();
+    expect(within(dialog).getByText("description CLIENTE-ALFA")).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText(/ciente/i)).not.toBeInTheDocument();
+
+    await preencheAcesso(dialog);
+    expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeEnabled();
+  });
+
+  it("o ensaio recusado bloqueia o aceite e diz por quê", async () => {
+    mockFetchComFidelidade({ ensaio: true });
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+    // O motivo mora na `explicacao` — sem ela o operador não sabe o que resolver.
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(/não pôde ser feita/);
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(/restrição de unicidade/);
+
+    await preencheAcesso(dialog);
+    // O trunk entra na conferência, e o diff é refeito com ele: esperar a
+    // resposta nova é o que faz a asserção seguinte falar do ensaio, e não do
+    // carregamento.
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(/não pôde ser feita/);
+    // Sem comparação não há aceite que valha (§6): nem o ciente libera — e sem
+    // grupo que muda não há sequer o que marcar.
+    expect(within(dialog).queryByLabelText(/ciente/i)).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeDisabled();
   });
 
   it("voltar a considerar manda a quádrupla e não fica com mensagem órfã", async () => {
