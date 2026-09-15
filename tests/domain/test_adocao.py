@@ -601,3 +601,48 @@ def test_a_organizacao_escolhida_na_lista_vence_a_da_proposta(db_session, tmp_pa
     # A outra organização, no mesmo ensaio, é quem faz a diferença aparecer: é o
     # nome dela que o render põe na descrição.
     assert any("ADOC-64512-601 PROVEDOR X" in linha for linha in da_proposta.sobrando)
+
+
+def test_a_organizacao_nova_da_revisao_nao_e_sombreada_pela_da_proposta(
+    db_session, tmp_path,
+) -> None:
+    """A revisão que CRIA a organização manda o nome e não manda id nenhum, e é
+    esse nome que a `description` do ensaio tem de carregar.
+
+    A proposta casa uma organização pelo ASN (o cliente já cadastrado), e a
+    adoção não consulta essa organização: ela cria a da revisão. Um ensaio que
+    ficasse com a da proposta compararia uma descrição que a escrita não produz
+    — e, na direção espelhada, com os dois nomes iguais, esconderia a diferença
+    real e a adoção deixaria de pedir o `ciente`."""
+    _site, dev = _ambiente(db_session, tmp_path, texto=_CONFIG_FIEL)
+    create_organization(db_session, OrganizationCreate(name="Provedor X", asn=64512),
+                        actor="cli")
+    prop = _proposta(db_session, dev, vid=601)
+    assert prop.organizacao_id is not None  # a heurística do ASN casou a Provedor X
+
+    com_o_nome_da_revisao = [
+        d for d in conferir_fidelidade(db_session, prop, circuit_code="ADOC-64512-601",
+                                       organizacao_nome="Cliente Alfa")
+    ]
+    com_outro_nome = [
+        d for d in conferir_fidelidade(db_session, prop, circuit_code="ADOC-64512-601",
+                                       organizacao_nome="Outro Nome")
+    ]
+
+    # A conferência ACONTECEU (o contexto `ensaio` é a recusa a COMPARAR, e uma
+    # recusa não tem linha de subinterface nenhuma: sem esta asserção as de
+    # baixo passariam sem medir nada) e não achou diferença nenhuma: o ensaio
+    # emitiu a descrição que o `_CONFIG_FIEL` traz, e não a da organização da
+    # proposta.
+    assert [d for d in com_o_nome_da_revisao if d.contexto == "ensaio"] == []
+    sub_revisao = next(d for d in com_o_nome_da_revisao if d.contexto == "subinterface")
+    assert sub_revisao.sobrando == ()
+    assert sub_revisao.faltando == ()
+    assert sub_revisao.nao_gerenciado == ()
+    assert sub_revisao.exige_ciente is False
+    # O nome que sai no render é o da revisão, e não o da proposta: com outro
+    # nome, a linha aparece com ele.
+    diferenciais = [d for d in com_outro_nome if d.contexto == "subinterface"]
+    assert diferenciais[0].exige_ciente is True
+    assert any("description ADOC-64512-601 OUTRO NOME" in linha
+               for linha in diferenciais[0].sobrando)

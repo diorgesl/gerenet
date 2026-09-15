@@ -1058,16 +1058,30 @@ def _ensaio(
     assumir uma linha que ninguém mudou.
     """
     device = get_device(session, proposta.device_id)
-    org_id = organizacao_id or proposta.organizacao_id
+    # O nome da revisão vence a organização que a proposta casou por ASN: é a
+    # organização da PROPOSTA que é heurística, e a adoção não a consulta — com
+    # `organizacao_id` vazio ela cria a da revisão, e é o nome dela que a
+    # `description` vai carregar. Só sem os dois (a leitura que ainda não tem
+    # revisão, o `show` e a rota) é que o ensaio se apoia no que a proposta leu.
+    org_id = organizacao_id or (None if organizacao_nome is not None
+                                else proposta.organizacao_id)
     if org_id is None:
         # Sem id, a organização ainda nasceria: é o caso da revisão que cria uma
         # nova. O nome dela vem da revisão, e não do `ENSAIO-...`, porque é ele
         # que a `description` da subinterface carrega — e um nome de mentira
         # aqui faria toda adoção acusar uma diferença de descrição que a escrita
         # não cria (§7).
+        # A organização do ensaio é descartável e existe pelo NOME: o render só
+        # lê `organization.name` (a descrição da subinterface, §4) e os ids das
+        # autorizações. O ASN do peer ficava gravado aqui e batia na unicidade
+        # do §14.1 justamente quando a revisão cria uma organização nova para um
+        # peer cujo ASN já tem dono — o caso comum, o do cliente já cadastrado —
+        # e o ensaio morria em `AVISO_SEM_ENSAIO` antes de comparar nada. Quem
+        # recusa o ASN repetido é a escrita (`_confere_asn_livre`), com a frase
+        # do conflito; o ensaio não tem por que antecipar isso com uma frase
+        # sobre restrição de unicidade.
         org = models.Organization(
             name=organizacao_nome or f"ENSAIO-{device.name}-{proposta.vid}",
-            asn=proposta.candidatos[0].asn_remote if proposta.candidatos else None,
         )
         session.add(org)
         session.flush()

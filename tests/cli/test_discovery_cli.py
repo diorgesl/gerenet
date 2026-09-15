@@ -413,6 +413,12 @@ def test_adopt_com_ciente_na_linha_de_comando(db_session, tmp_path) -> None:
     assert "fidelidade peer:" in com_flag.output
     assert "    falta no render: peer 100.64.10.1 password [mascarado]" in com_flag.output
     assert com_flag.output.index("password [mascarado]") < com_flag.output.index("Circuito ")
+    # A identidade da revisão entra na prévia: `ENSAIO-` é o que o ensaio emite
+    # quando o código e a organização não lhe chegam, e nenhuma linha dele pode
+    # aparecer na tela que o `--ciente` assume. A descrição que sai é a da
+    # revisão (o equipamento tem outra, porque o nome da organização é outro).
+    assert "ENSAIO-" not in com_flag.output
+    assert "description ADOC-CLI-CIENTE-FLAG CLIENTE CIENTE FLAG" in com_flag.output
 
 
 def test_adopt_com_arquivo_fora_de_utf8_nao_estoura(db_session, tmp_path) -> None:
