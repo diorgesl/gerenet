@@ -25,6 +25,13 @@ ENV PATH="/srv/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     UV_COMPILE_BYTECODE=1
 
+# O cliente `whois` é chamado por subprocess em `automation/irr.py`
+# (`identificar_asn` e `consultar`); a imagem slim não o traz. Sem ele a
+# consulta ao registro falha com FileNotFoundError e a api responde 503.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends whois && \
+    rm -rf /var/lib/apt/lists/*
+
 # Manifestos primeiro; o projeto em si instala depois do src (cache de camada —
 # mexer em código não obriga a reinstalar as dependências).
 COPY pyproject.toml uv.lock ./
