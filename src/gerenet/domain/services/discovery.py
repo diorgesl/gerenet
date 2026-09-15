@@ -268,7 +268,7 @@ def adotar_proposta(session: Session, *, proposta, revisao: schemas.AdocaoIn, ac
             "Informe a organização: escolha uma existente ou crie a nova com o ASN "
             f"{asn_remoto}."
         )
-    if revisao.autorizacoes and revisao.organizacao_nova is None:
+    if revisao.autorizacoes and revisao.organizacao_id is not None:
         raise ValidationError(
             "As autorizações de prefixo só entram com a organização nova: para uma "
             "organização existente, cadastre os blocos na página dela."

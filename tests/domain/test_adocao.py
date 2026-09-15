@@ -411,6 +411,28 @@ def test_autorizacoes_com_organizacao_existente_sao_recusadas(db_session, tmp_pa
     assert _autorizacoes(db_session) == []
 
 
+def test_autorizacoes_com_os_dois_campos_sao_recusadas(db_session, tmp_path) -> None:
+    """O corpo com `organizacao_id` E `organizacao_nova` é contraditório, e sem
+    esta guarda ele passava: a organização nova nem era criada (o id não é nulo)
+    e os blocos caiam calados na existente — a escrita que esta guarda existe
+    para proibir, e o caminho que o `--json` do CLI alcança."""
+    existente = create_organization(
+        db_session, OrganizationCreate(name="Cliente Existente", asn=64512), actor="cli"
+    )
+    _site, dev = _ambiente(db_session, tmp_path)
+    revisao = _revisao(dev, autorizacoes=[
+        AdocaoAutorizacaoIn(prefix="138.121.28.0/22", family="ipv4"),
+    ])
+    revisao.organizacao_id = existente.id  # e `organizacao_nova` fica como veio
+
+    with pytest.raises(ValidationError, match="organização nova"):
+        adotar_proposta(db_session, proposta=_proposta(db_session, dev), revisao=revisao,
+                        actor="cli")
+
+    assert _autorizacoes(db_session) == []
+    assert db_session.scalars(select(models.Organization)).all() == [existente]
+
+
 def test_operadora_nao_recebe_as_autorizacoes_da_adoção(db_session, tmp_path) -> None:
     """Autorização de prefixo é de cliente: o operador tem
     `expected_prefixes_v4`/`v6` no upstream, que são outra coisa. A guarda do
