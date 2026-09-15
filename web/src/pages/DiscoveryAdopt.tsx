@@ -201,10 +201,10 @@ export function AdocaoDialog({
 
   // Depois de uma consulta explícita os três campos abaixo mostram o que o
   // registro disse: um CNPJ vazio diz, com honestidade, que o registro não tem
-  // CNPJ para este ASN — o valor que sobrou da consulta de outro ASN seria uma
-  // mentira que o operador adotaria junto. O nome é a exceção: ele já chega
-  // sugerido pela descoberta, e apagá-lo jogaria fora um valor que o operador
-  // nunca digitou.
+  // CNPJ para este ASN — manter um valor que o registro acabou de não confirmar
+  // seria uma mentira que o operador adotaria junto. O nome é a exceção: ele já
+  // chega sugerido pela descoberta, e apagá-lo jogaria fora um valor que o
+  // operador nunca digitou.
   const buscarNoRegistro = () => {
     if (asnRemoto === null) return;
     prefill.mutate(asnRemoto, {

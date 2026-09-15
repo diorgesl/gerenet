@@ -54,15 +54,43 @@ test("adotar a proposta da configuração e conferir o circuito na lista", async
   await expect(dialogo.getByLabel("Trunk do edge *")).toHaveValue("Eth-Trunk127");
   await expect(dialogo.getByLabel("Nome da organização nova *")).not.toHaveValue("");
 
-  // O cadastro do stub é por rodada, como os valores do seed (`Date.now()`): o
-  // nome da organização é único na SoT e um bloco já autorizado não entra de
-  // novo em outra organização — 409 nos dois casos —, então valores fixos só
-  // passariam no primeiro giro contra este banco. As duas faixas são de
-  // benchmark (RFC 2544, nunca roteadas) e o octeto que muda sai do relógio:
-  // dois giros seguidos pegam /24 (e nomes) diferentes.
+  // Os blocos do stub precisam ser únicos ao longo da vida do banco e2e, que é
+  // persistente e acumula autorizações: prefixo que outra organização já tem
+  // ativo volta como 409 e deixa o diálogo aberto. O relógio sozinho não
+  // sustenta isso. Uma faixa de bits fica parada pelo tempo do seu bit mais
+  // baixo — os bits 24-31 viram a cada ~4,7 h, então duas rodadas na mesma tarde
+  // derivam o mesmo /24 —, e as faixas que viram rápido repetem a cada 256 ms.
+  // E a recusa do serviço é por SOBREPOSIÇÃO: um /32 ou um bloco menor dentro de
+  // um /24 ocupado não escapa da conta. A lista de autorizações é a autoridade
+  // sobre o que está ocupado — o mesmo cuidado que o seed toma antes de criar a
+  // dele (e2e/setup.ts) —, então o octeto sai do relógio e anda até o primeiro
+  // livre nos dois /16 do RFC 2544.
+  const respostaAutorizacoes = await page.request.get("/api/v1/prefix-authorizations?family=ipv4");
+  expect(respostaAutorizacoes.ok()).toBe(true);
+  // Sem `include_disabled`, a lista traz exatamente as ativas — as que o serviço
+  // compara ao recusar um bloco.
+  const autorizacoes = (await respostaAutorizacoes.json()) as { prefix: string }[];
+  // A comparação abaixo é por igualdade de /24, o que pressupõe que toda
+  // autorização do banco seja um /24 alinhado (só o seed e este fumo criam
+  // autorização). Um bloco mais largo cobriria o candidato sem casar aqui: ele
+  // quebra nesta linha, em vez de virar um 409 sem explicação.
+  expect(autorizacoes.every((a) => /^\d{1,3}\.\d{1,3}\.\d{1,3}\.0\/24$/.test(a.prefix))).toBe(
+    true,
+  );
+  const ocupados = new Set(autorizacoes.map((a) => a.prefix));
+
   const rodada = Date.now();
   const nomeDoRegistro = `Provedor E2E Registro ${rodada}`;
-  const octeto = (rodada >>> 8) & 0xff;
+  let octeto = rodada & 0xff;
+  let passos = 0;
+  while (
+    passos < 256 &&
+    (ocupados.has(`198.18.${octeto}.0/24`) || ocupados.has(`198.19.${octeto}.0/24`))
+  ) {
+    octeto = (octeto + 1) % 256;
+    passos += 1;
+  }
+  expect(passos, "198.18.0.0/15 sem octeto livre: a faixa acumulada acabou.").toBeLessThan(256);
   const blocoA = `198.18.${octeto}.0/24`;
   const blocoB = `198.19.${octeto}.0/24`;
 
