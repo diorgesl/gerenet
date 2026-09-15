@@ -50,11 +50,35 @@ export interface OrganizationOut {
   id: number;
   name: string;
   legal_name: string | null;
+  document: string | null;
   kind: "downstream" | "parceiro" | "operadora";
   asn: number | null;
   irr_as_set: string | null;
   notes: string | null;
   admin_status: boolean;
+}
+export interface OrganizationPrefillBlocoOut {
+  prefix: string;
+  family: "ipv4" | "ipv6";
+  fonte: string;
+  /** Nome da organização que já tem autorização ativa sobre o bloco. */
+  conflito: string | null;
+}
+
+/** O cadastro lido do registro — nada aqui é gravado; quem grava é a adoção.
+ * Resposta parcial é normal: o ASN estrangeiro não traz blocos, e o motivo
+ * está em `avisos`. */
+export interface OrganizationPrefillOut {
+  asn: number;
+  nome: string | null;
+  razao_social: string | null;
+  documento: string | null;
+  pais: string | null;
+  as_set_sugerido: string | null;
+  as_sets: string[];
+  blocos: OrganizationPrefillBlocoOut[];
+  fontes: Record<string, string>;
+  avisos: string[];
 }
 export interface ContactOut {
   id: number;
@@ -663,7 +687,16 @@ export interface DiscoveryAdocaoIn {
   access_port: string;
   edge_trunk: string | null;
   organizacao_id: number | null;
-  organizacao_nova: { name: string; kind?: string; asn: number } | null;
+  organizacao_nova: {
+    name: string;
+    kind?: string;
+    asn: number;
+    legal_name?: string | null;
+    document?: string | null;
+    irr_as_set?: string | null;
+  } | null;
+  /** Os blocos do registro que viram autorização da organização nova. */
+  autorizacoes: { prefix: string; family: string }[];
   sessoes: {
     afi: string;
     import_profile_id: number | null;

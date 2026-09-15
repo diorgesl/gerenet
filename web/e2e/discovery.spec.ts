@@ -53,6 +53,47 @@ test("adotar a proposta da configuração e conferir o circuito na lista", async
   expect(codigo).not.toBe("");
   await expect(dialogo.getByLabel("Trunk do edge *")).toHaveValue("Eth-Trunk127");
   await expect(dialogo.getByLabel("Nome da organização nova *")).not.toHaveValue("");
+
+  // O cadastro do stub é por rodada, como os valores do seed (`Date.now()`): o
+  // nome da organização é único na SoT e um bloco já autorizado não entra de
+  // novo em outra organização — 409 nos dois casos —, então valores fixos só
+  // passariam no primeiro giro contra este banco. As duas faixas são de
+  // benchmark (RFC 2544, nunca roteadas) e o octeto que muda sai do relógio:
+  // dois giros seguidos pegam /24 (e nomes) diferentes.
+  const rodada = Date.now();
+  const nomeDoRegistro = `Provedor E2E Registro ${rodada}`;
+  const octeto = (rodada >>> 8) & 0xff;
+  const blocoA = `198.18.${octeto}.0/24`;
+  const blocoB = `198.19.${octeto}.0/24`;
+
+  // O prefill stubado: o botão, a lista de blocos e o payload são o que o fumo
+  // exercita; a leitura do registro tem os testes dela, e o whois real não é
+  // determinístico no CI.
+  await page.route("**/api/v1/organizations/prefill*", (rota) =>
+    rota.fulfill({
+      json: {
+        asn: 64512,
+        nome: nomeDoRegistro,
+        razao_social: "Provedor E2E Ltda",
+        documento: "12.345.678/0001-99",
+        pais: "BR",
+        as_set_sugerido: "AS-64512",
+        as_sets: ["AS-64512"],
+        blocos: [
+          { prefix: blocoA, family: "ipv4", fonte: "registro", conflito: null },
+          { prefix: blocoB, family: "ipv4", fonte: "registro", conflito: null },
+        ],
+        fontes: { nome: "radb", blocos: "registro" },
+        avisos: [],
+      },
+    }),
+  );
+  await dialogo.getByRole("button", { name: "Buscar no registro" }).click();
+  await expect(dialogo.getByLabel("Nome da organização nova *")).toHaveValue(nomeDoRegistro);
+  await expect(dialogo.getByLabel("Documento (CNPJ/ownerid)")).toHaveValue("12.345.678/0001-99");
+  await expect(dialogo.getByLabel(`Incluir ${blocoA}`)).toBeChecked();
+  await expect(dialogo.getByLabel(`Incluir ${blocoB}`)).toBeChecked();
+
   await dialogo.getByLabel("Equipamento de acesso *").selectOption({ label: "ne8000-disco-01" });
   await dialogo.getByLabel("Porta de acesso *").fill("GE0/0/1");
 
@@ -79,4 +120,10 @@ test("adotar a proposta da configuração e conferir o circuito na lista", async
   // E o circuito está na lista de circuitos, com o código que a revisão gravou.
   await page.goto("/circuits");
   await expect(page.getByRole("link", { name: codigo })).toBeVisible();
+
+  // As autorizações do registro nasceram junto com o circuito (§6.4): os dois
+  // blocos que o operador deixou marcados estão na lista de autorizações.
+  await page.goto("/prefix-authorizations");
+  await expect(page.getByText(blocoA)).toBeVisible();
+  await expect(page.getByText(blocoB)).toBeVisible();
 });

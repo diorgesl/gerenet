@@ -168,6 +168,24 @@ const ORGANIZACOES = [
   { ...ORGANIZACAO_DESATIVADA, id: 2, name: "CLIENTE-ALFA", asn: 64512, admin_status: true },
 ];
 
+// O cadastro lido do registro. O segundo bloco já tem dono na SoT: é ele que
+// nasce desmarcado e desabilitado na lista da revisão.
+const PREFILL = {
+  asn: 64512,
+  nome: "CLIENTEALFA-AS",
+  razao_social: "Cliente Alfa Ltda",
+  documento: "13.172.064/0001-11",
+  pais: "BR",
+  as_set_sugerido: "AS-64512",
+  as_sets: ["AS-64512"],
+  blocos: [
+    { prefix: "203.0.113.0/24", family: "ipv4", fonte: "registro", conflito: null },
+    { prefix: "198.51.100.0/24", family: "ipv4", fonte: "registro", conflito: "Cliente Beta" },
+  ],
+  fontes: { nome: "radb", blocos: "registro" },
+  avisos: [],
+};
+
 // O perfil que a revisão escolhe: é ele que muda o corpo da política de
 // exportação, e é por isso que trocá-lo refaz a conferência.
 const PERFIL_EXPORT = {
@@ -254,6 +272,7 @@ function mockFetch(
       const json = (corpo: unknown, status = 200) =>
         new Response(JSON.stringify(corpo), { status, headers: { "Content-Type": "application/json" } });
       if (url === "/api/v1/devices") return json(DEVICES);
+      if (url.startsWith("/api/v1/organizations/prefill")) return json(PREFILL);
       if (url.startsWith("/api/v1/organizations")) {
         // O mock responde conforme o pedido, como o serviço: sem a flag, a lista
         // é a das vivas. Um mock que devolvesse sempre as duas deixaria a
@@ -701,7 +720,15 @@ describe("Discovery", () => {
         access_port: "GE0/0/1",
         edge_trunk: "Eth-Trunk127",
         organizacao_id: null,
-        organizacao_nova: { name: "CLIENTE-ALFA", kind: "downstream", asn: 64512 },
+        organizacao_nova: {
+          name: "CLIENTE-ALFA",
+          kind: "downstream",
+          asn: 64512,
+          legal_name: null,
+          document: null,
+          irr_as_set: null,
+        },
+        autorizacoes: [],
         sessoes: [
           {
             afi: "ipv4",
@@ -721,6 +748,71 @@ describe("Discovery", () => {
     expect(await screen.findByRole("status")).toHaveTextContent(
       "Proposta adotada: o circuito 9 foi gravado na SoT.",
     );
+  });
+
+  it("o botão do registro preenche a organização nova e manda só os blocos livres", async () => {
+    mockFetch();
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Buscar no registro" }));
+
+    expect(await within(dialog).findByLabelText(/Nome da organização nova/)).toHaveValue(
+      "CLIENTEALFA-AS",
+    );
+    // O `getByLabelText` casa o texto do rótulo inteiro, e o `help` do campo
+    // entra nele (a dica e o "?"): o regex é o mesmo caminho dos irmãos com
+    // ajuda, como o `Caminho do segredo no Vault (ipv4)`.
+    expect(within(dialog).getByLabelText(/^Documento \(CNPJ\/ownerid\)/)).toHaveValue(
+      "13.172.064/0001-11",
+    );
+    // A lista nasce marcada, e o bloco em uso por outra organização nasce
+    // desmarcado e desabilitado (§7): o operador vê antes do clique em vez de
+    // receber o 409 depois.
+    expect(within(dialog).getByLabelText("Incluir 203.0.113.0/24")).toBeChecked();
+    const conflitante = within(dialog).getByLabelText("Incluir 198.51.100.0/24");
+    expect(conflitante).not.toBeChecked();
+    expect(conflitante).toBeDisabled();
+    expect(within(dialog).getByText(/em uso por Cliente Beta/)).toBeInTheDocument();
+
+    await preencheAcesso(dialog);
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeEnabled(),
+    );
+    await userEvent.click(within(dialog).getByRole("button", { name: "Adotar" }));
+
+    await waitFor(() =>
+      expect(corpoDoPost()).toMatchObject({
+        organizacao_nova: {
+          name: "CLIENTEALFA-AS",
+          kind: "downstream",
+          asn: 64512,
+          document: "13.172.064/0001-11",
+          irr_as_set: "AS-64512",
+        },
+        autorizacoes: [{ prefix: "203.0.113.0/24", family: "ipv4" }],
+      }),
+    );
+  });
+
+  it("desmarcar um bloco do registro tira ele do payload", async () => {
+    mockFetch();
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Buscar no registro" }));
+    await within(dialog).findByLabelText("Incluir 203.0.113.0/24");
+
+    await userEvent.click(within(dialog).getByLabelText("Incluir 203.0.113.0/24"));
+
+    await preencheAcesso(dialog);
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeEnabled(),
+    );
+    await userEvent.click(within(dialog).getByRole("button", { name: "Adotar" }));
+
+    await waitFor(() => expect(corpoDoPost().autorizacoes).toEqual([]));
   });
 
   it("o que será gravado abre pelas reservas e nomeia a S-VLAN", async () => {
