@@ -1577,7 +1577,12 @@ export function AdocaoDialog({
   const diferencas = fidelidade?.diferencas ?? [];
   const mudam = diferencas.filter((d) => d.exige_ciente);
   const naoGerenciadas = diferencas.filter((d) => !d.exige_ciente && d.nao_gerenciado.length > 0);
-  const faltaPreencher = code === "" || acesso === 0 || porta === "";
+  // O trunk é exigido quando a proposta tem subinterface: sem ele a SoT não
+  // reproduz o bloco que a conferência acabou de validar, e a adoção recusa no
+  // serviço com essa mesma razão — aqui é só para o botão não levar a um 422.
+  const exigirTrunk = proposta.vid !== null && proposta.subinterface !== null;
+  const faltaPreencher =
+    code === "" || acesso === 0 || porta === "" || (exigirTrunk && trunk === "");
   const podeAdotar =
     !faltaPreencher && (mudam.length === 0 || ciente) && !adotar.isPending;
 
@@ -1613,7 +1618,7 @@ export function AdocaoDialog({
       <FormField label="Porta de acesso *">
         <input value={porta} onChange={(e) => setPorta(e.target.value)} />
       </FormField>
-      <FormField label="Trunk do edge">
+      <FormField label={exigirTrunk ? "Trunk do edge *" : "Trunk do edge"} help={help("adocao.trunk")}>
         <input value={trunk} onChange={(e) => setTrunk(e.target.value)} />
       </FormField>
       <FormField label="Organização" help={help("adocao.organizacao")}>
@@ -1716,12 +1721,13 @@ export function AdocaoDialog({
 }
 ```
 
-Acrescente ao `help.ts` as três chaves que o componente usa: `adocao.acesso` ("De que switch e
-porta o cliente chega: a configuração do edge não tem isso."), `adocao.organizacao` ("A
-organização é casada pelo ASN do par; criar uma nova exige o nome.") e `adocao.ciente` ("As
-diferenças listadas fariam o render mudar o equipamento. Marcar aqui registra que você
-assumiu, e a decisão fica na auditoria."). O `npm run build` valida as chaves, porque
-`HelpKey` é derivado do objeto.
+Acrescente ao `help.ts` as quatro chaves que o componente usa: `adocao.acesso` ("De que switch
+e porta o cliente chega: a configuração do edge não tem isso."), `adocao.organizacao` ("A
+organização é casada pelo ASN do par; criar uma nova exige o nome."), `adocao.trunk` ("O trunk
+do edge onde as subinterfaces do circuito moram. Sem ele a SoT não reproduz o bloco da
+subinterface do equipamento.") e `adocao.ciente` ("As diferenças listadas fariam o render
+mudar o equipamento. Marcar aqui registra que você assumiu, e a decisão fica na auditoria.").
+O `npm run build` valida as chaves, porque `HelpKey` é derivado do objeto.
 
 - [ ] **Step 5: Wire it into the page**
 
