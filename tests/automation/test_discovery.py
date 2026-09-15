@@ -1307,29 +1307,7 @@ def test_definicao_que_o_equipamento_ja_tem_nao_vira_diferenca(db_session, tmp_p
     """
     dev = _ambiente(db_session)
     _com_prefixos_autorizados(db_session)
-    _com_texto(db_session, dev, tmp_path,
-               "interface Eth-Trunk127.1001\n"
-               " vlan-type dot1q 1001\n"
-               " ip address 100.64.10.0 255.255.255.254\n"
-               " ipv6 enable\n"
-               " ipv6 address 2804:194C:1000::1100:73:1 126\n"
-               "#\n"
-               "ip ip-prefix IP-PFX-64512-IN-V4 index 10 permit 200.219.0.0/24\n"
-               "#\n"
-               "route-policy RP-64512-IMPORT-V4 permit node 10\n"
-               "# segundo nó não usado nesta borda\n"
-               " if-match ip-prefix IP-PFX-64512-IN-V4\n"
-               "#\n"
-               "ip ipv6-prefix IP-PFX-64512-IN-V6 index 10 permit 2001:DB8::/32\n"
-               "#\n"
-               "route-policy RP-64512-IMPORT-V6 permit node 10\n"
-               " if-match ipv6 address prefix-list IP-PFX-64512-IN-V6\n"
-               "#\n"
-               "bgp 65001\n"
-               " peer 100.64.10.1 as-number 64512\n"
-               " peer 100.64.10.1 description CLIENTE-ALFA\n"
-               " peer 2804:194C:1000::1100:73:2 as-number 64512\n"
-               " peer 2804:194C:1000::1100:73:2 description CLIENTE-ALFA-V6\n")
+    _com_texto(db_session, dev, tmp_path, _config_com_definicoes())
     alfa = _propostas(db_session, dev)[1001]
 
     definicoes = [d for d in conferir_fidelidade(db_session, alfa) if d.contexto == "definicao"]
@@ -1340,3 +1318,171 @@ def test_definicao_que_o_equipamento_ja_tem_nao_vira_diferenca(db_session, tmp_p
     # como "nenhuma diferença" e o teste passaria vazio.
     assert len(definicoes) == 4
     assert all(d.sobrando == () and d.faltando == () for d in definicoes)
+
+
+def _config_com_definicoes(corpo_v4: str = "if-match ip-prefix IP-PFX-64512-IN-V4") -> str:
+    """A configuração do ALFA com os blocos de definição que o render emite.
+
+    Os blocos saem na forma do VRP: cabeçalho na coluna 0 e corpo indentado. O
+    `#` com texto na coluna 0 dentro do bloco é a forma que o render deste
+    projeto emite (`# second-dot1q ...`, `# TE: ...`). O `corpo_v4` existe para
+    o teste divergir o corpo sem mexer na chave.
+    """
+    return (
+        "interface Eth-Trunk127.1001\n"
+        " vlan-type dot1q 1001\n"
+        " ip address 100.64.10.0 255.255.255.254\n"
+        " ipv6 enable\n"
+        " ipv6 address 2804:194C:1000::1100:73:1 126\n"
+        "#\n"
+        "ip ip-prefix IP-PFX-64512-IN-V4 index 10 permit 200.219.0.0/24\n"
+        "#\n"
+        "route-policy RP-64512-IMPORT-V4 permit node 10\n"
+        "# segundo nó não usado nesta borda\n"
+        f" {corpo_v4}\n"
+        "#\n"
+        "ip ipv6-prefix IP-PFX-64512-IN-V6 index 10 permit 2001:DB8::/32\n"
+        "#\n"
+        "route-policy RP-64512-IMPORT-V6 permit node 10\n"
+        " if-match ipv6 address prefix-list IP-PFX-64512-IN-V6\n"
+        "#\n"
+        "bgp 65001\n"
+        " peer 100.64.10.1 as-number 64512\n"
+        " peer 100.64.10.1 description CLIENTE-ALFA\n"
+        " peer 2804:194C:1000::1100:73:2 as-number 64512\n"
+        " peer 2804:194C:1000::1100:73:2 description CLIENTE-ALFA-V6\n"
+    )
+
+
+def test_o_corpo_divergente_da_definicao_aparece_nos_dois_lados(db_session, tmp_path) -> None:
+    """O caso que a tarefa existe para pegar: a chave é a mesma, o corpo do
+    equipamento é outro — as linhas do peer saem idênticas byte a byte e a
+    política que está lá não é a que o render emitiria. Sem a comparação do
+    corpo, a conferência sairia fiel."""
+    dev = _ambiente(db_session)
+    _com_prefixos_autorizados(db_session)
+    _com_texto(db_session, dev, tmp_path,
+               _config_com_definicoes("if-match ip-prefix OUTRA-LISTA"))
+    alfa = _propostas(db_session, dev)[1001]
+
+    definicoes = [d for d in conferir_fidelidade(db_session, alfa) if d.contexto == "definicao"]
+
+    divergente = next(
+        (d for d in definicoes if "if-match ip-prefix OUTRA-LISTA" in d.faltando), None
+    )
+    assert divergente is not None, "o corpo divergente não apareceu na conferência"
+    assert divergente.sobrando == ("if-match ip-prefix IP-PFX-64512-IN-V4",)
+    assert divergente.exige_ciente is True
+    # O resto casa linha a linha: só o corpo trocado vira diferença, e uma
+    # comparação que só olhasse o cabeçalho não acharia esta.
+    assert all(d.sobrando == () and d.faltando == () for d in definicoes if d is not divergente)
+
+
+def test_a_definicao_marcada_com_outra_sessao_pelo_dedup_e_conferida(
+    db_session, tmp_path,
+) -> None:
+    """O dedup do render apensa a definição uma vez só, com o id da PRIMEIRA
+    sessão que a produziu (`_apensa_definicao`). Num PE com dois enlaces do
+    mesmo cliente, o bloco do segundo vem marcado com o id do primeiro, que já
+    foi adotado: conferir pelo id deixaria a sessão do ensaio sem nada a
+    comparar, e o operador adotaria achando que a SoT reproduz o bloco. Quem a
+    sessão referencia, a conferência compara — esteja o bloco marcado com o id
+    de quem estiver.
+    """
+    from gerenet.domain.schemas import CircuitCreate
+    from gerenet.domain.services.circuits import create_circuit
+
+    dev = _ambiente(db_session)
+    org = _com_prefixos_autorizados(db_session)
+    site = db_session.scalar(select(models.Site))
+    # O primeiro enlace do cliente, já na SoT: mesmo ASN e, por isso, as mesmas
+    # definições — o texto idêntico é o que faz o dedup do render pular o bloco.
+    adotado = create_circuit(db_session, CircuitCreate(
+        code="CIRC-ADOTADO-64512", organization_id=org.id, site_id=site.id,
+        access_device_id=dev.id, access_port="GE0/0/9", edge_device_id=dev.id,
+    ), actor="cli")
+    db_session.add(models.BgpSession(
+        circuit_id=adotado.id, device_id=dev.id, afi="ipv4",
+        local_address="100.64.140.0", remote_address="100.64.140.1",
+        asn_local=65001, asn_remote=64512,
+    ))
+    db_session.commit()
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+
+    definicoes = [d for d in conferir_fidelidade(db_session, alfa) if d.contexto == "definicao"]
+    sobras = [linha for d in definicoes for linha in d.sobrando]
+
+    assert any("IP-PFX-64512-IN-V4" in linha for linha in sobras)
+    assert any("RP-64512-IMPORT-V4" in linha for linha in sobras)
+
+
+def test_o_perfil_de_exportacao_da_revisao_entra_no_ensaio(db_session, tmp_path) -> None:
+    """O produto de exportação é justamente o que o operador escolhe na revisão,
+    e a `Proposta` não carrega perfil nenhum: sem o mapa, o `_bloco_export` sai
+    cedo e a política que a SoT passaria a emitir fica fora da conferência — o
+    caso nomeado no design §6, descoberto."""
+    from gerenet.domain.services.policy_profiles import list_policy_profiles
+
+    dev = _ambiente(db_session)
+    _com_prefixos_autorizados(db_session)
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+    full_id = next(
+        p.id for p in list_policy_profiles(db_session, direction="export") if p.name == "full"
+    )
+
+    sem = [d for d in conferir_fidelidade(db_session, alfa) if d.contexto == "definicao"]
+    com = [
+        d for d in conferir_fidelidade(
+            db_session, alfa, perfis={"ipv4": {"export_profile_id": full_id}},
+        )
+        if d.contexto == "definicao"
+    ]
+
+    assert not any("RP-64512-EXPORT-V4" in linha for d in sem for linha in d.sobrando)
+    assert any("RP-64512-EXPORT-V4" in linha for d in com for linha in d.sobrando)
+    assert len(com) == len(sem) + 1
+
+
+def test_o_cabecalho_do_bloco_pula_o_comentario_de_abertura() -> None:
+    """O import de upstream abre com `# up-full: ...` (e o fail-safe, com
+    `# fail-safe: ...`) antes do `route-policy`: tomar a linha 0 como cabeçalho
+    faria a chave sair nula e o bloco seria pulado sem diferença nenhuma. Hoje o
+    ensaio não cria vínculo de upstream, então o caminho não é alcançável pela
+    conferência, e o teste chama o helper direto — como os do runner já fazem.
+    """
+    from gerenet.automation.discovery import _cabecalho_do_bloco, _chave_definicao
+
+    comandos = [
+        "# up-full: accept-all do provedor, exceto as proteções",
+        "route-policy RP-64512-IMPORT-V4 permit node 10",
+        "if-match ip-prefix IP-PFX-64512-IN-V4",
+    ]
+
+    assert _chave_definicao(_cabecalho_do_bloco(comandos)) == "route-policy RP-64512-IMPORT-V4"
+    assert _chave_definicao(_cabecalho_do_bloco(["# só comentário"])) is None
+
+
+def test_as_referencias_incluem_os_filtros_do_corpo_da_politica() -> None:
+    """Os filtros que só o caminho de upstream usa (`if-match as-path-filter` e
+    `if-match community-filter`) não são alcançáveis pelo ensaio hoje, e a regra
+    fica presa aqui em vez de ficar sem teste nenhum: um erro de digitação nela
+    passaria despercebido até o dia em que o caminho existir — em silêncio, que
+    é o modo de falha que esta conferência combate.
+    """
+    from gerenet.automation.discovery import _referencias
+
+    assert _referencias([
+        "peer 10.0.0.2 import route-policy RP-64501-IMPORT-V4",
+        "peer 10.0.0.2 export route-policy RP-64501-EXPORT-V4",
+    ]) == {"route-policy RP-64501-IMPORT-V4", "route-policy RP-64501-EXPORT-V4"}
+    assert _referencias([
+        "if-match as-path-filter AS-PATH-65001-OWN",
+        "if-match community-filter CF-64501-BLK-1",
+        "if-match ipv6 address prefix-list IP-PFX-64501-IN-V6",
+    ]) == {
+        "ip as-path-filter AS-PATH-65001-OWN",
+        "ip community-filter CF-64501-BLK-1",
+        "ip ipv6-prefix IP-PFX-64501-IN-V6",
+    }

@@ -18,7 +18,7 @@ from gerenet.automation.parsers.huawei_vrp.config_vrp import (
     PeerConfig,
     parse_config_vrp,
 )
-from gerenet.automation.render import render_desejado
+from gerenet.automation.render import TIPO_ORDEM, RenderResult, render_desejado
 from gerenet.automation.snapshots import texto_backup
 from gerenet.domain import models
 from gerenet.domain.services.bgp_sessions import list_sessions
@@ -881,8 +881,13 @@ def _mascara_senha(linha: str, endereco: str) -> str:
 # Blocos de DEFINIÇÃO: o render os emite para a sessão, e o filtro por linha de
 # peer os descarta. A chave é o cabeçalho sem o corpo, e as duas pontas usam a
 # MESMA regra, porque a premissa da comparação é que o texto é o mesmo comando.
-_TIPOS_DEFINICAO = ("prefix_list", "as_path_filter", "community_filter",
-                    "route_policy_import", "route_policy_export")
+#
+# Derivados do `TIPO_ORDEM` do render em vez de repetidos aqui: um tipo de
+# definição novo lá passa a ser conferido sem ninguém precisar lembrar, e o que
+# não é definição sai por nome — a subinterface, o bloco do peer e o
+# comentário-dívida, que não tem corpo a comparar.
+_NAO_DEFINICAO = ("subinterface", "bgp_peer", "comentario")
+_TIPOS_DEFINICAO = tuple(t for t in TIPO_ORDEM if t not in _NAO_DEFINICAO)
 
 
 def _chave_definicao(linha: str) -> str | None:
@@ -902,6 +907,77 @@ def _chave_definicao(linha: str) -> str | None:
     ):
         return f"ip {partes[1]} {partes[2]}"
     return None
+
+
+def _cabecalho_do_bloco(comandos: list[str]) -> str:
+    """O primeiro comando que não é comentário: o cabeçalho do bloco.
+
+    O import de upstream abre com `# up-full: ...` (e o fail-safe, com
+    `# fail-safe: ...`) antes do `route-policy`. Tomar a linha 0 como cabeçalho
+    faria a chave sair nula e o bloco seria pulado sem diferença nenhuma — o
+    modo de falha silencioso que esta conferência existe para fechar. Sem
+    comando nenhum, devolve o texto vazio, que não casa chave alguma.
+    """
+    return next((linha for linha in comandos if not linha.strip().startswith("#")), "")
+
+
+def _referencias(linhas: list[str]) -> set[str]:
+    """Chaves de definição que estas linhas de comando referenciam.
+
+    O bloco do peer nomeia a route-policy (`peer <endereço> import route-policy
+    <nome>` e `peer <endereço> export route-policy <nome>`), e o corpo de uma
+    route-policy nomeia os filtros que ela usa (`if-match ip-prefix <lista>`,
+    `if-match ipv6 address prefix-list <lista>`, `if-match as-path-filter
+    <nome>` e `if-match community-filter <nome>`). As chaves saem na mesma forma
+    que `_chave_definicao` reconhece no cabeçalho, que é como as duas pontas da
+    comparação se encontram.
+    """
+    saida: set[str] = set()
+    for bruta in linhas:
+        partes = bruta.split()
+        if "route-policy" in partes:
+            posicao = partes.index("route-policy") + 1
+            if posicao < len(partes):
+                saida.add(f"route-policy {partes[posicao]}")
+            continue
+        if len(partes) >= 3 and partes[0] == "if-match":
+            if partes[1] in ("ip-prefix", "as-path-filter", "community-filter"):
+                saida.add(f"ip {partes[1]} {partes[2]}")
+            elif len(partes) >= 5 and partes[1:4] == ["ipv6", "address", "prefix-list"]:
+                saida.add(f"ip ipv6-prefix {partes[4]}")
+    return saida
+
+
+def _chaves_do_ensaio(render: RenderResult, ids_sessoes: set[int]) -> set[str]:
+    """Chaves de definição que o ensaio referencia, em dois níveis.
+
+    O bloco do peer da sessão do ensaio nomeia as route-policies, e o corpo
+    delas nomeia os filtros. O `objeto_id` do bloco de definição NÃO serve de
+    critério: `_apensa_definicao` apensa a definição uma vez só, com o id da
+    PRIMEIRA sessão que a produziu, então num PE com dois enlaces do mesmo
+    cliente o bloco do segundo vem marcado com o id do primeiro — que a adoção
+    anterior já criou — e conferir por id deixaria a sessão do ensaio sem nada
+    a comparar, em silêncio. O bloco está no render; quem o referencia é que
+    decide se ele entra.
+    """
+    por_chave: dict[str, list[str]] = {}
+    for bloco in render.blocos:
+        if bloco.tipo not in _TIPOS_DEFINICAO:
+            continue
+        chave = _chave_definicao(_cabecalho_do_bloco(bloco.comandos))
+        if chave is not None:
+            por_chave.setdefault(chave, []).extend(bloco.comandos)
+    politicas = {
+        chave
+        for bloco in render.blocos
+        if bloco.objeto == "session" and bloco.objeto_id in ids_sessoes
+        for chave in _referencias(bloco.comandos)
+    }
+    return politicas | {
+        chave
+        for politica in politicas
+        for chave in _referencias(por_chave.get(politica, []))
+    }
 
 
 def _indice_definicoes(texto: str) -> dict[str, tuple[str, ...]]:
@@ -965,11 +1041,19 @@ def _trunk_da_subinterface(proposta: Proposta) -> str | None:
     return proposta.subinterface[: -len(sufixo)]
 
 
-def _ensaio(session: Session, proposta: Proposta) -> dict:
+def _ensaio(
+    session: Session, proposta: Proposta,
+    perfis: dict[str, dict[str, int | None]] | None = None,
+) -> dict:
     """Objetos transitórios com a forma do que a adoção criaria.
 
     Sem passar pelos serviços, que commitam: aqui nada pode virar escrito. O
     chamador desfaz a transação.
+
+    `perfis` é o mapa {afi: {"import_profile_id", "export_profile_id"}} do que o
+    operador escolheu na revisão. A `Proposta` não carrega perfil nenhum, e sem
+    ele o `_bloco_export` sai cedo: a política de exportação nem existiria no
+    ensaio, e é o produto dela que a revisão decide (design §6).
     """
     device = get_device(session, proposta.device_id)
     org_id = proposta.organizacao_id
@@ -1005,7 +1089,16 @@ def _ensaio(session: Session, proposta: Proposta) -> dict:
         # conseguiria criá-la: o ensaio espelha apenas o que nasceria de verdade.
         if dados.get("asn_remote") is None:
             continue
-        sessao = models.BgpSession(circuit_id=circ.id, device_id=device.id, **dados)
+        # Cópia porque o `**campos` não pode repetir argumento se a leitura um
+        # dia passar a preencher os perfis no dict da proposta: o que veio da
+        # revisão vence, e o resto passa como veio.
+        campos = dict(dados)
+        campos.update({
+            nome: valor
+            for nome, valor in (perfis or {}).get(dados.get("afi"), {}).items()
+            if nome in ("import_profile_id", "export_profile_id")
+        })
+        sessao = models.BgpSession(circuit_id=circ.id, device_id=device.id, **campos)
         session.add(sessao)
         sessoes.append(sessao)
     session.flush()
@@ -1032,8 +1125,17 @@ def _particiona_subinterface(linhas: tuple[str, ...]) -> tuple[tuple[str, ...], 
     return tuple(sorted(gerenciadas)), tuple(sorted(nao_gerenciadas))
 
 
-def conferir_fidelidade(session: Session, proposta: Proposta) -> list[Diferenca]:
+def conferir_fidelidade(
+    session: Session, proposta: Proposta,
+    *, perfis: dict[str, dict[str, int | None]] | None = None,
+) -> list[Diferenca]:
     """O que a SoT reproduziria × o que a configuração tem (spec §9).
+
+    `perfis` é o que o operador escolheu na revisão, no mapa {afi:
+    {"import_profile_id", "export_profile_id"}}, e é o que faz o ensaio emitir a
+    definição de exportação — o produto dela é justamente o que a revisão
+    decide. Sem o mapa, o ensaio fica sem perfil nenhum, como antes desta
+    interface existir.
 
     O ensaio roda o render de verdade, e não uma reimplementação da montagem
     dos comandos: é o mesmo código que a adoção usaria, então a conferência não
@@ -1095,7 +1197,7 @@ def conferir_fidelidade(session: Session, proposta: Proposta) -> list[Diferenca]
     ensaio = session.begin_nested()
     try:
         try:
-            criados = _ensaio(session, proposta)
+            criados = _ensaio(session, proposta, perfis)
         except IntegrityError:
             # Uma restrição de unicidade recusou o ensaio (a reserva que a
             # proposta pede já existe, na mesma grafia, é o caso comum): sem
@@ -1138,18 +1240,17 @@ def conferir_fidelidade(session: Session, proposta: Proposta) -> list[Diferenca]
                 faltando=gerenciadas,
                 nao_gerenciado=nao_gerenciadas,
             ))
-        # O corpo das definições da sessão (design §6). O índice é construído
-        # UMA vez para os blocos todos: dentro do laço, cada definição
-        # re-varreria a configuração inteira — a de uma borda real são centenas
-        # de KB por definição de cada sessão.
+        # O corpo das definições que a sessão do ensaio referencia (design §6).
+        # O índice é construído UMA vez para os blocos todos: dentro do laço,
+        # cada definição re-varreria a configuração inteira — a de uma borda
+        # real são centenas de KB por definição de cada sessão.
+        chaves = _chaves_do_ensaio(render, ids_sessoes)
         indice = _indice_definicoes(texto)
         for bloco in render.blocos:
-            if bloco.objeto != "session" or bloco.objeto_id not in ids_sessoes:
-                continue
             if bloco.tipo not in _TIPOS_DEFINICAO or not bloco.comandos:
                 continue
-            chave = _chave_definicao(bloco.comandos[0])
-            if chave is None:
+            chave = _chave_definicao(_cabecalho_do_bloco(bloco.comandos))
+            if chave is None or chave not in chaves:
                 continue
             esperado = _normaliza_linhas(bloco.comandos)
             encontrado = _normaliza_linhas(list(indice.get(chave, ())))
