@@ -260,6 +260,7 @@ class Circuit(Base):
     vrf: Mapped[str | None] = mapped_column(String(64))  # None = instância pública (§25.3)
     mtu: Mapped[int | None] = mapped_column(Integer)
     bandwidth: Mapped[str | None] = mapped_column(String(32))
+    velocidade_mbps: Mapped[int | None] = mapped_column(Integer)  # taxa contratada em Mbps (§3)
     bfd: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     p2p_v4_len: Mapped[int] = mapped_column(Integer, default=31, nullable=False)  # /31 padrão, /30 opção
     description: Mapped[str | None] = mapped_column(String(255))

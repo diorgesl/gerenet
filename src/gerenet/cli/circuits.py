@@ -43,6 +43,10 @@ def add(
     vrf: str | None = typer.Option(None, help="VRF (default: instância pública)."),
     mtu: int | None = typer.Option(None, min=576, max=9600, help="MTU."),
     bandwidth: str | None = typer.Option(None, help="Banda (ex.: 1Gbps)."),
+    velocidade_mbps: int | None = typer.Option(
+        None, "--velocidade-mbps", min=1, max=100000,
+        help="Velocidade contratada em Mbps (ex.: 1024 = 1 Gbps).",
+    ),
     bfd: bool = typer.Option(False, "--bfd", help="Habilita BFD."),
     p2p_v4_len: int = typer.Option(
         31, "--p2p-v4-len", min=30, max=31, help="Máscara p2p v4 (30 ou 31)."
@@ -69,6 +73,7 @@ def add(
                     vrf=vrf,
                     mtu=mtu,
                     bandwidth=bandwidth,
+                    velocidade_mbps=velocidade_mbps,
                     bfd=bfd,
                     p2p_v4_len=p2p_v4_len,
                     description=description,

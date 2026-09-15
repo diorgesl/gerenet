@@ -1,10 +1,12 @@
 import pytest
+from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from gerenet.domain import models
 from gerenet.domain.schemas import (
     CircuitCreate,
+    CircuitOut,
     CircuitUpdate,
     DeviceCreate,
     OrganizationCreate,
@@ -141,3 +143,48 @@ def test_circuito_edge_trunk_no_cadastro_e_no_update(db_session: Session) -> Non
     ]
     assert [e.type for e in eventos] == ["circuit.create", "circuit.update"]
     assert eventos[-1].details["depois"].get("edge_trunk") == "Eth-Trunk127"
+
+
+def test_velocidade_mbps_entra_e_sai_do_circuito(db_session: Session) -> None:
+    """O campo é do circuito, e não do render: é ele que a descrição e o QoS
+    derivam depois (§3)."""
+    org_id, site_id, sw_id, ne_id, _ = _ambiente(db_session)
+    circ = create_circuit(
+        db_session,
+        _circuito(site_id, org_id, sw_id, ne_id, code="CIRC-VEL-1", velocidade_mbps=1024),
+        actor="cli",
+    )
+    assert circ.velocidade_mbps == 1024
+    assert CircuitOut.model_validate(circ).velocidade_mbps == 1024
+
+
+def test_velocidade_mbps_nula_nao_e_zero(db_session: Session) -> None:
+    """Nula é "não sei a velocidade", e é o estado de todo circuito que já
+    existe (§3). Zero seria uma taxa."""
+    org_id, site_id, sw_id, ne_id, _ = _ambiente(db_session)
+    circ = create_circuit(
+        db_session, _circuito(site_id, org_id, sw_id, ne_id, code="CIRC-VEL-2"), actor="cli"
+    )
+    assert circ.velocidade_mbps is None
+
+
+def test_velocidade_mbps_recusa_valor_fora_da_faixa(db_session: Session) -> None:
+    """Um valor fora disso é erro de digitação, não uma taxa (§3). O erro é do
+    pydantic: a restrição mora no schema, antes de qualquer serviço."""
+    org_id, site_id, sw_id, ne_id, _ = _ambiente(db_session)
+    for invalido in (0, -1, 100001):
+        with pytest.raises(PydanticValidationError):
+            _circuito(site_id, org_id, sw_id, ne_id, velocidade_mbps=invalido)
+
+
+def test_velocidade_mbps_sobrevive_ao_update(db_session: Session) -> None:
+    """`update_circuit` faz `model_dump(exclude_unset=True)`: o campo precisa
+    estar nos dois schemas, senão o PATCH da web não o alcança (§8)."""
+    org_id, site_id, sw_id, ne_id, _ = _ambiente(db_session)
+    circ = create_circuit(
+        db_session, _circuito(site_id, org_id, sw_id, ne_id, code="CIRC-VEL-3"), actor="cli"
+    )
+    atualizado = update_circuit(
+        db_session, circ.id, CircuitUpdate(velocidade_mbps=500), actor="cli"
+    )
+    assert atualizado.velocidade_mbps == 500

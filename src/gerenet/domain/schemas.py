@@ -194,6 +194,7 @@ class CircuitCreate(BaseModel):
     vrf: str | None = Field(default=None, max_length=64)
     mtu: int | None = Field(default=None, ge=576, le=9600)
     bandwidth: str | None = Field(default=None, max_length=32)
+    velocidade_mbps: int | None = Field(default=None, gt=0, le=100000)
     bfd: bool = False
     p2p_v4_len: Literal[30, 31] = 31
     description: str | None = Field(default=None, max_length=255)
@@ -214,6 +215,7 @@ class CircuitUpdate(BaseModel):
     vrf: str | None = Field(default=None, max_length=64)
     mtu: int | None = Field(default=None, ge=576, le=9600)
     bandwidth: str | None = Field(default=None, max_length=32)
+    velocidade_mbps: int | None = Field(default=None, gt=0, le=100000)
     bfd: bool | None = None
     p2p_v4_len: Literal[30, 31] | None = None
     description: str | None = Field(default=None, max_length=255)
@@ -342,6 +344,7 @@ class CircuitOut(BaseModel):
     vrf: str | None
     mtu: int | None
     bandwidth: str | None
+    velocidade_mbps: int | None
     bfd: bool
     p2p_v4_len: int
     description: str | None
