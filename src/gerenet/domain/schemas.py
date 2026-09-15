@@ -1044,6 +1044,13 @@ class DiscoveryOut(BaseModel):
     aviso: str | None
     gerado_em: datetime
     propostas: list[PropostaOut]
+    # Os iBGP não têm proposta e não podem virar adoção: o lugar deles é a lista
+    # separada, e não o lixo do `propostas`.
+    internos: list[CandidatoOut] = []
+    # A idade do texto usado pela leitura: o motor recua para um snapshot mais
+    # antigo quando os recentes não têm a configuração, e o operador precisa
+    # saber se está olhando dez minutos ou três dias atrás.
+    snapshot_age_seconds: float | None = None
 
 
 class IgnorarIn(BaseModel):
@@ -1102,3 +1109,28 @@ class AdocaoIn(BaseModel):
     organizacao_nova: OrganizationCreate | None = None
     sessoes: list[AdocaoSessaoIn] = Field(default_factory=list)
     ciente: bool = False
+
+
+class DiferencaOut(BaseModel):
+    """Uma diferença da conferência, na forma do `Diferenca` do motor."""
+
+    contexto: str
+    sobrando: list[str]
+    faltando: list[str]
+    nao_gerenciado: list[str]
+    explicacao: str | None
+    exige_ciente: bool
+
+
+class FidelidadeOut(BaseModel):
+    """O diff de UMA proposta, pedido sob demanda (design §7)."""
+
+    device_id: int
+    subinterface: str | None
+    diferencas: list[DiferencaOut]
+
+
+class AdocaoOut(BaseModel):
+    """O que a adoção devolve: o circuito que nasceu na SoT."""
+
+    circuit_id: int
