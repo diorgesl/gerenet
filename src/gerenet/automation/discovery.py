@@ -12,7 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from gerenet.automation import naming
+from gerenet.automation import naming, subinterface
 from gerenet.automation.parsers.huawei_vrp.config_vrp import (
     ConfigVrp,
     PeerConfig,
@@ -798,53 +798,6 @@ class Diferenca:
         return bool(self.sobrando or self.faltando)
 
 
-def _equivalencia_vrp(texto: str) -> str:
-    """Duas linhas que o VRP escreve de duas formas, na forma do render.
-
-    `vlan-type dot1q 1001` e `vlan-type dot1q vid 1001` são a mesma linha, e o
-    mesmo vale para `ipv6 address <endereço> 126` e `<endereço>/126`. O parser
-    lê as duas formas e o render escreve a segunda, então sem a equivalência
-    toda proposta com VLAN e IPv6 nasce com dois falsos `sobrando` e dois falsos
-    `faltando` no contexto da subinterface, que é onde a mudança de estado da
-    interface tem de aparecer. São a mesma linha escrita de dois jeitos, não
-    dois estados: por isso é equivalência, e não normalização de conveniência.
-    """
-    partes = texto.split()
-    if len(partes) == 3 and partes[:2] == ["vlan-type", "dot1q"] and partes[2].isdigit():
-        return f"vlan-type dot1q vid {partes[2]}"
-    if len(partes) == 4 and partes[:2] == ["ipv6", "address"] and partes[3].isdigit():
-        return f"ipv6 address {partes[2]}/{partes[3]}"
-    return texto
-
-
-def _contexto_interface(texto: str, nome: str) -> set[str]:
-    """Linhas da configuração dentro do bloco `interface <nome>`.
-
-    O cabeçalho fica de fora daqui: ele abre o contexto, não é linha dele. Quem
-    compara o nome é a conferência, e por fora — ela põe `interface <nome>` nos
-    dois lados (`conferir_fidelidade`), porque o `<trunk>.<vid>` do render
-    contra o nome do bloco lido é a única linha que denuncia um trunk errado.
-
-    Comentário (`#`, com ou sem texto) também fica de fora, e antes da regra de
-    contexto: o `_normaliza_linhas` já descarta os dois do lado do render, e um
-    comentário com texto na coluna 0 zerava o `dentro` aqui — as linhas de
-    endereço que vinham depois ficavam de fora da comparação e o render as
-    acusava como sobra.
-    """
-    linhas: set[str] = set()
-    dentro = False
-    for bruta in texto.splitlines():
-        linha = bruta.strip()
-        if not linha or linha.startswith("#"):
-            continue
-        if not bruta[:1].isspace():
-            dentro = linha == f"interface {nome}"
-            continue
-        if dentro:
-            linhas.add(_equivalencia_vrp(linha))
-    return linhas
-
-
 def _contexto_peer(texto: str, endereco: str) -> set[str]:
     """Todas as linhas `peer <endereço> ...`, venham do bloco do bgp ou da seção
     de família (a indentação do contexto não interessa à comparação).
@@ -991,7 +944,7 @@ def _indice_definicoes(texto: str) -> dict[str, tuple[str, ...]]:
 
     Comentário é qualquer linha começando com `#`, e não só o separador
     sozinho, e ele some ANTES da regra de contexto — como no
-    `_contexto_interface` e no parser da configuração. O render deste projeto
+    `subinterface.linhas_da_interface` e no parser da configuração. O render deste projeto
     emite comentário com texto na coluna 0 dentro do bloco (`# up-full: ...`,
     `# TE: ...`), e tratá-lo como linha de topo fecharia o bloco ali mesmo: as
     linhas seguintes sairiam da leitura em silêncio e o render as acusaria como
@@ -1021,7 +974,7 @@ def _normaliza_linhas(linhas: list[str]) -> set[str]:
         texto = " ".join(linha.split())
         if not texto or texto.startswith(("#", "undo ")):
             continue
-        saida.add(_equivalencia_vrp(texto))
+        saida.add(subinterface.equivalencia_vrp(texto))
     return saida
 
 
@@ -1247,7 +1200,7 @@ def conferir_fidelidade(
             ))
         if proposta.subinterface is not None:
             esperado = _normaliza_linhas(comandos_sub)
-            encontrado = _contexto_interface(texto, proposta.subinterface)
+            encontrado = subinterface.linhas_da_interface(texto, proposta.subinterface)
             # O NOME da interface entra na conta, dos dois lados: o `<trunk>.<vid>`
             # que o render monta (com o trunk da revisão, que a adoção grava) e o
             # nome do bloco lido da configuração. O `discard` que estava aqui só

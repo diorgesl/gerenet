@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from gerenet.automation import removal, render
+from gerenet.automation import removal, render, subinterface
 from gerenet.domain import models
 from gerenet.domain.services.bgp_sessions import list_sessions
 from gerenet.domain.services.errors import ValidationError
@@ -81,7 +81,16 @@ def _ja_existe(bloco: render.BlocoRender, recursos: dict, texto: str) -> bool:
     if bloco.tipo == "subinterface":
         comandos = bloco.comandos or [""]
         nome = comandos[0].split(None, 1)[1] if " " in comandos[0] else ""
-        return nome in {i.get("nome") for i in recursos.get("interfaces", [])}
+        if nome not in {i.get("nome") for i in recursos.get("interfaces", [])}:
+            return False
+        # O nome está lá, mas o bloco pode estar sem a `description` e o QoS
+        # desta frente (§6): quem responde é o texto da configuração coletada.
+        # Backup ausente devolve conjunto vazio, e daí o bloco ENTRA no plano —
+        # é a direção conservadora: refazer um bloco idempotente é melhor do que
+        # dar por presente o que ninguém conseguiu conferir.
+        return subinterface.conteudo_conforme(
+            bloco.comandos, subinterface.linhas_da_interface(texto, nome)
+        )
     if bloco.tipo == "prefix_list":
         partes = bloco.comandos[0].split() if bloco.comandos else []
         if len(partes) >= 3 and partes[0] == "ip" and partes[1].endswith("-prefix"):

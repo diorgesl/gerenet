@@ -84,7 +84,15 @@ def _snapshot_encontrado(db_session, amb, tmp_path: Path, *, asn_peer=64512):
     """
     r = render.render_desejado(db_session, amb["dev"].id)
     arquivo = tmp_path / "cfg.txt"
-    arquivo.write_text(r.texto + "\n", encoding="utf-8")
+    # A forma do `display current-configuration`: cabeçalho na coluna 0 e
+    # sub-comandos indentados. O `RenderResult.texto` é plano, e escrevê-lo
+    # como veio daria um backup em que nenhum bloco de interface existe — o
+    # plano deixaria de pular o que já está lá e o teste mediria outra coisa.
+    corpo = "\n#\n".join(
+        "\n".join([b.comandos[0], *(f" {c}" for c in b.comandos[1:])])
+        for b in r.blocos
+    )
+    arquivo.write_text(corpo + "\n", encoding="utf-8")
     snap = models.DeviceSnapshot(
         device_id=amb["dev"].id, status="success",
         resources={
