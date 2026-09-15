@@ -1507,8 +1507,10 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 - Modify: `src/gerenet/domain/schemas.py` (`AdocaoIn`)
 - Modify: `src/gerenet/domain/services/discovery.py` (`adotar_proposta`)
 - Modify: `src/gerenet/api/routers/discovery.py` (`GET /fidelidade`)
+- Modify: `src/gerenet/cli/discovery.py` (`_imprime_fidelidade` no `adopt` — Ruling 21)
 - Test: `tests/domain/test_adocao.py`
 - Test: `tests/api/test_discovery_adopt_api.py` (`test_fidelidade_sob_demanda` — Ruling do pré-voo, 4)
+- Test: `tests/cli/test_discovery_cli.py` (`test_adopt_com_ciente_na_linha_de_comando` — Ruling 21)
 
 **Interfaces:**
 - Consumes: `Proposta.velocidade_mbps` (Task 6).
@@ -1517,6 +1519,45 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
   - `schemas.AdocaoIn.velocidade_mbps: int | None`.
   - `GET /api/v1/discovery/fidelidade` com os query params `circuit_code`, `organizacao_id`, `organizacao_nome`, `velocidade_mbps`.
   A Task 9 consome os quatro params na web.
+
+> **Ruling 21 — a prévia do `discovery adopt` entra nesta tarefa, e a regra de
+> organização do ensaio sai do brief.** A review da Task 7 achou dois Important, e
+> os dois são a mesma cadeia de identidade que a tarefa existe para fechar:
+>
+> 1. `_ensaio` faz `org_id = organizacao_id or proposta.organizacao_id`
+>    (`src/gerenet/automation/discovery.py:1061`, linha prescrita pelo Step 3a) e
+>    isso **sombra o `organizacao_nome`** sempre que a proposta já casou uma
+>    organização por ASN — que é o caso comum de um cliente já cadastrado. A
+>    adoção não faz isso: `adotar_proposta` usa `revisao.organizacao_id` e, se ele
+>    é `None`, cria a partir de `revisao.organizacao_nova`
+>    (`src/gerenet/domain/services/discovery.py:273,299-303`), sem consultar
+>    `proposta.organizacao_id`. O comentário logo abaixo (`discovery.py:1063-1067`)
+>    promete exatamente o contrário do que a linha faz. A direção perigosa é a
+>    espelhada: o ensaio compara contra o nome da proposta e a escrita grava o da
+>    revisão, então uma diferença **real** de descrição some do diff e a adoção
+>    deixa de pedir o `ciente` — que é o alarme que o §6 manda existir. Conserto:
+>    `org_id = organizacao_id or (None if organizacao_nome is not None else
+>    proposta.organizacao_id)`.
+> 2. O `adopt` do CLI imprime o diff sem a identidade
+>    (`src/gerenet/cli/discovery.py:283-287`) enquanto o comentário acima dele
+>    (`:277-282`) promete "os mesmos parâmetros que a adoção usa" e diz que o
+>    `--ciente` assume **estas** linhas. O comentário era verdade antes deste
+>    commit e vira mentira nele: o terminal passa a mostrar duas linhas de
+>    `description` (e dois `qos car`, quando a revisão traz velocidade) que a
+>    escrita não cria, e o aceite do runbook vira um "estou ciente" sobre linhas
+>    inexistentes — o oposto do que aquele bloco existe para impedir. Conserto:
+>    passar os quatro kwargs (`circuit_code`, `organizacao_id`,
+>    `organizacao_nome` do `organizacao_nova`, `velocidade_mbps`), todos
+>    disponíveis no `AdocaoIn` que o `--json` já carrega.
+>
+> O arquivo do CLI não estava em `Files:` porque o plano o escreveu olhando só a
+> web e a API; ele entra agora, junto do teste que prende a promessa do
+> comentário (`tests/cli/test_discovery_cli.py:378-415`). Nenhum dos dois é
+> trabalho novo: são a mesma correção, no ponto do terminal. — **Custo se
+> errado:** a adoção pelo CLI seguiria pedindo (ou escondendo) um `ciente` por
+> uma diferença de descrição que ninguém grava, e o `--ciente` da linha de
+> comando — que é o caminho do runbook — passaria a registrar um aceite sobre
+> linhas que o operador nunca viu.
 
 > **Ruling do pré-voo, 10 — a lista de testes quebrados estava certa, mas o
 > `Files:` desta tarefa não virava dois deles em passo nenhum.** O Ruling do
@@ -2023,7 +2064,9 @@ Expected: PASS. Se `tests/api` não tiver esse nome, rode `uv run pytest -q` e c
 ```bash
 git add src/gerenet/automation/discovery.py src/gerenet/domain/schemas.py \
         src/gerenet/domain/services/discovery.py src/gerenet/api/routers/discovery.py \
-        tests/domain/test_adocao.py tests/api/test_discovery_adopt_api.py
+        src/gerenet/cli/discovery.py \
+        tests/domain/test_adocao.py tests/api/test_discovery_adopt_api.py \
+        tests/cli/test_discovery_cli.py
 git commit -m "feat(adoção): o ensaio roda com a identidade que a revisão vai gravar, e a velocidade é gravada
 
 Co-Authored-By: Claude Code <noreply@anthropic.com>"
