@@ -646,3 +646,101 @@ def test_a_organizacao_nova_da_revisao_nao_e_sombreada_pela_da_proposta(
     assert diferenciais[0].exige_ciente is True
     assert any("description ADOC-64512-601 OUTRO NOME" in linha
                for linha in diferenciais[0].sobrando)
+
+
+# ---- as autorizações da revisão na conferência (design §6.4) ----
+
+# A mesma configuração do `_CONFIG_FIEL` com o que as autorizações produzem: o
+# `import route-policy` do peer e as duas definições que ele referencia, na forma
+# EXATA do render. A fixture do NE8000 não serve para esta pergunta — lá o import
+# está na ordem antiga do VRP (`peer ... route-policy ... import`), que difere do
+# render com ou sem autorização, e a pergunta ficaria confundida.
+_CONFIG_COM_AUTORIZACAO = (
+    "interface Eth-Trunk127.601\n"
+    " vlan-type dot1q 601\n"
+    " description ADOC-64512-601 CLIENTE ALFA\n"
+    " ip address 100.64.10.0 255.255.255.254\n"
+    " statistic enable\n"
+    "#\n"
+    "ip ip-prefix IP-PFX-64512-IN-V4 index 10 permit 138.121.28.0/22\n"
+    "#\n"
+    "route-policy RP-64512-IMPORT-V4 permit node 10\n"
+    " if-match ip-prefix IP-PFX-64512-IN-V4\n"
+    "#\n"
+    "bgp 65001\n"
+    " peer 100.64.10.1 as-number 64512\n"
+    " ipv4-family unicast\n"
+    "  peer 100.64.10.1 enable\n"
+    "  peer 100.64.10.1 import route-policy RP-64512-IMPORT-V4\n"
+)
+
+
+def test_a_conferencia_ve_as_autorizacoes_da_revisao(db_session, tmp_path) -> None:
+    """A conferência tem de enxergar as autorizações que a PRÓPRIA adoção cria.
+
+    Sem elas o `_bloco_import` do render sai cedo (ruling 4): o peer é renderizado
+    sem o `import route-policy` que o equipamento tem, a linha do equipamento
+    aparece como `faltando` e a adoção exige `ciente` para assumir uma linha que
+    a escrita desta mesma adoção cria — o aceite sobre a linha escrita.
+
+    O cenário é o da revisão que CRIA a organização e traz os blocos do registro,
+    com `ciente=False`: a adoção só passa se a conferência não tiver nada a
+    assumir.
+    """
+    _site, dev = _ambiente(db_session, tmp_path, texto=_CONFIG_COM_AUTORIZACAO)
+    prop = _proposta(db_session, dev, vid=601)
+
+    circ_id = adotar_proposta(
+        db_session, proposta=prop, actor="cli",
+        revisao=_revisao(dev, vid=601, ciente=False,
+                         sessoes=[AdocaoSessaoIn(afi="ipv4")],
+                         autorizacoes=[AdocaoAutorizacaoIn(prefix="138.121.28.0/22",
+                                                           family="ipv4")]),
+    )
+
+    # O `ciente=False` da revisão passou: é o gate do aceite dizendo que nenhuma
+    # diferença mudaria o equipamento.
+    assert db_session.get(models.Circuit, circ_id) is not None
+    # O diff inteiro ficou na auditoria (é ele que o `ciente` assume ou não), e
+    # os contextos que a conferência compara estão todos lá — as DUAS definições
+    # que a autorização produz (a prefix-list e a route-policy de importação)
+    # entram uma a uma, e o `definicao` ausente seria uma conferência que não
+    # chegou a comparar o corpo da política.
+    evento = db_session.scalars(
+        select(models.AuditEvent).where(models.AuditEvent.type == "discovery.adopt")
+    ).one()
+    diferencas = evento.details["depois"]["diferencas"]
+    assert [d["contexto"] for d in diferencas] == [
+        "peer", "subinterface", "definicao", "definicao",
+    ]
+    assert [(d["contexto"], d["sobrando"], d["faltando"])
+            for d in diferencas if d["sobrando"] or d["faltando"]] == []
+    # A autorização que a conferência viu é a que a escrita gravou.
+    assert [(a.prefix, a.family, a.origin) for a in _autorizacoes(db_session)] == [
+        ("138.121.28.0/22", "ipv4", "registro")
+    ]
+
+
+def test_a_colisao_de_nome_da_organizacao_diz_o_motivo(db_session, tmp_path) -> None:
+    """A organização nova que repete um nome já cadastrado é recusada com a mesma
+    frase do `create_organization` — e não com o `AVISO_SEM_ENSAIO`.
+
+    O ensaio CRIA a organização descartável com o nome da revisão (é ele que a
+    `description` da subinterface carrega) e o `flush` dele bate na unicidade do
+    §14.1 ANTES de a escrita chegar lá: sem a guarda, a recusa saía como "a
+    conferência não pôde ser feita", uma frase que manda o operador procurar
+    reserva de VLAN e de endereço — e o dono do nome, que é a causa, ficava de
+    fora do diagnóstico. Nada é gravado nos dois casos.
+    """
+    _site, dev = _ambiente(db_session, tmp_path, texto=_CONFIG_FIEL)
+    dona = create_organization(db_session, OrganizationCreate(name="Cliente Alfa"), actor="cli")
+    prop = _proposta(db_session, dev, vid=601)
+
+    with pytest.raises(ConflictError) as recusa:
+        adotar_proposta(db_session, proposta=prop, actor="cli",
+                        revisao=_revisao(dev, vid=601, ciente=True,
+                                         sessoes=[AdocaoSessaoIn(afi="ipv4")]))
+
+    assert str(recusa.value) == "Já existe organização com o nome Cliente Alfa."
+    assert db_session.scalars(select(models.Organization)).all() == [dona]
+    assert db_session.query(models.Circuit).count() == 0

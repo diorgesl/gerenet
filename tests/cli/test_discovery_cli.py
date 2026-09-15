@@ -421,6 +421,44 @@ def test_adopt_com_ciente_na_linha_de_comando(db_session, tmp_path) -> None:
     assert "description ADOC-CLI-CIENTE-FLAG CLIENTE CIENTE FLAG" in com_flag.output
 
 
+def test_adopt_leva_a_velocidade_da_revisao_para_a_previa(db_session, tmp_path) -> None:
+    """A velocidade contratada entra na PRÉVIA como entra na escrita.
+
+    O `qos car` do ensaio sai dela (§5), e a subinterface da fixture tem
+    `qos car cir 1024000 cbs 18700000 green pass red discard` nas duas direções —
+    a dobra do `equivalencia_vrp` casa a forma curta do render com a longa do
+    VRP. Sem o parâmetro, a prévia mostra duas linhas que a adoção não cria, e o
+    `--ciente` assume o que o operador não tem como conferir depois.
+    """
+    dev = _ambiente(db_session, tmp_path)
+    json_revisao = tmp_path / "revisao.json"
+    json_revisao.write_text(json.dumps({
+        "device_id": dev.id, "vrf": None, "subinterface": "Eth-Trunk127.1001",
+        "circuit_code": "ADOC-CLI-VELOCIDADE", "access_device_id": dev.id,
+        "access_port": "GE0/0/1", "edge_trunk": "Eth-Trunk127",
+        "velocidade_mbps": 1024,
+        "organizacao_nova": {"name": "Cliente Velocidade", "kind": "downstream",
+                             "asn": 64512},
+        "sessoes": [{"afi": "ipv4"}, {"afi": "ipv6"}],
+        "ciente": True,
+    }), encoding="utf-8")
+
+    r = runner.invoke(cli_app, ["discovery", "adopt", dev.name, "100.64.10.1",
+                                "--json", str(json_revisao)])
+    assert r.exit_code == 0, r.output
+    # O bloco da subinterface foi impresso (as diferenças de descrição do enlace
+    # existem: o equipamento tem `CLIENTE-ALFA` e a revisão escreve outra), e
+    # nenhuma linha de `qos car` sobrou: a taxa do render casou com a do
+    # equipamento.
+    assert "fidelidade subinterface:" in r.output
+    assert "qos car" not in r.output
+    # E a velocidade que a revisão mandou é a que ficou gravada (§7).
+    circuito = db_session.scalar(
+        select(models.Circuit).where(models.Circuit.code == "ADOC-CLI-VELOCIDADE")
+    )
+    assert circuito.velocidade_mbps == 1024
+
+
 def test_adopt_com_arquivo_fora_de_utf8_nao_estoura(db_session, tmp_path) -> None:
     """Revisão com acento regravada em latin-1 por um editor antigo: o
     `UnicodeDecodeError` é `ValueError` e não `OSError`, então sem tratamento

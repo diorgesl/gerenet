@@ -141,6 +141,46 @@ def test_fidelidade_sob_demanda(client, db_session, tmp_path) -> None:
     assert definicao["exige_ciente"] is True
 
 
+def test_fidelidade_leva_a_identidade_da_revisao(client, db_session, tmp_path) -> None:
+    """O resto da identidade que o GET carrega: o código, a organização escolhida
+    na lista e o nome da organização nova.
+
+    Cada um deles muda a `description` que o ensaio emite (§4), e é por isso que
+    a conferência os recebe: a rota que perdesse um deles devolveria a descrição
+    do `ENSAIO-...` — a comparação de um circuito que a revisão não vai gravar.
+    (`edge_trunk` e `velocidade_mbps` já estão no `test_fidelidade_sob_demanda`.)
+    """
+    ambiente = _ambiente(db_session, tmp_path)
+    org = create_organization(
+        db_session, OrganizationCreate(name="Org Da Rota", asn=64999), actor="cli"
+    )
+    url = (f"/api/v1/discovery/fidelidade?device_id={ambiente['dev'].id}"
+           "&subinterface=Eth-Trunk127.1001")
+
+    def _sub(query: str) -> dict:
+        corpo = client.get(f"{url}{query}", headers=_auth()).json()
+        return next(d for d in corpo["diferencas"] if d["contexto"] == "subinterface")
+
+    # Sem parâmetro nenhum o ensaio monta o circuito descartável, e a descrição
+    # sai do `ENSAIO-...`: é a referência das três asserções seguintes.
+    assert any("description ENSAIO-" in linha for linha in _sub("")["sobrando"])
+
+    # O código da revisão nomeia a descrição...
+    com_codigo = _sub("&circuit_code=ADOC-API-1001")
+    assert any("description ADOC-API-1001 ENSAIO-" in linha
+               for linha in com_codigo["sobrando"])
+    # ...e o nome da organização nova entra com ele.
+    com_nome = _sub("&circuit_code=ADOC-API-1001&organizacao_nome=Cliente API")
+    assert any("description ADOC-API-1001 CLIENTE API" in linha
+               for linha in com_nome["sobrando"])
+
+    # A organização JÁ cadastrada entra por id e o nome dela é o que o render
+    # escreve: é o caminho de quem escolhe na lista da tela.
+    com_org = _sub(f"&circuit_code=ADOC-API-1001&organizacao_id={org.id}")
+    assert any("description ADOC-API-1001 ORG DA ROTA" in linha
+               for linha in com_org["sobrando"])
+
+
 def test_a_lista_traz_os_internos_e_a_idade_da_coleta(client, db_session, tmp_path) -> None:
     """Os dois campos novos da listagem, preenchidos: com o schema de um lado e a
     rota do outro, um campo que ninguém preenche chega vazio para sempre — e o

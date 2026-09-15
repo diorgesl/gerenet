@@ -1031,6 +1031,8 @@ def _ensaio(
     circuit_code: str | None = None,
     organizacao_id: int | None = None,
     organizacao_nome: str | None = None,
+    organizacao_kind: str | None = None,
+    autorizacoes: list[tuple[str, str]] | None = None,
     velocidade_mbps: int | None = None,
 ) -> dict:
     """Objetos transitórios com a forma do que a adoção criaria.
@@ -1049,13 +1051,23 @@ def _ensaio(
     nenhum. Sem valor na revisão, o ensaio deriva o trunk do nome da subinterface
     (o que a proposta sugere), que é o comportamento de quando não há revisão.
 
-    `circuit_code`, `organizacao_id`, `organizacao_nome` e `velocidade_mbps`
-    são a identidade que a revisão vai gravar, e entram pela mesma razão do
-    trunk: a `description` da subinterface deriva do código do circuito, do nome
-    da organização e da velocidade (§4). Sem eles, o ensaio emitiria a descrição
-    do código `ENSAIO-...` com a organização de mentira, e TODA adoção acusaria
-    uma diferença de descrição que a escrita não cria — pedindo `ciente` para
-    assumir uma linha que ninguém mudou.
+    `circuit_code`, `organizacao_id`, `organizacao_nome`, `organizacao_kind` e
+    `velocidade_mbps` são a identidade que a revisão vai gravar, e entram pela
+    mesma razão do trunk: a `description` da subinterface deriva do código do
+    circuito, do nome da organização e da velocidade (§4), e o `kind` da
+    organização é lido pelo render na hora de montar o conjunto de clientes
+    (`_autorizadas_clientes`). Sem eles, o ensaio emitiria a descrição do código
+    `ENSAIO-...` com a organização de mentira, e TODA adoção acusaria uma
+    diferença de descrição que a escrita não cria — pedindo `ciente` para assumir
+    uma linha que ninguém mudou.
+
+    `autorizacoes` é a lista de `(prefixo, família)` dos blocos que a revisão
+    traz do registro e que a adoção grava como autorização da organização nova.
+    Elas são o que faz o `_bloco_import` emitir o filtro de importação e a
+    route-policy que o peer referencia: sem elas, o ensaio renderiza um peer SEM
+    o `import route-policy` que o equipamento tem, e a linha do próprio
+    equipamento aparece como `faltando` — o `ciente` sobre a linha que esta
+    adoção escreve.
     """
     device = get_device(session, proposta.device_id)
     # O nome da revisão vence a organização que a proposta casou por ASN: é a
@@ -1071,21 +1083,41 @@ def _ensaio(
         # que a `description` da subinterface carrega — e um nome de mentira
         # aqui faria toda adoção acusar uma diferença de descrição que a escrita
         # não cria (§7).
-        # A organização do ensaio é descartável e existe pelo NOME: o render só
-        # lê `organization.name` (a descrição da subinterface, §4) e os ids das
-        # autorizações. O ASN do peer ficava gravado aqui e batia na unicidade
-        # do §14.1 justamente quando a revisão cria uma organização nova para um
-        # peer cujo ASN já tem dono — o caso comum, o do cliente já cadastrado —
-        # e o ensaio morria em `AVISO_SEM_ENSAIO` antes de comparar nada. Quem
-        # recusa o ASN repetido é a escrita (`_confere_asn_livre`), com a frase
-        # do conflito; o ensaio não tem por que antecipar isso com uma frase
-        # sobre restrição de unicidade.
+        # A organização do ensaio é descartável e existe pelo que o render lê
+        # dela: o `name` (a descrição da subinterface, §4), o `kind`
+        # (`_autorizadas_clientes` deixa as operadoras fora do conjunto de
+        # clientes) e as autorizações penduradas nela. O ASN do peer ficava
+        # gravado aqui e batia na unicidade do §14.1 justamente quando a revisão
+        # cria uma organização nova para um peer cujo ASN já tem dono — o caso
+        # comum, o do cliente já cadastrado — e o ensaio morria em
+        # `AVISO_SEM_ENSAIO` antes de comparar nada. Quem recusa o ASN repetido é
+        # a escrita (`_confere_asn_livre`), com a frase do conflito; o ensaio não
+        # tem por que antecipar isso com uma frase sobre restrição de unicidade.
         org = models.Organization(
             name=organizacao_nome or f"ENSAIO-{device.name}-{proposta.vid}",
+            # O `kind` da revisão vem junto pelo mesmo motivo do nome e do
+            # código; sem ele a descartável fica no default do modelo
+            # (`downstream`) e o ensaio de uma organização operadora sairia com
+            # autorizações que a operadora não tem.
+            kind=organizacao_kind or "downstream",
         )
         session.add(org)
         session.flush()
         org_id = org.id
+    if autorizacoes:
+        # Linhas de MODELO, e não o `create_authorization`: aquele serviço faz
+        # `session.rollback()` no próprio `IntegrityError` (docstring dele), e um
+        # rollback aqui dentro leva a transação EXTERNA junto com o SAVEPOINT —
+        # exatamente o que a conferência existe para impedir (ela roda dentro da
+        # transação da adoção). O que entra é a linha que o render lê:
+        # organização, família, prefixo e a origem que a escrita grava; o
+        # `admin_status` fica no default, que é o que o `list_authorizations`
+        # filtra.
+        for prefixo, family in autorizacoes:
+            session.add(models.BgpPrefixAuthorization(
+                organization_id=org_id, family=family, prefix=prefixo, origin="registro",
+            ))
+        session.flush()
     circ = models.Circuit(
         # O código da revisão: a `description` sai dele (§4), e um código de
         # mentira acusaria diferença em toda adoção.
@@ -1162,6 +1194,8 @@ def conferir_fidelidade(
     circuit_code: str | None = None,
     organizacao_id: int | None = None,
     organizacao_nome: str | None = None,
+    organizacao_kind: str | None = None,
+    autorizacoes: list[tuple[str, str]] | None = None,
     velocidade_mbps: int | None = None,
 ) -> list[Diferenca]:
     """O que a SoT reproduziria × o que a configuração tem (spec §9).
@@ -1184,6 +1218,16 @@ def conferir_fidelidade(
     subinterface deriva dos três primeiros (§4) e o `qos car` do quarto (§5):
     com a identidade errada, o ensaio acusa diferença de descrição e de taxa em
     toda adoção, e a revisão degenera em "marque o ciente sempre".
+
+    `organizacao_kind` é o `kind` da organização NOVA da revisão, e
+    `autorizacoes` são os blocos `(prefixo, família)` que ela traz do registro.
+    Os dois entram pelo mesmo princípio dos demais: o ensaio tem de ter a forma
+    exata do que a escrita produz. O `kind` é lido pelo render ao montar o
+    conjunto de clientes (`_autorizadas_clientes` exclui as operadoras), e as
+    autorizações são o que faz o `_bloco_import` emitir o filtro de importação:
+    sem elas o ensaio renderiza o peer SEM o `import route-policy` que o
+    equipamento tem, e a linha do equipamento aparece como `faltando` — o
+    `ciente` cobrado sobre a linha que a própria adoção cria.
 
     O ensaio roda o render de verdade, e não uma reimplementação da montagem
     dos comandos: é o mesmo código que a adoção usaria, então a conferência não
@@ -1248,7 +1292,8 @@ def conferir_fidelidade(
             criados = _ensaio(
                 session, proposta, perfis, edge_trunk,
                 circuit_code=circuit_code, organizacao_id=organizacao_id,
-                organizacao_nome=organizacao_nome, velocidade_mbps=velocidade_mbps,
+                organizacao_nome=organizacao_nome, organizacao_kind=organizacao_kind,
+                autorizacoes=autorizacoes, velocidade_mbps=velocidade_mbps,
             )
         except IntegrityError:
             # Uma restrição de unicidade recusou o ensaio (a reserva que a
