@@ -1317,6 +1317,7 @@ def test_adopt_com_json_grava_o_circuito(db_session, tmp_path) -> None:
     json_revisao.write_text(json.dumps({
         "device_id": dev.id, "vrf": None, "subinterface": "Eth-Trunk127.1001",
         "circuit_code": "ADOC-CLI-1001", "access_device_id": dev.id, "access_port": "GE0/0/1",
+        "edge_trunk": "Eth-Trunk127",
         "organizacao_nova": {"name": "Cliente CLI", "kind": "downstream", "asn": 64512},
         "sessoes": [{"afi": "ipv4"}, {"afi": "ipv6"}],
         "ciente": True,
@@ -1334,6 +1335,7 @@ def test_adopt_sem_ciente_onde_exige_sai_com_erro(db_session, tmp_path) -> None:
         "device_id": dev.id, "vrf": None, "subinterface": "Eth-Trunk127.1001",
         "circuit_code": "ADOC-CLI-SEM-CIENTE", "access_device_id": dev.id,
         "access_port": "GE0/0/1",
+        "edge_trunk": "Eth-Trunk127",
         "organizacao_nova": {"name": "Cliente CLI Sem Ciente", "kind": "downstream",
                              "asn": 64512},
         "sessoes": [{"afi": "ipv4"}, {"afi": "ipv6"}],
