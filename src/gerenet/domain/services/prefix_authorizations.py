@@ -50,7 +50,14 @@ def _organizacao_conflitante(
 def create_authorization(
     session: Session, data: PrefixAuthorizationCreate, *, actor: str, commit: bool = True
 ) -> models.BgpPrefixAuthorization:
-    """Cria a autorização; `commit=False` é para a adoção encadear a dela."""
+    """Cria a autorização; `commit=False` é para a adoção encadear a dela.
+
+    Sem `commit`, um conflito de integridade desfaz a transação inteira: o
+    `flush` falho já deixa a transação do chamador inutilizável
+    (`PendingRollbackError` na próxima tentativa de commit), então o `rollback`
+    daqui devolve a sessão limpa. Quem chamou trata o `ConflictError` como
+    fatal para a transação.
+    """
     org = get_organization(session, data.organization_id)
     if org.admin_status is False:
         raise ConflictError(f"Organização {org.name} desativada não recebe autorizações.")
@@ -104,6 +111,8 @@ def create_authorization(
         if commit:
             session.commit()
     except IntegrityError as exc:
+        # Sem `commit`, isto desfaz a transação encadeada do chamador — que já
+        # está inutilizável depois do `flush` falho.
         session.rollback()
         raise ConflictError(
             "Não foi possível criar a autorização de prefixo: conflito de integridade."
