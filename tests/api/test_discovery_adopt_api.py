@@ -13,6 +13,22 @@ from gerenet.domain.services.devices import create_device
 from gerenet.domain.services.sites import create_site, link_device
 
 FIXTURE = Path("tests/fixtures/huawei_vrp/ne8000_display_current_configuration.txt")
+# Dois peers na mesma VRF, nenhum deles em subinterface: são duas propostas órfãs
+# com `subinterface=None` e `vrf="VPNA"`, a identidade que o par não distingue.
+_CONFIG_DUAS_ORFAS = (
+    "sysname NE8000-DUAS\n"
+    "#\n"
+    "interface Eth-Trunk127.601\n"
+    " vlan-type dot1q 601\n"
+    " ip address 100.64.10.0 255.255.255.254\n"
+    "#\n"
+    "bgp 65001\n"
+    " ipv4-family vpn-instance VPNA\n"
+    "  peer 10.99.0.1 as-number 64513\n"
+    "  peer 10.99.0.1 enable\n"
+    "  peer 10.99.0.2 as-number 64516\n"
+    "  peer 10.99.0.2 enable\n"
+)
 
 
 @pytest.fixture()
@@ -25,7 +41,7 @@ def _auth() -> dict[str, str]:
     return {"X-API-Key": "teste-key"}
 
 
-def _ambiente(db_session, tmp_path: Path) -> dict:
+def _ambiente(db_session, tmp_path: Path, *, texto: str | None = None) -> dict:
     site = create_site(db_session, SiteCreate(name="pop-adoc-api", p2p_ipv4_block="100.64.10.0/24"),
                        actor="cli")
     dev = create_device(db_session, DeviceCreate(name="ne8000-adoc-api",
@@ -33,7 +49,7 @@ def _ambiente(db_session, tmp_path: Path) -> dict:
                         actor="cli")
     link_device(db_session, site.id, dev.id, actor="cli")
     arquivo = tmp_path / "current.txt"
-    arquivo.write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    arquivo.write_text(texto or FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
     db_session.add(models.DeviceSnapshot(device_id=dev.id, status="success",
                                         raw_files={"config_backup": [str(arquivo)]}))
     db_session.commit()
@@ -161,3 +177,79 @@ def test_proposta_inexistente_e_404(client, db_session, tmp_path) -> None:
     # A rota ausente também devolve 404 (`{"detail": "Not Found"}`): a mensagem é
     # o que separa "não achei a proposta" do caminho que ainda não existe.
     assert "não encontrada" in resposta.json()["detail"]
+
+
+def test_identidade_ambigua_e_409(client, db_session, tmp_path) -> None:
+    """Duas propostas sem subinterface na mesma VRF: o par (subinterface, VRF) não
+    diz qual delas é a revisada.
+
+    A órfã é o peer em sub-rede compartilhada ou alcançado por rota, e o NE8000
+    real tem dezenas delas; escolher a primeira das duas entregaria o diff de um
+    peer e o conflito de outro, com a cara do que o operador abriu.
+    """
+    ambiente = _ambiente(db_session, tmp_path, texto=_CONFIG_DUAS_ORFAS)
+    lista = client.get(f"/api/v1/discovery?device_id={ambiente['dev'].id}",
+                       headers=_auth()).json()
+    # A premissa do teste, na resposta da lista: as duas órfãs da mesma VRF.
+    assert [p["subinterface"] for p in lista["propostas"]
+            if p["vrf"] == "VPNA"] == [None, None]
+
+    diff = client.get(f"/api/v1/discovery/fidelidade?device_id={ambiente['dev'].id}&vrf=VPNA",
+                      headers=_auth())
+    assert diff.status_code == 409
+    assert "ambígua" in diff.json()["detail"]
+
+    corpo = _payload(ambiente)
+    corpo["subinterface"] = None
+    corpo["vrf"] = "VPNA"
+    adotar = client.post("/api/v1/discovery/adopt", json=corpo, headers=_auth())
+    assert adotar.status_code == 409
+    assert "ambígua" in adotar.json()["detail"]
+    assert db_session.query(models.Circuit).count() == 0
+
+
+def test_sem_coleta_o_404_diz_o_motivo(client, db_session) -> None:
+    """Sem coleta com a configuração não há proposta nenhuma, e o 404 dizia que
+    alguém tinha adotado antes: afirmava o que não aconteceu."""
+    site = create_site(db_session, SiteCreate(name="pop-adoc-sem-coleta"), actor="cli")
+    dev = create_device(db_session, DeviceCreate(name="ne8000-adoc-sem-coleta",
+                                                 management_address="10.0.0.8", asn=65001),
+                        actor="cli")
+    link_device(db_session, site.id, dev.id, actor="cli")
+
+    resposta = client.post("/api/v1/discovery/adopt", json=_payload({"dev": dev}),
+                           headers=_auth())
+    assert resposta.status_code == 404
+    assert "coleta" in resposta.json()["detail"]
+    assert "adotada" not in resposta.json()["detail"]
+
+    diff = client.get(f"/api/v1/discovery/fidelidade?device_id={dev.id}"
+                      "&subinterface=Eth-Trunk127.1001", headers=_auth())
+    assert diff.status_code == 404
+    assert "coleta" in diff.json()["detail"]
+
+
+def test_erro_de_dominio_na_conferencia_e_404(client, db_session, tmp_path, monkeypatch) -> None:
+    """O `try` do GET cobre a conferência inteira, e não só a busca: o ensaio lê o
+    equipamento de dentro dela, e o equipamento apagado entre a listagem e o
+    render viraria 500.
+
+    A corrida não se reproduz de dentro do teste, então o que se fixa aqui é a
+    conversão (mesmo desenho do `test_conflito_ao_ignorar_e_409`): o serviço
+    levanta o erro de domínio e o router é quem o traduz.
+    """
+    from gerenet.domain.services.errors import NotFoundError
+
+    ambiente = _ambiente(db_session, tmp_path)
+
+    def _estoura(*args, **kwargs):
+        raise NotFoundError("O equipamento não existe mais.")
+
+    monkeypatch.setattr("gerenet.api.routers.discovery.conferir_fidelidade", _estoura)
+    resposta = client.get(
+        f"/api/v1/discovery/fidelidade?device_id={ambiente['dev'].id}"
+        "&subinterface=Eth-Trunk127.1001",
+        headers=_auth(),
+    )
+    assert resposta.status_code == 404
+    assert "não existe mais" in resposta.json()["detail"]
