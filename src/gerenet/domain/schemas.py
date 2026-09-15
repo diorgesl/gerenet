@@ -112,6 +112,7 @@ class SiteUpdate(BaseModel):
 class OrganizationCreate(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     legal_name: str | None = Field(default=None, max_length=255)
+    document: str | None = Field(default=None, max_length=32)
     kind: Literal["downstream", "parceiro", "operadora"] = "downstream"
     # Sem limites pydantic: a validação de ASN é do serviço (asn_valido), que
     # levanta ValidationError do gerenet também para valores fora da faixa.
@@ -123,6 +124,7 @@ class OrganizationCreate(BaseModel):
 class OrganizationUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=128)
     legal_name: str | None = Field(default=None, max_length=255)
+    document: str | None = Field(default=None, max_length=32)
     kind: Literal["downstream", "parceiro", "operadora"] | None = None
     asn: int | None = None
     irr_as_set: str | None = Field(default=None, max_length=64)
@@ -193,7 +195,7 @@ class PrefixAuthorizationCreate(BaseModel):
     organization_id: int
     family: Literal["ipv4", "ipv6"]
     prefix: str = Field(min_length=1, max_length=64)
-    origin: Literal["manual", "irr", "rpki"] = "manual"
+    origin: Literal["manual", "irr", "rpki", "registro"] = "manual"
     notes: str | None = None
 
 
@@ -272,6 +274,7 @@ class OrganizationOut(BaseModel):
     id: int
     name: str
     legal_name: str | None
+    document: str | None = Field(default=None, max_length=32)
     kind: str
     asn: int | None
     irr_as_set: str | None

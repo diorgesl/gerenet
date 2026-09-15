@@ -110,3 +110,22 @@ def test_downstreams_forca_kind(client: TestClient) -> None:
     # organizações comuns não aparecem no downstreams
     client.post("/api/v1/organizations", json={"name": "Parceiro X", "kind": "parceiro"}, headers=_auth())
     assert [o["name"] for o in client.get("/api/v1/downstreams", headers=_auth()).json()] == ["Down API"]
+
+
+def test_cria_organizacao_com_o_documento_do_registro(client: TestClient) -> None:
+    """`document` é o `ownerid` do registro: genérico, e não `cnpj`, porque
+    operadora estrangeira não tem CNPJ."""
+    resp = client.post(
+        "/api/v1/organizations",
+        json={"name": "Cliente Documento", "asn": 64530, "document": "13.172.064/0001-11"},
+        headers=_auth(),
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["document"] == "13.172.064/0001-11"
+
+    corpo = client.patch(
+        f"/api/v1/organizations/{resp.json()['id']}",
+        json={"document": "13.172.064/0002-22"},
+        headers=_auth(),
+    ).json()
+    assert corpo["document"] == "13.172.064/0002-22"
