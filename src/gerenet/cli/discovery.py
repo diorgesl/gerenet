@@ -1,8 +1,13 @@
 """Descoberta de peers: o que o equipamento tem e a SoT não conhece (§13).
 
-Somente leitura, mais a lista de ignorados. A adoção é a parte 2.
+Somente leitura NO EQUIPAMENTO: a lista de ignorados e a adoção escrevem na SoT,
+e nenhuma delas manda comando ao roteador — mudar o equipamento continua sendo
+change request.
 """
+from pathlib import Path
+
 import typer
+from pydantic import ValidationError as SchemaValidationError
 from sqlalchemy.orm import Session
 
 from gerenet.automation.discovery import (
@@ -12,8 +17,10 @@ from gerenet.automation.discovery import (
     listar_propostas,
 )
 from gerenet.db import get_session
+from gerenet.domain import schemas
 from gerenet.domain.services import devices as dev_svc
 from gerenet.domain.services.discovery import (
+    adotar_proposta,
     esquecer_ignorado,
     ignorar_candidato,
     listar_ignorados,
@@ -216,6 +223,48 @@ def mostrar(
             raise typer.Exit(1)
         _imprime_propostas([proposta])
         _imprime_fidelidade(conferir_fidelidade(session, proposta))
+
+
+@app.command("adopt")
+def adotar(
+    device: str = typer.Argument(..., help="ID ou nome do equipamento."),
+    peer: str = typer.Argument(..., help="Endereço remoto de um dos peers do enlace."),
+    json_revisao: str = typer.Option(..., "--json", help="Arquivo com a revisão (AdocaoIn)."),
+) -> None:
+    """Grava a cadeia da proposta na SoT. Nada é enviado ao equipamento."""
+    with get_session() as session:
+        encontrado = _resolve(session, device)
+        # A comparação é pela forma canônica, como no `show`: o IPv6 sai do
+        # equipamento em maiúsculas e o operador digita o que copiou da tela.
+        alvo = endereco_canonico(peer)
+        try:
+            revisao = schemas.AdocaoIn.model_validate_json(
+                Path(json_revisao).read_text(encoding="utf-8")
+            )
+            resultado = listar_propostas(session, encontrado.id)
+            proposta = next(
+                (p for p in resultado.propostas
+                 if any(c.remote_address == alvo for c in p.candidatos)),
+                None,
+            )
+            if proposta is None:
+                if resultado.aviso:
+                    # A mesma regra do `show`: "não está entre os candidatos" é
+                    # conclusão, e sem leitura inteira (ou com a parcial) ela
+                    # conclui o que nenhuma leitura sustenta.
+                    typer.echo(f"Aviso: {resultado.aviso}")
+                else:
+                    typer.echo("Peer não está entre os candidatos.", err=True)
+                raise typer.Exit(1)
+            circuit_id = adotar_proposta(session, proposta=proposta, revisao=revisao,
+                                         actor="cli")
+        except (GerenetError, SchemaValidationError) as exc:
+            typer.echo(f"Erro: {exc}", err=True)
+            raise typer.Exit(1) from exc
+        except OSError as exc:
+            typer.echo(f"Erro ao ler {json_revisao}: {exc}", err=True)
+            raise typer.Exit(1) from exc
+    typer.echo(f"Circuito {revisao.circuit_code} criado (id {circuit_id}).")
 
 
 @app.command("ignore")

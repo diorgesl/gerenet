@@ -1,4 +1,5 @@
 """CLI da descoberta (§13 do design)."""
+import json
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -302,3 +303,40 @@ def test_device_sem_coleta_avisa(db_session) -> None:
     r = runner.invoke(cli_app, ["discovery", "list", dev.name])
     assert r.exit_code == 0, r.output
     assert "Colete antes" in r.output
+
+
+def test_adopt_com_json_grava_o_circuito(db_session, tmp_path) -> None:
+    """O caminho de quem prefere resolver as pendências num arquivo a abrir a tela."""
+    dev = _ambiente(db_session, tmp_path)  # helper do próprio arquivo
+    json_revisao = tmp_path / "revisao.json"
+    json_revisao.write_text(json.dumps({
+        "device_id": dev.id, "vrf": None, "subinterface": "Eth-Trunk127.1001",
+        "circuit_code": "ADOC-CLI-1001", "access_device_id": dev.id, "access_port": "GE0/0/1",
+        "edge_trunk": "Eth-Trunk127",
+        "organizacao_nova": {"name": "Cliente CLI", "kind": "downstream", "asn": 64512},
+        "sessoes": [{"afi": "ipv4"}, {"afi": "ipv6"}],
+        "ciente": True,
+    }), encoding="utf-8")
+    r = runner.invoke(cli_app, ["discovery", "adopt", dev.name, "100.64.10.1",
+                                "--json", str(json_revisao)])
+    assert r.exit_code == 0, r.output
+    assert "ADOC-CLI-1001" in r.output
+
+
+def test_adopt_sem_ciente_onde_exige_sai_com_erro(db_session, tmp_path) -> None:
+    dev = _ambiente(db_session, tmp_path)
+    json_revisao = tmp_path / "revisao.json"
+    json_revisao.write_text(json.dumps({
+        "device_id": dev.id, "vrf": None, "subinterface": "Eth-Trunk127.1001",
+        "circuit_code": "ADOC-CLI-SEM-CIENTE", "access_device_id": dev.id,
+        "access_port": "GE0/0/1",
+        "edge_trunk": "Eth-Trunk127",
+        "organizacao_nova": {"name": "Cliente CLI Sem Ciente", "kind": "downstream",
+                             "asn": 64512},
+        "sessoes": [{"afi": "ipv4"}, {"afi": "ipv6"}],
+        "ciente": False,
+    }), encoding="utf-8")
+    r = runner.invoke(cli_app, ["discovery", "adopt", dev.name, "100.64.10.1",
+                                "--json", str(json_revisao)])
+    assert r.exit_code == 1
+    assert "ciente" in r.output
