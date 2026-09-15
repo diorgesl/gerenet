@@ -15,6 +15,7 @@ from gerenet.domain.services.circuits import create_circuit
 from gerenet.domain.services.errors import ConflictError, ValidationError
 from gerenet.domain.services.ipam import reservar_adocao
 from gerenet.domain.services.organizations import create_organization
+from gerenet.domain.services.prefix_authorizations import create_authorization
 from gerenet.domain.validators import endereco_canonico
 
 
@@ -267,6 +268,11 @@ def adotar_proposta(session: Session, *, proposta, revisao: schemas.AdocaoIn, ac
             "Informe a organização: escolha uma existente ou crie a nova com o ASN "
             f"{asn_remoto}."
         )
+    if revisao.autorizacoes and revisao.organizacao_id is not None:
+        raise ValidationError(
+            "As autorizações de prefixo só entram com a organização nova: para uma "
+            "organização existente, cadastre os blocos na página dela."
+        )
 
     # O `stack` sai das sessões que vão nascer, e não do que a proposta sugeriu: o
     # circuito gravado não pode afirmar uma família que não tem sessão. Para a
@@ -287,6 +293,24 @@ def adotar_proposta(session: Session, *, proposta, revisao: schemas.AdocaoIn, ac
                 session, revisao.organizacao_nova, actor=actor, commit=False
             )
             organizacao_id = org.id
+
+        # Os blocos do registro entram na MESMA transação (§6 do design): a
+        # organização nova e o que ela pode anunciar nascem juntos, e o clique
+        # que aprovou a lista é o aceite humano do §6.4. A procedência fica
+        # gravada para uma auditoria futura saber o que veio da máquina.
+        for bloco in revisao.autorizacoes:
+            create_authorization(
+                session,
+                schemas.PrefixAuthorizationCreate(
+                    organization_id=organizacao_id,
+                    family=bloco.family,
+                    prefix=bloco.prefix,
+                    origin="registro",
+                    notes=f"Bloco do registro para AS{asn_remoto}, lido na adoção.",
+                ),
+                actor=actor,
+                commit=False,
+            )
 
         circuito = create_circuit(
             session,
@@ -321,6 +345,12 @@ def adotar_proposta(session: Session, *, proposta, revisao: schemas.AdocaoIn, ac
                 "snapshot_id": proposta.candidatos[0].snapshot_id,
                 "ciente": revisao.ciente,
                 "perfis": perfis,
+                # A lista que o operador aprovou no clique, para a trilha do
+                # aceite (§6.4) — cada autorização tem o `authorization.create`
+                # dela, e isto é o que amarra a lista ao que a originou.
+                "autorizacoes": [
+                    {"prefix": b.prefix, "family": b.family} for b in revisao.autorizacoes
+                ],
                 # Todas as diferenças, e não só as que o `ciente` assumiu: o grupo
                 # que a SoT não gerencia é o que o operador viu e não precisou
                 # aceitar, e o payload é trilha, não decisão (design §17.1). Quem

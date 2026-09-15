@@ -1,9 +1,11 @@
-"""Autorizações de prefixo de downstreams (§6.4) — origem manual, IRR ou RPKI.
+"""Autorizações de prefixo de downstreams (§6.4) — origem manual, IRR, RPKI ou registro.
 
-A origem (`manual`|`irr`|`rpki`) indica como o prefixo foi autorizado; nas
-origens IRR/RPKI a validação é consultiva (§10.4): nasce `nao_verificada` e é
+A origem (`manual`|`irr`|`rpki`|`registro`) indica como o prefixo foi autorizado;
+nas origens IRR/RPKI a validação é consultiva (§10.4): nasce `nao_verificada` e é
 recalculada por `revalidar_autorizacoes` (ao final do sync de ROAs do
-rpki-client e por CLI), sem nunca bloquear a autorização.
+rpki-client e por CLI), sem nunca bloquear a autorização. A origem `registro` é o
+bloco alocado lido do registro (design da organização por ASN) e fica sem
+validação: o bloco não é anúncio, então não há contra o que validar.
 """
 import logging
 
@@ -46,8 +48,16 @@ def _organizacao_conflitante(
 
 
 def create_authorization(
-    session: Session, data: PrefixAuthorizationCreate, *, actor: str
+    session: Session, data: PrefixAuthorizationCreate, *, actor: str, commit: bool = True
 ) -> models.BgpPrefixAuthorization:
+    """Cria a autorização; `commit=False` é para a adoção encadear a dela.
+
+    Sem `commit`, um conflito de integridade desfaz a transação inteira: o
+    `flush` falho já deixa a transação do chamador inutilizável
+    (`PendingRollbackError` na próxima tentativa de commit), então o `rollback`
+    daqui devolve a sessão limpa. Quem chamou trata o `ConflictError` como
+    fatal para a transação.
+    """
     org = get_organization(session, data.organization_id)
     if org.admin_status is False:
         raise ConflictError(f"Organização {org.name} desativada não recebe autorizações.")
@@ -60,15 +70,35 @@ def create_authorization(
             "Organização do tipo operadora não recebe autorizações de prefixo de cliente."
         )
     cidr_valido(data.prefix, data.family)  # CIDR alinhado da família certa (mensagens PT)
+    # §3.2: reexecutar a mesma operação não duplica. O `_organizacao_conflitante`
+    # abaixo ignora a própria organização, então sem esta guarda o prefixo
+    # repetido passaria calado — e é a lista da adoção que pode trazer o mesmo
+    # bloco duas vezes.
+    existente = session.scalars(
+        select(models.BgpPrefixAuthorization).where(
+            models.BgpPrefixAuthorization.organization_id == data.organization_id,
+            models.BgpPrefixAuthorization.family == data.family,
+            models.BgpPrefixAuthorization.prefix == data.prefix,
+            models.BgpPrefixAuthorization.admin_status.is_(True),
+        )
+    ).first()
+    if existente is not None:
+        return existente
     outra = _organizacao_conflitante(
         session, organization_id=data.organization_id, family=data.family, prefix=data.prefix
     )
     if outra is not None:
-        raise ConflictError(f"Prefixo {data.prefix} sobrepõe autorização de {outra.name}.")
+        # As duas organizações no texto: quem lê o 409 precisa saber de quem é o
+        # bloco e quem o pediu (design §7).
+        raise ConflictError(
+            f"Prefixo {data.prefix} sobrepõe autorização de {outra.name}: "
+            f"{org.name} não pode receber este bloco."
+        )
     dump = data.model_dump()
     auth = models.BgpPrefixAuthorization(**dump)
     # Origem IRR/RPKI: validação consultiva (§10.4) — nasce não verificada e é
-    # recalculada por revalidar_autorizacoes; origem manual fica sem validação.
+    # recalculada por revalidar_autorizacoes; origem manual e `registro` ficam
+    # sem validação (o bloco alocado não é anúncio, não há o que validar).
     if data.origin in ("irr", "rpki"):
         auth.validacao = "nao_verificada"
     session.add(auth)
@@ -78,13 +108,17 @@ def create_authorization(
             session, tipo="authorization.create", ator=actor, objeto="authorization",
             objeto_id=auth.id, antes=None, depois=dump,
         )
-        session.commit()
+        if commit:
+            session.commit()
     except IntegrityError as exc:
+        # Sem `commit`, isto desfaz a transação encadeada do chamador — que já
+        # está inutilizável depois do `flush` falho.
         session.rollback()
         raise ConflictError(
             "Não foi possível criar a autorização de prefixo: conflito de integridade."
         ) from exc
-    session.refresh(auth)
+    if commit:
+        session.refresh(auth)
     return auth
 
 
@@ -148,7 +182,11 @@ def revalidar_autorizacoes(session: Session) -> int:
       O payload é memoizado por ASN no lote (uma consulta por organização).
 
     Organização sem ASN ⇒ `log.warning` e `validacao` mantida (não conta).
-    Autorizações desativadas e de origem `manual` são ignoradas.
+    Entram no lote só as autorizações ATIVAS de origem `irr` ou `rpki` — o
+    filtro é `origin.in_(("irr", "rpki"))`. Ficam de fora as desativadas, as
+    de origem `manual` e as de origem `registro`: é o que mantém o bloco
+    alocado lido do registro longe da revalidação, que o marcaria `diverge`
+    para sempre.
 
     Um único commit ao final (o lote é uma transação; em exceção, rollback e a
     exceção sobe). Retorna quantas autorizações tiveram a `validacao` atualizada.

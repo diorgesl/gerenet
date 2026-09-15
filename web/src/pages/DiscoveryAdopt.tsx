@@ -6,11 +6,12 @@ import {
   useFidelidade,
   useOrganizations,
   usePolicyProfiles,
+  usePrefill,
 } from "@/api/hooks";
 import { FormField } from "@/components/FormField";
 import { Modal } from "@/components/Modal";
 import { help } from "@/help";
-import type { DiscoveryPropostaOut } from "@/api/types";
+import type { DiscoveryPropostaOut, OrganizationPrefillOut } from "@/api/types";
 
 /** O trunk do circuito, derivado do nome da subinterface.
  *
@@ -47,6 +48,15 @@ const LIMITE_DO_CAMINHO = 255;
 /** O trunk é digitado: a espera é o que segura a enxurrada de consultas. */
 const ESPERA_DO_TRUNK_MS = 300;
 
+/** Um bloco do registro na lista da revisão: o `marcado` é a escolha do
+ * operador e o `conflito` é o estado do bloco na SoT (§7). */
+type BlocoDoRegistro = {
+  prefix: string;
+  family: string;
+  conflito: string | null;
+  marcado: boolean;
+};
+
 /** A revisão de uma proposta (design §6). Montada pela página com `key` por
  * proposta, para o estado do formulário não vazar de uma para a outra.
  *
@@ -73,6 +83,7 @@ export function AdocaoDialog({
   const { data: organizacoes } = useOrganizations({ includeDisabled: true });
   const { data: policyProfiles } = usePolicyProfiles();
   const adotar = useAdotar();
+  const prefill = usePrefill();
   const [code, setCode] = useState(proposta.circuit_code_sugerido ?? "");
   const [acesso, setAcesso] = useState<number>(0);
   const [porta, setPorta] = useState("");
@@ -80,6 +91,11 @@ export function AdocaoDialog({
   const [trunkDaConferencia, setTrunkDaConferencia] = useState(trunkDoNome(proposta));
   const [orgId, setOrgId] = useState<number>(proposta.organizacao_id ?? 0);
   const [orgNome, setOrgNome] = useState(proposta.organizacao_sugerida ?? "");
+  const [razaoSocial, setRazaoSocial] = useState("");
+  const [documento, setDocumento] = useState("");
+  const [asSet, setAsSet] = useState("");
+  const [blocosDoRegistro, setBlocosDoRegistro] = useState<BlocoDoRegistro[]>([]);
+  const [avisosDoRegistro, setAvisosDoRegistro] = useState<string[]>([]);
   const [ciente, setCiente] = useState(false);
   // Os perfis vêm ANTES da conferência: ela é refeita quando eles mudam, porque
   // o corpo da política de exportação depende do produto escolhido.
@@ -183,8 +199,40 @@ export function AdocaoDialog({
     (mudam.length === 0 || ciente) &&
     !adotar.isPending;
 
+  // Depois de uma consulta explícita os três campos abaixo mostram o que o
+  // registro disse: um CNPJ vazio diz, com honestidade, que o registro não tem
+  // CNPJ para este ASN — manter um valor que o registro acabou de não confirmar
+  // seria uma mentira que o operador adotaria junto. O nome é a exceção: ele já
+  // chega sugerido pela descoberta, e apagá-lo jogaria fora um valor que o
+  // operador nunca digitou.
+  const buscarNoRegistro = () => {
+    if (asnRemoto === null) return;
+    prefill.mutate(asnRemoto, {
+      onSuccess: (dados: OrganizationPrefillOut) => {
+        const nome = dados.nome ?? dados.razao_social ?? "";
+        if (nome !== "") setOrgNome(nome);
+        setRazaoSocial(dados.razao_social ?? "");
+        setDocumento(dados.documento ?? "");
+        setAsSet(dados.as_set_sugerido ?? "");
+        setBlocosDoRegistro(
+          dados.blocos.map((b) => ({
+            prefix: b.prefix,
+            family: b.family,
+            conflito: b.conflito,
+            // O bloco em uso por outra organização nasce desmarcado (§7).
+            marcado: b.conflito === null,
+          })),
+        );
+        setAvisosDoRegistro(dados.avisos);
+      },
+    });
+  };
+
   const adotarProposta = () => {
-    let organizacaoNova: { name: string; kind: string; asn: number } | null = null;
+    let organizacaoNova: {
+      name: string; kind: string; asn: number;
+      legal_name: string | null; document: string | null; irr_as_set: string | null;
+    } | null = null;
     if (criarOrg) {
       // Inalcançável pela tela: a proposta sem ASN remoto é conflito e nem abre
       // esta revisão. O early return é o gate explícito do ASN que o corpo
@@ -194,7 +242,12 @@ export function AdocaoDialog({
       // O nome vai aparado: é ele que o gate mede quando diz que está
       // preenchido, e um espaço invisível faz uma organização repetida passar
       // por nova.
-      organizacaoNova = { name: orgNome.trim(), kind: "downstream", asn: asnRemoto };
+      organizacaoNova = {
+        name: orgNome.trim(), kind: "downstream", asn: asnRemoto,
+        legal_name: razaoSocial.trim() || null,
+        document: documento.trim() || null,
+        irr_as_set: asSet.trim() || null,
+      };
     }
     adotar.mutate(
       {
@@ -204,6 +257,13 @@ export function AdocaoDialog({
         edge_trunk: trunk || null,
         organizacao_id: criarOrg ? null : orgId,
         organizacao_nova: organizacaoNova,
+        // Só os blocos livres e marcados: o conflitante a API recusaria, e o
+        // desmarcado o operador não quis.
+        autorizacoes: criarOrg
+          ? blocosDoRegistro
+              .filter((b) => b.marcado && b.conflito === null)
+              .map((b) => ({ prefix: b.prefix, family: b.family }))
+          : [],
         // A lista sai das SESSÕES da proposta, e não dos candidatos: quem casa a
         // revisão com o que a leitura entregou é o `_sessao_da_proposta` do
         // serviço, pela família, e uma família sem sessão — o endereço que não é
@@ -298,18 +358,87 @@ export function AdocaoDialog({
         </select>
       </FormField>
       {criarOrg && (
-        <FormField
-          label="Nome da organização nova *"
-          erro={
-            orgNome.trim() === ""
-              ? "Informe o nome da organização nova."
-              : nomeLongo
-                ? `O nome da organização aceita até ${LIMITE_DO_NOME} caracteres.`
-                : undefined
-          }
-        >
-          <input value={orgNome} onChange={(e) => setOrgNome(e.target.value)} />
-        </FormField>
+        <>
+          <FormField
+            label="Nome da organização nova *"
+            erro={
+              orgNome.trim() === ""
+                ? "Informe o nome da organização nova."
+                : nomeLongo
+                  ? `O nome da organização aceita até ${LIMITE_DO_NOME} caracteres.`
+                  : undefined
+            }
+          >
+            <input value={orgNome} onChange={(e) => setOrgNome(e.target.value)} />
+          </FormField>
+          <section>
+            <button
+              type="button"
+              onClick={buscarNoRegistro}
+              disabled={prefill.isPending || asnRemoto === null}
+            >
+              {prefill.isPending ? "Consultando o registro…" : "Buscar no registro"}
+            </button>
+            {/* O que o registro devolve é sugestão: os campos acima seguem
+                editáveis, e nada é gravado antes do Adotar. */}
+            {prefill.error && (
+              <p role="alert">
+                {prefill.error instanceof ApiError
+                  ? prefill.error.message
+                  : "Falha ao consultar o registro."}
+              </p>
+            )}
+            {avisosDoRegistro.map((aviso, i) => (
+              <p key={`aviso-${i}`} role="status">{aviso}</p>
+            ))}
+          </section>
+          <FormField label="Razão social" help={help("adocao.razao_social")}>
+            <input value={razaoSocial} onChange={(e) => setRazaoSocial(e.target.value)} />
+          </FormField>
+          <FormField label="Documento (CNPJ/ownerid)" help={help("adocao.documento")}>
+            <input value={documento} onChange={(e) => setDocumento(e.target.value)} />
+          </FormField>
+          <FormField label="AS-SET (IRR)" help={help("adocao.as_set")}>
+            <input value={asSet} onChange={(e) => setAsSet(e.target.value)} />
+          </FormField>
+          {blocosDoRegistro.length > 0 && (
+            <section>
+              <h3>Blocos alocados no registro</h3>
+              <ul>
+                {blocosDoRegistro.map((b, i) => (
+                  // A chave é a posição: o prefixo é editável, e uma chave que
+                  // muda a cada tecla remontaria o input e perderia o foco. A
+                  // lista não reordena.
+                  <li key={i}>
+                    <input
+                      type="checkbox"
+                      aria-label={`Incluir ${b.prefix}`}
+                      checked={b.marcado}
+                      disabled={b.conflito !== null}
+                      onChange={() =>
+                        setBlocosDoRegistro((atual) =>
+                          atual.map((x) => (x === b ? { ...x, marcado: !x.marcado } : x)),
+                        )
+                      }
+                    />
+                    <input
+                      aria-label={`Prefixo do bloco ${i + 1}`}
+                      value={b.prefix}
+                      disabled={b.conflito !== null}
+                      onChange={(e) =>
+                        setBlocosDoRegistro((atual) =>
+                          atual.map((x) => (x === b ? { ...x, prefix: e.target.value } : x)),
+                        )
+                      }
+                    />
+                    <span> ({b.family})</span>
+                    {b.conflito !== null && <span> — em uso por {b.conflito}</span>}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+        </>
       )}
 
       {proposta.candidatos.map((c) => (

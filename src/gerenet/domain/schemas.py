@@ -112,6 +112,7 @@ class SiteUpdate(BaseModel):
 class OrganizationCreate(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     legal_name: str | None = Field(default=None, max_length=255)
+    document: str | None = Field(default=None, max_length=32)
     kind: Literal["downstream", "parceiro", "operadora"] = "downstream"
     # Sem limites pydantic: a validação de ASN é do serviço (asn_valido), que
     # levanta ValidationError do gerenet também para valores fora da faixa.
@@ -123,11 +124,43 @@ class OrganizationCreate(BaseModel):
 class OrganizationUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=128)
     legal_name: str | None = Field(default=None, max_length=255)
+    document: str | None = Field(default=None, max_length=32)
     kind: Literal["downstream", "parceiro", "operadora"] | None = None
     asn: int | None = None
     irr_as_set: str | None = Field(default=None, max_length=64)
     notes: str | None = None
     admin_status: bool | None = None
+
+
+class OrganizationPrefillBlocoOut(BaseModel):
+    """Um bloco alocado ao AS, na forma que a tela consome."""
+
+    prefix: str
+    family: Literal["ipv4", "ipv6"]
+    fonte: str
+    # Nome da organização que já tem autorização ativa sobre o bloco; nulo no
+    # caso comum (design §7).
+    conflito: str | None = None
+
+
+class OrganizationPrefillOut(BaseModel):
+    """O cadastro de uma organização lido do registro — nada aqui é gravado.
+
+    Resposta parcial é normal: ASN estrangeiro devolve identidade sem blocos,
+    ASN sem objeto no RADB devolve blocos sem nome, e o motivo de cada ausência
+    está em `avisos`.
+    """
+
+    asn: int
+    nome: str | None
+    razao_social: str | None
+    documento: str | None
+    pais: str | None
+    as_set_sugerido: str | None
+    as_sets: list[str]
+    blocos: list[OrganizationPrefillBlocoOut]
+    fontes: dict[str, str]
+    avisos: list[str]
 
 
 class ContactCreate(BaseModel):
@@ -193,7 +226,7 @@ class PrefixAuthorizationCreate(BaseModel):
     organization_id: int
     family: Literal["ipv4", "ipv6"]
     prefix: str = Field(min_length=1, max_length=64)
-    origin: Literal["manual", "irr", "rpki"] = "manual"
+    origin: Literal["manual", "irr", "rpki", "registro"] = "manual"
     notes: str | None = None
 
 
@@ -272,6 +305,7 @@ class OrganizationOut(BaseModel):
     id: int
     name: str
     legal_name: str | None
+    document: str | None = Field(default=None, max_length=32)
     kind: str
     asn: int | None
     irr_as_set: str | None
@@ -1083,10 +1117,26 @@ class IgnoradoOut(BaseModel):
 class AdocaoSessaoIn(BaseModel):
     """O que o operador decide por sessão; o resto vem da proposta."""
 
+    model_config = ConfigDict(extra="forbid")  # chave torta não passa calada (AdocaoIn)
+
     afi: Literal["ipv4", "ipv6"]
     import_profile_id: int | None = None
     export_profile_id: int | None = None
     password_ref: str | None = Field(default=None, max_length=255)
+
+
+class AdocaoAutorizacaoIn(BaseModel):
+    """Um bloco do registro que entra como autorização da organização nova.
+
+    Só vale junto de `organizacao_nova`: a organização existente já tem as
+    autorizações dela, e somá-las por aqui autorizaria prefixo que ninguém
+    revisou nesta tela.
+    """
+
+    model_config = ConfigDict(extra="forbid")  # chave torta não passa calada (AdocaoIn)
+
+    prefix: str = Field(min_length=1, max_length=64)
+    family: Literal["ipv4", "ipv6"]
 
 
 class AdocaoIn(BaseModel):
@@ -1096,7 +1146,16 @@ class AdocaoIn(BaseModel):
     que o operador corrige do que a proposta leu: o código sugerido, o acesso e
     o trunk do lado do cliente, os perfis de cada família e o caminho do segredo
     no Vault quando o equipamento tem senha.
+
+    `extra="forbid"` (nos três modelos, este e os dois filhos): o corpo vem de um
+    `--json` escrito à mão e a API responde 201 calada a uma chave digitada
+    errado — `sessoes` → `sesssoes` e a adoção segue sem a sessão que o operador
+    quis cadastrar. O 422 diz qual campo sobrou, em vez de seguir sem ele. O
+    `OrganizationCreate` aninhado fica de fora de propósito: é contrato de outros
+    clientes, e lá a chave a mais continua sendo ignorada.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     device_id: int
     vrf: str | None = None
@@ -1107,6 +1166,7 @@ class AdocaoIn(BaseModel):
     edge_trunk: str | None = Field(default=None, max_length=64)
     organizacao_id: int | None = None
     organizacao_nova: OrganizationCreate | None = None
+    autorizacoes: list[AdocaoAutorizacaoIn] = Field(default_factory=list)
     sessoes: list[AdocaoSessaoIn] = Field(default_factory=list)
     ciente: bool = False
 

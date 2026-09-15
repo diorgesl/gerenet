@@ -30,6 +30,7 @@ import type {
   MplsMemberIn,
   MplsMemberOut,
   OrganizationOut,
+  OrganizationPrefillOut,
   PlanoL2vcOut,
   PolicyProfileOut,
   PolicyProfileUpdateIn,
@@ -222,6 +223,7 @@ export const useSiteAtualizar = () => useAtualizar<Partial<SiteCreateIn> & { adm
 export type OrganizationCreateIn = {
   name: string;
   legal_name?: string | null;
+  document?: string | null;
   kind: "downstream" | "parceiro" | "operadora";
   asn?: number | null;
   irr_as_set?: string | null;
@@ -231,6 +233,16 @@ export const useOrganizationCriar = () =>
   useCriar<OrganizationCreateIn, OrganizationOut>("organizations", "/api/v1/organizations");
 export const useOrganizationAtualizar = () =>
   useAtualizar<Partial<OrganizationCreateIn> & { admin_status?: boolean }, OrganizationOut>("organizations", "/api/v1/organizations");
+
+/** A consulta ao registro é uma AÇÃO, e não um dado de tela: vai por mutation
+ * porque o operador a dispara pelo botão e porque o conflito de cada bloco é
+ * recalculado a cada chamada — um cache de query serviria um conflito velho. */
+export function usePrefill() {
+  return useMutation({
+    mutationFn: (asn: number) =>
+      apiFetch<OrganizationPrefillOut>(`/api/v1/organizations/prefill?asn=${asn}`),
+  });
+}
 
 export type ContactCreateIn = {
   organization_id: number;

@@ -8,8 +8,15 @@ from sqlalchemy import select
 from gerenet.api.main import create_app
 from gerenet.config import Settings, set_settings
 from gerenet.domain import models
-from gerenet.domain.schemas import DeviceCreate, SiteCreate
+from gerenet.domain.schemas import (
+    DeviceCreate,
+    OrganizationCreate,
+    PrefixAuthorizationCreate,
+    SiteCreate,
+)
 from gerenet.domain.services.devices import create_device
+from gerenet.domain.services.organizations import create_organization
+from gerenet.domain.services.prefix_authorizations import create_authorization
 from gerenet.domain.services.sites import create_site, link_device
 
 FIXTURE = Path("tests/fixtures/huawei_vrp/ne8000_display_current_configuration.txt")
@@ -155,6 +162,42 @@ def test_proposta_com_conflito_e_409(client, db_session, tmp_path) -> None:
     assert db_session.query(models.Circuit).count() == 0
 
 
+def test_chave_desconhecida_na_revisao_e_422(client, db_session, tmp_path) -> None:
+    """A chave digitada errado no `--json` do CLI não some calada.
+
+    O corpo da adoção vem de um arquivo escrito à mão: com o `extra="ignore"`
+    do Pydantic v2 o `documment` era descartado e a API respondia 201 — o
+    operador acreditava que o CNPJ entrou. O 422 chega na validação do corpo,
+    antes do serviço, então nada é gravado; e o mesmo payload com as chaves
+    certas segue, porque a recusa é da chave, não do corpo.
+    """
+    ambiente = _ambiente(db_session, tmp_path)
+    corpo = _payload(ambiente)
+
+    # Na raiz da revisão.
+    corpo["documment"] = "12.345.678/0001-99"
+    extra = client.post("/api/v1/discovery/adopt", json=corpo, headers=_auth())
+    assert extra.status_code == 422
+    assert "documment" in extra.text  # o 422 nomeia a chave que sobrou
+    del corpo["documment"]
+
+    # E nos dois filhos: o config é por modelo, e um payload torto de `sessoes`
+    # ou `autorizacoes` passaria calado se só o pai o tivesse.
+    corpo["sessoes"] = [{"afi": "ipv4", "perfil_import": 1}]
+    assert client.post("/api/v1/discovery/adopt", json=corpo,
+                       headers=_auth()).status_code == 422
+    corpo["sessoes"] = [{"afi": "ipv4"}, {"afi": "ipv6"}]
+
+    corpo["autorizacoes"] = [{"prefix": "138.121.28.0/22", "famly": "ipv4"}]
+    assert client.post("/api/v1/discovery/adopt", json=corpo,
+                       headers=_auth()).status_code == 422
+    corpo["autorizacoes"] = []
+
+    assert db_session.query(models.Circuit).count() == 0  # nenhuma recusa gravou
+    ok = client.post("/api/v1/discovery/adopt", json=corpo, headers=_auth())
+    assert ok.status_code == 201, ok.text
+
+
 def test_sem_ciente_onde_exige_e_422(client, db_session, tmp_path) -> None:
     """A proposta da fixture tem diferença de política, que muda o equipamento."""
     ambiente = _ambiente(db_session, tmp_path)
@@ -253,3 +296,33 @@ def test_erro_de_dominio_na_conferencia_e_404(client, db_session, tmp_path, monk
     )
     assert resposta.status_code == 404
     assert "não existe mais" in resposta.json()["detail"]
+
+
+def test_adopt_grava_as_autorizacoes_do_registro(client: TestClient, db_session, tmp_path) -> None:
+    ambiente = _ambiente(db_session, tmp_path)
+    corpo = _payload(ambiente)
+    corpo["autorizacoes"] = [{"prefix": "138.121.28.0/22", "family": "ipv4"}]
+
+    resp = client.post("/api/v1/discovery/adopt", json=corpo, headers=_auth())
+
+    assert resp.status_code == 201, resp.text
+    auths = db_session.scalars(select(models.BgpPrefixAuthorization)).all()
+    assert [(a.prefix, a.origin, a.validacao) for a in auths] == [
+        ("138.121.28.0/22", "registro", None)
+    ]
+
+
+def test_adopt_recusa_bloco_conflitante(client: TestClient, db_session, tmp_path) -> None:
+    outra = create_organization(
+        db_session, OrganizationCreate(name="Cliente Beta", asn=64513), actor="cli"
+    )
+    create_authorization(db_session, PrefixAuthorizationCreate(
+        organization_id=outra.id, family="ipv4", prefix="138.121.28.0/24"), actor="cli")
+    ambiente = _ambiente(db_session, tmp_path)
+    corpo = _payload(ambiente)
+    corpo["autorizacoes"] = [{"prefix": "138.121.28.0/22", "family": "ipv4"}]
+
+    resp = client.post("/api/v1/discovery/adopt", json=corpo, headers=_auth())
+
+    assert resp.status_code == 409
+    assert "Cliente Beta" in resp.json()["detail"]

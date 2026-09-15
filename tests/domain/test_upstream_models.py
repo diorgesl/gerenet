@@ -17,7 +17,7 @@ def test_upstream_defaults_e_unicidade(session, org_operadora):
 
 def test_org_kind_operadora_disponivel(session):
     assert "operadora" in models.ORG_KIND
-    assert models.AUTH_ORIGIN == ("manual", "irr", "rpki")
+    assert models.AUTH_ORIGIN == ("manual", "irr", "rpki", "registro")
     assert models.CHANGE_ESCOPO == ("circuito", "l2vc", "vsi", "upstream")
     assert "none" in models.VLAN_MODE
 

@@ -4,10 +4,17 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from gerenet.api.deps import Actor, require_actor
+from gerenet.automation.irr import IrrError, identificar_asn
 from gerenet.db import get_db
-from gerenet.domain.schemas import OrganizationCreate, OrganizationOut, OrganizationUpdate
+from gerenet.domain.schemas import (
+    OrganizationCreate,
+    OrganizationOut,
+    OrganizationPrefillOut,
+    OrganizationUpdate,
+)
 from gerenet.domain.services import organizations as svc
 from gerenet.domain.services.errors import ConflictError, NotFoundError, ValidationError
+from gerenet.domain.validators import asn_valido
 
 router = APIRouter(
     prefix="/api/v1/organizations", tags=["organizations"],
@@ -48,6 +55,30 @@ def listar(
     kind: Literal["downstream", "parceiro", "operadora"] | None = None,
 ) -> list:
     return svc.list_organizations(session, include_disabled=include_disabled, kind=kind)
+
+
+@router.get("/prefill", response_model=OrganizationPrefillOut)
+def prefill(asn: int) -> dict:
+    """O cadastro de uma organização lido do registro (design §8).
+
+    Declarada ANTES de `/{organization_id}`: o FastAPI casa as rotas na ordem
+    de declaração, e `/{organization_id}` capturaria `/prefill` como um id
+    inválido antes de chegar aqui.
+
+    O `asn` vem pela validação do `asn_valido` (a mesma do cadastro) e a falha
+    de consulta vira 503 — que é diferente do 404 de "não há dado nenhum".
+    """
+    if not asn_valido(asn):
+        raise HTTPException(status_code=422, detail=f"ASN inválido ou reservado: {asn}.")
+    try:
+        dados = identificar_asn(asn)
+    except IrrError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if not any([dados["nome"], dados["razao_social"], dados["blocos"]]):
+        raise HTTPException(
+            status_code=404, detail=f"O registro não devolveu nada para AS{asn}."
+        )
+    return {"asn": asn, **dados}
 
 
 @router.post("", response_model=OrganizationOut, status_code=201)

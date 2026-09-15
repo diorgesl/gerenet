@@ -35,7 +35,7 @@ PREFIX_KIND = ("p2p",)
 PONTA_LOCAL = ("inferior", "superior")
 DIRECTION = ("import", "export")
 PROFILE_KIND = ("produto",)
-AUTH_ORIGIN = ("manual", "irr", "rpki")
+AUTH_ORIGIN = ("manual", "irr", "rpki", "registro")
 USER_ROLES = ("visualizador", "operador", "aprovador", "executor", "administrador")
 CHANGE_ACTION = ("provision", "remove")
 CHANGE_CRITICALITY = ("baixa", "media", "alta")
@@ -197,6 +197,9 @@ class Organization(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     legal_name: Mapped[str | None] = mapped_column(String(255))
+    # O `ownerid` do registro (CNPJ no Brasil): genérico, e não `cnpj`, porque
+    # organização de operadora estrangeira não tem CNPJ.
+    document: Mapped[str | None] = mapped_column(String(32))
     kind: Mapped[str] = mapped_column(Enum(*ORG_KIND, name="org_kind"), default="downstream", nullable=False)
     asn: Mapped[int | None] = mapped_column(BigInteger, unique=True)
     irr_as_set: Mapped[str | None] = mapped_column(String(64))

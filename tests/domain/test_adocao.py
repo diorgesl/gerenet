@@ -6,10 +6,20 @@ from sqlalchemy import select
 
 from gerenet.automation.discovery import conferir_fidelidade, listar_propostas
 from gerenet.domain import models
-from gerenet.domain.schemas import AdocaoIn, AdocaoSessaoIn, DeviceCreate, SiteCreate
+from gerenet.domain.schemas import (
+    AdocaoAutorizacaoIn,
+    AdocaoIn,
+    AdocaoSessaoIn,
+    DeviceCreate,
+    OrganizationCreate,
+    PrefixAuthorizationCreate,
+    SiteCreate,
+)
 from gerenet.domain.services.devices import create_device
 from gerenet.domain.services.discovery import adotar_proposta
 from gerenet.domain.services.errors import ConflictError, ValidationError
+from gerenet.domain.services.organizations import create_organization
+from gerenet.domain.services.prefix_authorizations import create_authorization
 from gerenet.domain.services.sites import create_site, link_device
 
 FIXTURE = Path("tests/fixtures/huawei_vrp/ne8000_display_current_configuration.txt")
@@ -48,7 +58,8 @@ def _proposta(db_session, dev, *, vid=1001):
     return next(p for p in listar_propostas(db_session, dev.id).propostas if p.vid == vid)
 
 
-def _revisao(dev, *, vid=1001, ciente=True, edge_trunk="Eth-Trunk127", sessoes=None):
+def _revisao(dev, *, vid=1001, ciente=True, edge_trunk="Eth-Trunk127", sessoes=None,
+             autorizacoes=None):
     """A revisão do enlace do CLIENTE-ALFA (o vid 1001 da fixture).
 
     O `ciente` nasce ligado porque este enlace TEM diferença no grupo que muda:
@@ -69,6 +80,7 @@ def _revisao(dev, *, vid=1001, ciente=True, edge_trunk="Eth-Trunk127", sessoes=N
             AdocaoSessaoIn(afi="ipv4", password_ref=CAMINHO_SENHA),
             AdocaoSessaoIn(afi="ipv6"),
         ],
+        autorizacoes=autorizacoes or [],
         ciente=ciente,
     )
 
@@ -312,3 +324,146 @@ def test_recusa_da_sessao_desfaz_a_adocao_inteira(db_session, tmp_path) -> None:
     # A trilha é da mesma transação: o que o rollback desfez não deixa evento.
     assert "circuit.create" not in _tipos_auditados(db_session)
     assert "discovery.adopt" not in _tipos_auditados(db_session)
+
+
+# ---- as autorizações do registro na transação da adoção (design §6) ----
+
+def _autorizacoes(db_session) -> list[models.BgpPrefixAuthorization]:
+    return list(db_session.scalars(
+        select(models.BgpPrefixAuthorization).order_by(models.BgpPrefixAuthorization.prefix)
+    ))
+
+
+def test_adota_gravando_as_autorizacoes_do_registro(db_session, tmp_path) -> None:
+    """Os blocos entram na MESMA transação da organização e do circuito, com a
+    procedência gravada: é o que deixa uma auditoria futura saber quais
+    autorizações foram preenchidas pela máquina."""
+    _site, dev = _ambiente(db_session, tmp_path)
+    revisao = _revisao(dev, autorizacoes=[
+        AdocaoAutorizacaoIn(prefix="138.121.28.0/22", family="ipv4"),
+        AdocaoAutorizacaoIn(prefix="2804:2594::/32", family="ipv6"),
+    ])
+
+    adotar_proposta(db_session, proposta=_proposta(db_session, dev), revisao=revisao, actor="cli")
+
+    auths = _autorizacoes(db_session)
+    assert [a.prefix for a in auths] == ["138.121.28.0/22", "2804:2594::/32"]
+    org = db_session.scalars(select(models.Organization)).one()
+    assert {a.organization_id for a in auths} == {org.id}
+    assert {a.origin for a in auths} == {"registro"}
+    assert {a.validacao for a in auths} == {None}
+    assert all("AS64512" in a.notes for a in auths)
+    assert [e.type for e in db_session.scalars(select(models.AuditEvent))].count(
+        "authorization.create"
+    ) == 2
+
+
+def test_bloco_conflitante_desfaz_a_adocao_inteira(db_session, tmp_path) -> None:
+    """O conflito de sobreposição é por bloco (§7), e a guarda é de defesa em
+    profundidade: se um bloco conflitante chegar pela API, quem recusa é o
+    `create_authorization`, com o nome das duas organizações — e a transação
+    inteira desfaz, no mesmo estilo das outras guardas da adoção."""
+    outra = create_organization(
+        db_session, OrganizationCreate(name="Cliente Beta", asn=64513), actor="cli"
+    )
+    create_authorization(db_session, PrefixAuthorizationCreate(
+        organization_id=outra.id, family="ipv4", prefix="138.121.28.0/24"), actor="cli")
+    _site, dev = _ambiente(db_session, tmp_path)
+    revisao = _revisao(dev, autorizacoes=[
+        AdocaoAutorizacaoIn(prefix="138.121.28.0/22", family="ipv4"),
+    ])
+
+    with pytest.raises(ConflictError) as excinfo:
+        adotar_proposta(db_session, proposta=_proposta(db_session, dev), revisao=revisao,
+                        actor="cli")
+
+    assert "Cliente Beta" in str(excinfo.value)
+    assert "Cliente Alfa" in str(excinfo.value)
+    # Nada ficou: nem a organização nova, nem a autorização dela, nem o
+    # circuito. A autorização do Beta é a única que resta — ela nasceu com o
+    # `commit` do próprio serviço, antes da adoção, e o par (prefixo, dono)
+    # prova que o bloco /22 da adoção não passou.
+    assert db_session.scalars(select(models.Organization)).all() == [outra]
+    assert [(a.prefix, a.organization_id) for a in _autorizacoes(db_session)] == [
+        ("138.121.28.0/24", outra.id)
+    ]
+    assert db_session.scalars(select(models.Circuit)).all() == []
+
+
+def test_autorizacoes_com_organizacao_existente_sao_recusadas(db_session, tmp_path) -> None:
+    """A lista só vale com a organização nova: para uma existente, os blocos
+    dela se cadastram na página da organização — e somá-los calado aqui
+    autorizaria prefixo que ninguém revisou nesta tela."""
+    existente = create_organization(
+        db_session, OrganizationCreate(name="Cliente Existente", asn=64514), actor="cli"
+    )
+    _site, dev = _ambiente(db_session, tmp_path)
+    revisao = _revisao(dev, autorizacoes=[
+        AdocaoAutorizacaoIn(prefix="138.121.28.0/22", family="ipv4"),
+    ])
+    revisao.organizacao_nova = None
+    revisao.organizacao_id = existente.id
+
+    with pytest.raises(ValidationError, match="organização nova"):
+        adotar_proposta(db_session, proposta=_proposta(db_session, dev), revisao=revisao,
+                        actor="cli")
+
+    assert _autorizacoes(db_session) == []
+
+
+def test_autorizacoes_com_os_dois_campos_sao_recusadas(db_session, tmp_path) -> None:
+    """O corpo com `organizacao_id` E `organizacao_nova` é contraditório, e sem
+    esta guarda ele passava: a organização nova nem era criada (o id não é nulo)
+    e os blocos caiam calados na existente — a escrita que esta guarda existe
+    para proibir, e o caminho que o `--json` do CLI alcança."""
+    existente = create_organization(
+        db_session, OrganizationCreate(name="Cliente Existente", asn=64512), actor="cli"
+    )
+    _site, dev = _ambiente(db_session, tmp_path)
+    revisao = _revisao(dev, autorizacoes=[
+        AdocaoAutorizacaoIn(prefix="138.121.28.0/22", family="ipv4"),
+    ])
+    revisao.organizacao_id = existente.id  # e `organizacao_nova` fica como veio
+
+    with pytest.raises(ValidationError, match="organização nova"):
+        adotar_proposta(db_session, proposta=_proposta(db_session, dev), revisao=revisao,
+                        actor="cli")
+
+    assert _autorizacoes(db_session) == []
+    assert db_session.scalars(select(models.Organization)).all() == [existente]
+
+
+def test_operadora_nao_recebe_as_autorizacoes_da_adoção(db_session, tmp_path) -> None:
+    """Autorização de prefixo é de cliente: o operador tem
+    `expected_prefixes_v4`/`v6` no upstream, que são outra coisa. A guarda do
+    `create_authorization` continua valendo sem alteração."""
+    _site, dev = _ambiente(db_session, tmp_path)
+    revisao = _revisao(dev, autorizacoes=[
+        AdocaoAutorizacaoIn(prefix="138.121.28.0/22", family="ipv4"),
+    ])
+    revisao.organizacao_nova.kind = "operadora"
+
+    with pytest.raises(ValidationError, match="operadora"):
+        adotar_proposta(db_session, proposta=_proposta(db_session, dev), revisao=revisao,
+                        actor="cli")
+
+    assert db_session.scalars(select(models.Organization)).all() == []
+    assert _autorizacoes(db_session) == []
+
+
+def test_adotar_de_novo_nao_cria_nada(db_session, tmp_path) -> None:
+    """A segunda tentativa com a mesma revisão esbarra no nome da organização,
+    que já existe — e não deixa autorização nem circuito para trás."""
+    _site, dev = _ambiente(db_session, tmp_path)
+    proposta = _proposta(db_session, dev)
+    revisao = _revisao(dev, autorizacoes=[
+        AdocaoAutorizacaoIn(prefix="138.121.28.0/22", family="ipv4"),
+    ])
+    adotar_proposta(db_session, proposta=proposta, revisao=revisao, actor="cli")
+    antes = (len(_autorizacoes(db_session)), len(list(db_session.scalars(select(models.Circuit)))))
+
+    with pytest.raises(ConflictError):
+        adotar_proposta(db_session, proposta=proposta, revisao=revisao, actor="cli")
+
+    assert (len(_autorizacoes(db_session)),
+            len(list(db_session.scalars(select(models.Circuit))))) == antes

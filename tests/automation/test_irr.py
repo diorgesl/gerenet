@@ -14,8 +14,11 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import select
 
-from gerenet.automation.irr import IrrError, consultar
+from gerenet.automation.irr import IrrError, consultar, identificar_asn
 from gerenet.domain import models
+from gerenet.domain.schemas import OrganizationCreate, PrefixAuthorizationCreate
+from gerenet.domain.services.organizations import create_organization
+from gerenet.domain.services.prefix_authorizations import create_authorization
 
 # ---- respostas whois (formato irrd v4; case do plano: route 180.10.0.0/16) ----
 
@@ -86,13 +89,17 @@ RESPOSTA_LACNIC_SEM_INVERSAO = """% IP Client: 2804:22e8:a2b:fd00:59f6:a3fc:273e
 
 # ---- mocks de subprocess.run ----
 
-def _mapa_whois(chamadas: list[list[str]], respostas: dict[tuple[str, ...], str]):
+def _mapa_whois(chamadas: list[list[str]], respostas: dict[tuple[str, ...], str | bytes]):
     def _run(comando, **kwargs):
         chamadas.append(comando)
         chave = tuple(comando)
         if chave not in respostas:
             raise AssertionError(f"consulta whois não prevista no mock: {comando}")
-        return subprocess.CompletedProcess(comando, 0, stdout=respostas[chave], stderr="")
+        resposta = respostas[chave]
+        # `str` vira bytes UTF-8, como o whois devolveria; `bytes` passa direto —
+        # é assim que um teste entrega uma resposta em latin-1 de verdade.
+        bruto = resposta if isinstance(resposta, bytes) else resposta.encode("utf-8")
+        return subprocess.CompletedProcess(comando, 0, stdout=bruto, stderr=b"")
 
     return _run
 
@@ -451,3 +458,356 @@ def test_consultar_membro_prefixo_de_route_set_e_ignorado(session, monkeypatch):
         "prefixos": ["180.10.0.0/16", "2001:db8:1::/48"],
     }
     assert [c[-1] for c in chamadas] == ["AS-CUSTOMERS", "as64512"]
+
+
+# ---- decodificação: a resposta do nic.br é latin-1 (design §3) ----
+
+RESPOSTA_LATIN1 = (
+    "% owner: Núcleo de Inf. e Coord. do Ponto BR\n"
+    "route:          180.10.0.0/16\n"
+    "origin:         AS64512\n"
+).encode("latin-1")
+
+
+def _run_fiel(comando, **kwargs):
+    """`subprocess.run` de mentira com o comportamento que importa: com
+    `text=True` ele decodifica em UTF-8, como o real, e é aí que a resposta
+    latin-1 do nic.br derruba a chamada."""
+    if kwargs.get("text"):
+        # O real levantaria UnicodeDecodeError aqui dentro.
+        return subprocess.CompletedProcess(
+            comando, 0, stdout=RESPOSTA_LATIN1.decode("utf-8"), stderr=""
+        )
+    return subprocess.CompletedProcess(comando, 0, stdout=RESPOSTA_LATIN1, stderr=b"")
+
+
+def test_consultar_aceita_resposta_em_latin1(monkeypatch):
+    """O nic.br responde em latin-1, e com `text=True` a decodificação UTF-8
+    estourava DENTRO do `subprocess.run` — um `UnicodeDecodeError` que não é
+    `OSError` nem `SubprocessError`, logo fora do `except` do módulo: 500 no
+    lugar da falha de rede tratada."""
+    monkeypatch.setattr("gerenet.automation.irr.subprocess.run", _run_fiel)
+
+    assert consultar("lacnic", "64512")["prefixos"] == ["180.10.0.0/16"]
+
+
+# ---- identificar_asn: identidade e blocos alocados (design §4) ----
+
+RESPOSTA_AUT_NUM = """aut-num:        AS264289
+as-name:        PROVEINTERLTDA-AS
+descr:          PROVEINTER LTDA
+member-of:      AS-264289
+import:         from AS-ANY accept ANY
+export:         to AS-ANY announce AS-264289
+source:         RADB
+"""
+
+RESPOSTA_AUT_NUM_SEM_MEMBER = """aut-num:        AS13335
+as-name:        CLOUDFLARENET
+descr:          Cloudflare, Inc.
+source:         RADB
+"""
+
+RESPOSTA_AUT_NUM_TRES_SETS = """aut-num:        AS22548
+as-name:        NIC-BR-AS
+descr:          Núcleo de Inf. e Coord. do Ponto BR
+member-of:      AS-NIC-BR
+member-of:      AS-DNS-BR
+member-of:      AS-22548
+source:         RADB
+"""
+
+RESPOSTA_REGISTRO = """% Joint Whois - whois.lacnic.net
+% Delegated to: registro.br
+inetnum:     138.121.28.0/22
+aut-num:     AS264289
+owner:       PROVEINTER TELECOMUNICAÇÕES LTDA
+ownerid:     13.172.064/0001-11
+responsible: Núcleo de Inf. e Coord. do Ponto BR
+country:     BR
+
+inetnum:     2804:2594::/32
+owner:       PROVEINTER TELECOMUNICAÇÕES LTDA
+ownerid:     13.172.064/0001-11
+country:     BR
+"""
+
+# ASN fora do LACNIC: o registro responde com o rodapé de delegação e nenhum
+# `inetnum` — o dado existe pela metade, e a leitura tem de dizer isso.
+RESPOSTA_REGISTRO_ESTRANGEIRO = """% Joint Whois - whois.lacnic.net
+% Delegated to: ARIN
+% No match for AS13335
+"""
+
+
+def _cmd_direto(servidor: str, asn: int) -> tuple[str, ...]:
+    return ("whois", "-h", servidor, f"AS{asn}")
+
+
+def _mapa_do_registro(
+    asn: int, *, radb: str | bytes | None = None, registro: str | bytes | None = None
+) -> dict[tuple[str, ...], str | bytes]:
+    respostas: dict[tuple[str, ...], str | bytes] = {}
+    if radb is not None:
+        respostas[_cmd_direto("whois.radb.net", asn)] = radb
+    if registro is not None:
+        respostas[_cmd_direto("whois.lacnic.net", asn)] = registro
+    return respostas
+
+
+def test_identificar_asn_le_as_duas_fontes(session, monkeypatch):
+    """O `aut-num` do RADB dá a identidade; o registro dá o documento e os
+    blocos alocados — as duas fontes, cada uma com o que ela tem."""
+    monkeypatch.setattr("gerenet.automation.irr.subprocess.run",
+        _mapa_whois([], _mapa_do_registro(
+            264289, radb=RESPOSTA_AUT_NUM, registro=RESPOSTA_REGISTRO)))
+
+    payload = identificar_asn(264289)
+
+    assert payload["nome"] == "PROVEINTERLTDA-AS"
+    assert payload["razao_social"] == "PROVEINTER LTDA"  # o RADB vence o registro
+    assert payload["documento"] == "13.172.064/0001-11"
+    assert payload["pais"] == "BR"
+    assert payload["as_set_sugerido"] == "AS-264289"
+    assert payload["as_sets"] == ["AS-264289"]
+    assert payload["blocos"] == [
+        {"prefix": "138.121.28.0/22", "family": "ipv4", "fonte": "registro", "conflito": None},
+        {"prefix": "2804:2594::/32", "family": "ipv6", "fonte": "registro", "conflito": None},
+    ]
+    assert payload["fontes"]["blocos"] == "registro"
+    assert payload["avisos"] == []
+
+
+def test_identificar_asn_le_a_resposta_latin1_do_registro(session, monkeypatch):
+    """A resposta do nic.br vem em latin-1, e o acento do `owner` chega
+    inteiro: é a decodificação da Task 1 vista pela ponta que a motivou."""
+    monkeypatch.setattr("gerenet.automation.irr.subprocess.run",
+        _mapa_whois([], _mapa_do_registro(
+            264289, radb=RESPOSTA_AUT_NUM,
+            registro=RESPOSTA_REGISTRO.encode("latin-1"))))
+
+    payload = identificar_asn(264289)
+
+    assert payload["razao_social"] == "PROVEINTER LTDA"
+    assert payload["documento"] == "13.172.064/0001-11"
+
+
+def test_identificar_asn_estrangeiro_devolve_identidade_sem_blocos(session, monkeypatch):
+    """Fora do LACNIC não vem `owner` nem `inetnum`: sobra a identidade do RADB,
+    e a ausência tem de estar dita — não confundida com "não há dado nenhum"."""
+    monkeypatch.setattr("gerenet.automation.irr.subprocess.run",
+        _mapa_whois([], _mapa_do_registro(
+            13335, radb=RESPOSTA_AUT_NUM_SEM_MEMBER,
+            registro=RESPOSTA_REGISTRO_ESTRANGEIRO)))
+
+    payload = identificar_asn(13335)
+
+    assert payload["nome"] == "CLOUDFLARENET"
+    assert payload["blocos"] == []
+    assert payload["documento"] is None
+    assert any("inetnum" in aviso for aviso in payload["avisos"])
+
+
+def test_identificar_asn_sem_member_of_devolve_as_set_nulo(session, monkeypatch):
+    monkeypatch.setattr("gerenet.automation.irr.subprocess.run",
+        _mapa_whois([], _mapa_do_registro(
+            13335, radb=RESPOSTA_AUT_NUM_SEM_MEMBER,
+            registro=RESPOSTA_REGISTRO_ESTRANGEIRO)))
+
+    payload = identificar_asn(13335)
+
+    assert payload["as_set_sugerido"] is None
+    assert payload["as_sets"] == []
+
+
+def test_identificar_asn_com_member_of_multiplo_sugere_o_primeiro(session, monkeypatch):
+    """`member-of` pode vir múltiplo (e auto-referente): o primeiro vira
+    sugestão e todos ficam visíveis, porque a escolha é do operador."""
+    monkeypatch.setattr("gerenet.automation.irr.subprocess.run",
+        _mapa_whois([], _mapa_do_registro(
+            22548, radb=RESPOSTA_AUT_NUM_TRES_SETS,
+            registro=RESPOSTA_REGISTRO_ESTRANGEIRO)))
+
+    payload = identificar_asn(22548)
+
+    assert payload["as_set_sugerido"] == "AS-NIC-BR"
+    assert payload["as_sets"] == ["AS-NIC-BR", "AS-DNS-BR", "AS-22548"]
+
+
+def test_identificar_asn_com_uma_fonte_fora_ainda_responde(session, monkeypatch, caplog):
+    """Falha de UMA consulta não derruba o prefill: a outra responde e o motivo
+    vai em `avisos`. Só as duas juntas são falha de consulta."""
+    respostas = _mapa_do_registro(264289, registro=RESPOSTA_REGISTRO)
+
+    def _run(comando, **kwargs):
+        chave = tuple(comando)
+        if chave not in respostas:
+            raise subprocess.TimeoutExpired("whois", 20)
+        return subprocess.CompletedProcess(comando, 0, stdout=respostas[chave].encode("utf-8"), stderr=b"")
+
+    monkeypatch.setattr("gerenet.automation.irr.subprocess.run", _run)
+
+    with caplog.at_level(logging.WARNING, logger="gerenet.automation.irr"):
+        payload = identificar_asn(264289)
+
+    assert payload["documento"] == "13.172.064/0001-11"
+    assert payload["nome"] is None
+    assert any("RADB" in aviso for aviso in payload["avisos"])
+
+
+def test_identificar_asn_com_as_duas_fontes_fora_levanta_irr_error(session, monkeypatch):
+    monkeypatch.setattr("gerenet.automation.irr.subprocess.run",
+        _fake_falha(subprocess.TimeoutExpired("whois -h whois.radb.net", 20)))
+
+    with pytest.raises(IrrError, match="não há cache vivo"):
+        identificar_asn(264289)
+
+
+def test_identificar_asn_com_uma_fonte_fora_usa_o_cache_como_refugio(session, monkeypatch):
+    session.add(models.IrrCache(
+        source="registro", key="264289",
+        payload={"nome": "PROVEINTERLTDA-AS", "razao_social": "PROVEINTER LTDA",
+                 "documento": None, "pais": None, "as_set_sugerido": None,
+                 "as_sets": [], "blocos": [], "fontes": {}, "avisos": []},
+        queried_at=datetime.now(UTC),
+        # expires_at nulo: sem TTL, a linha nunca expira (critério simples E1-1)
+    ))
+    session.commit()
+    monkeypatch.setattr("gerenet.automation.irr.subprocess.run",
+        _fake_falha(subprocess.TimeoutExpired("whois -h whois.radb.net", 20)))
+
+    assert identificar_asn(264289)["nome"] == "PROVEINTERLTDA-AS"
+
+
+def test_identificar_asn_nao_serve_cache_com_forma_de_fora(session, monkeypatch):
+    """Payload de outro formato na chave do prefill é cache MISS.
+
+    O `gerenet irr query` aceita `--source` de texto livre e grava em
+    `irr_cache` sob a MESMA chave daqui (`source="registro"`, `key=str(asn)`):
+    um payload do `consultar` (`{"asns", "prefixos"}`) gravado ali seria
+    servido por 24 h como se fosse a resposta do registro — um ASN sem nome e
+    sem bloco nenhum, em cima de blocos que existem. A linha está fresca de
+    propósito: sem a guarda ela venceria a consulta.
+    """
+    session.add(models.IrrCache(
+        source="registro", key="264289",
+        payload={"asns": [264289], "prefixos": ["138.121.28.0/22"]},
+        queried_at=datetime.now(UTC),
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+    ))
+    session.commit()
+    disparos: list[list[str]] = []
+    monkeypatch.setattr("gerenet.automation.irr.subprocess.run",
+        _mapa_whois(disparos, _mapa_do_registro(
+            264289, radb=RESPOSTA_AUT_NUM, registro=RESPOSTA_REGISTRO)))
+
+    payload = identificar_asn(264289)
+
+    assert len(disparos) == 2  # as duas consultas do registro aconteceram
+    assert [b["prefix"] for b in payload["blocos"]] == [
+        "138.121.28.0/22", "2804:2594::/32"
+    ]
+    assert "asns" not in payload
+
+
+def test_identificar_asn_refugio_nao_devolve_cache_de_outra_forma(session, monkeypatch):
+    """A outra ponta da guarda: com a rede fora, o payload torto — vivo, sem
+    TTL — não é o refúgio. `IrrError` diz que não há cache vivo, em vez de o
+    operador receber a resposta de outro formato."""
+    session.add(models.IrrCache(
+        source="registro", key="264289",
+        payload={"asns": [264289], "prefixos": []},
+        queried_at=datetime.now(UTC),
+        expires_at=None,  # vivo (critério simples E1-1)
+    ))
+    session.commit()
+    monkeypatch.setattr("gerenet.automation.irr.subprocess.run",
+        _fake_falha(subprocess.TimeoutExpired("whois -h whois.radb.net", 20)))
+
+    with pytest.raises(IrrError, match="não há cache vivo"):
+        identificar_asn(264289)
+
+
+def test_identificar_asn_dentro_do_ttl_nao_refaz_o_whois(session, monkeypatch):
+    """O mock levanta em QUALQUER consulta depois da primeira: a segunda
+    chamada só pode ter vindo do cache."""
+    disparos: list[list[str]] = []
+    monkeypatch.setattr("gerenet.automation.irr.subprocess.run",
+        _mapa_whois(disparos, _mapa_do_registro(
+            264289, radb=RESPOSTA_AUT_NUM, registro=RESPOSTA_REGISTRO)))
+
+    primeira = identificar_asn(264289)
+    session.expire_all()
+    linha = _linha_cache(session, "registro", "264289")
+
+    assert linha is not None
+    assert [b["prefix"] for b in linha.payload["blocos"]] == [
+        b["prefix"] for b in primeira["blocos"]
+    ]
+    # Nenhum `conflito` no cache: ele é estado da SoT e muda entre consultas, e
+    # é por isso que a comparação acima é por prefixo — o payload cacheado não
+    # tem a chave, e o devolvido tem.
+    assert all("conflito" not in bloco for bloco in linha.payload["blocos"])
+
+    segunda = identificar_asn(264289)
+    assert len(disparos) == 2  # só as duas da primeira chamada
+    assert segunda["blocos"] == primeira["blocos"]
+
+
+def test_identificar_asn_marca_o_bloco_conflitante(session, monkeypatch):
+    """O bloco que sobrepõe autorização ativa de OUTRA organização sai marcado
+    com o nome dela; o livre sai nulo (design §7)."""
+    org_id = create_organization(
+        session, OrganizationCreate(name="Cliente Beta", asn=64512), actor="cli"
+    ).id
+    create_authorization(session, PrefixAuthorizationCreate(
+        organization_id=org_id, family="ipv4", prefix="138.121.28.0/24"), actor="cli")
+    monkeypatch.setattr("gerenet.automation.irr.subprocess.run",
+        _mapa_whois([], _mapa_do_registro(
+            264289, radb=RESPOSTA_AUT_NUM, registro=RESPOSTA_REGISTRO)))
+
+    payload = identificar_asn(264289)
+
+    assert payload["blocos"][0]["conflito"] == "Cliente Beta"
+    assert payload["blocos"][1]["conflito"] is None
+
+
+def test_identificar_asn_nao_cacheia_o_conflito(session, monkeypatch):
+    """Um bloco livre pode estar tomado daqui a uma hora: o conflito é
+    recalculado a cada chamada, inclusive na que vem do cache."""
+    monkeypatch.setattr("gerenet.automation.irr.subprocess.run",
+        _mapa_whois([], _mapa_do_registro(
+            264289, radb=RESPOSTA_AUT_NUM, registro=RESPOSTA_REGISTRO)))
+    assert identificar_asn(264289)["blocos"][0]["conflito"] is None  # enche o cache
+
+    org_id = create_organization(
+        session, OrganizationCreate(name="Cliente Gama", asn=64513), actor="cli"
+    ).id
+    create_authorization(session, PrefixAuthorizationCreate(
+        organization_id=org_id, family="ipv4", prefix="138.121.28.0/24"), actor="cli")
+
+    # Sem whois novo: o mock já não cobre nenhuma consulta.
+    monkeypatch.setattr("gerenet.automation.irr.subprocess.run",
+        _fake_falha(AssertionError("o cache não foi usado")))
+    assert identificar_asn(264289)["blocos"][0]["conflito"] == "Cliente Gama"
+
+
+def test_identificar_asn_bloco_torto_vira_aviso(session, monkeypatch):
+    """O registro às vezes devolve o `inetnum` fora do CIDR: o bloco é
+    ignorado com o motivo dito, e o que é CIDR desalinhado é normalizado (a
+    autorização exige alinhamento — oferecer o desalinhado seria oferecer um
+    422)."""
+    resposta = RESPOSTA_REGISTRO + (
+        "\ninetnum:     200.57.128/22\n"
+        "inetnum:     198.51.100.5/24\n"
+    )
+    monkeypatch.setattr("gerenet.automation.irr.subprocess.run",
+        _mapa_whois([], _mapa_do_registro(
+            264289, radb=RESPOSTA_AUT_NUM, registro=resposta)))
+
+    payload = identificar_asn(264289)
+
+    assert [b["prefix"] for b in payload["blocos"]] == [
+        "138.121.28.0/22", "2804:2594::/32", "198.51.100.0/24"
+    ]
+    assert any("200.57.128/22" in aviso for aviso in payload["avisos"])

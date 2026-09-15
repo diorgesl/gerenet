@@ -282,7 +282,7 @@ reservados **nos valores reais** do equipamento (não nos que o alocador daria) 
 auditoria, o evento `discovery.adopt` com o snapshot de origem, o `ciente` e o diff inteiro,
 com os dois grupos: o que não estiver lá não foi decidido por ninguém.
 
-Duas notas desta etapa:
+Duas notas e um passo desta etapa:
 
 **O nome da subinterface.** O projeto assume que ele **termina no VID** (`Eth-Trunk127.1001`)
 — é assim que o render o monta (`<trunk>.<vid>`), e é desse sufixo que a revisão deriva o
@@ -300,6 +300,23 @@ configuração (o TPID em decimal — `34984`, assunção 14 do checklist —, o
 lido como VLAN) não é uma VLAN: se ele virar o VID de uma proposta, a adoção recusa na
 reserva com `VID fora do intervalo permitido (2–4094)`. É caso para o registro da Etapa 2, e
 não para o `ciente`.
+
+**A consulta ao registro.** A revisão de uma proposta sem organização tem o botão **Buscar
+no registro**: ele lê o ASN do peer no RADB e no registro (LACNIC, que delega os ASNs
+brasileiros ao registro.br) e preenche o cadastro da organização nova — tudo sugestão até o
+Adotar, e a parte desta etapa que depende de um serviço de fora.
+
+- [ ] **Consulta ao registro**: na revisão de uma proposta sem organização,
+      clicar **Buscar no registro** num ASN real da operação e conferir
+      - [ ] o nome e a razão social contra o que a operação sabe do cliente;
+      - [ ] o documento contra o CNPJ do cadastro;
+      - [ ] os blocos listados contra os prefixos que o cliente anuncia;
+      - [ ] que um ASN estrangeiro (ex.: o de um provedor de trânsito) devolve
+            identidade sem blocos, com o aviso — e não uma tela vazia;
+      - [ ] que um bloco já autorizado para outra organização aparece
+            desmarcado, com o nome dela.
+      Nada disso vai ao equipamento: a leitura é do registro, e nada do
+      cadastro é gravado antes do Adotar.
 
 ## Etapa 4 — Registrar o que a leitura errou
 

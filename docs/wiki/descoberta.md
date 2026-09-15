@@ -181,6 +181,55 @@ já conhece. E a adoção grava a **intenção**: quem escreve na configuração
 equipamento é a [mudança controlada](/wiki/mudancas-controladas), com aprovação
 — a adoção não manda um comando sequer.
 
+## Preencher a organização pelo ASN
+
+Na revisão de uma proposta sem organização, o botão **Buscar no registro**
+consulta o ASN do peer e preenche o cadastro da organização nova.
+
+O que ele traz:
+
+- **Identidade** — do objeto `aut-num` do RADB vêm o nome (o `as-name`) e a
+  razão social (o `descr`); quando o RADB não traz `descr`, a razão social cai
+  para o `owner` do registro. Da consulta ao registro (LACNIC, que delega os
+  ASNs brasileiros ao registro.br) vêm o documento (`ownerid`, o CNPJ no
+  Brasil) e o país — este sem campo no cadastro da organização, e por isso
+  ausente da tela.
+- **Blocos** — os `inetnum` e `inet6num` alocados ao AS no registro (a família
+  sai do prefixo), que entram como autorizações de prefixo da organização nova.
+  Eles nascem marcados, salvo o que já está em uso por outra organização;
+  desmarcar é decisão do operador, e o que ficar marcado é gravado junto com a
+  adoção, como uma aprovação explícita (§6.4).
+
+O que ele **não** traz, e por quê:
+
+- **O que o AS anuncia de verdade.** O `inetnum` é o bloco *alocado*, e não o
+  anunciado: o registro lista os blocos do AS, não os anúncios dele. A lista de
+  importação que nasce das autorizações permite **exatamente** os prefixos
+  autorizados — a entrada do `ip ip-prefix` não leva `ge`/`le`, então casa só o
+  comprimento do próprio prefixo —, e um more-specific anunciado dentro de um
+  bloco maior precisa da autorização dele para passar: sem ela ele é derrubado
+  no import. Já um bloco anunciado que não está alocado ao AS não aparece.
+- **Blocos de ASN estrangeiro.** Fora do LACNIC a consulta não devolve
+  `inetnum` nem `inet6num`. Nesse caso a organização nasce com a identidade e
+  mais nada, e a tela diz que os blocos não vieram. Sem identidade e sem blocos,
+  não há prefill nenhum: a tela mostra a resposta do registro dizendo que não
+  devolveu nada.
+- **Uma escolha de AS-SET.** Quando o `aut-num` declara mais de um `member-of`,
+  só o primeiro preenche o campo AS-SET; o campo é texto livre, e os demais não
+  aparecem na tela.
+
+Um bloco que **outra organização já tem autorizado** aparece com o nome dela ao
+lado, desmarcado e desabilitado. Resolver esse conflito é com quem cuida das
+autorizações: a adoção segue com os demais blocos.
+
+O botão só preenche a tela — **nada do cadastro é gravado antes do Adotar** —, e
+o que ele preenche é a resposta que acabou de chegar: razão social, documento e
+AS-SET passam a mostrar o que o registro devolveu, vazio quando não devolveu,
+porque manter um valor que o registro acabou de não confirmar seria uma mentira
+que o operador adotaria junto. O nome é a exceção: ele já chega sugerido pela
+descoberta, e a consulta só o troca quando vem um — o `as-name`, ou a razão
+social na falta dele.
+
 ## O que a leitura não afirma
 
 A leitura não afirma mais do que leu: sem coleta com a configuração a página diz

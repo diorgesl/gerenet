@@ -5,6 +5,8 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 
+import { primeiroOctetoLivre } from "./discovery-walk";
+
 const SENHA = process.env.E2E_PASSWORD ?? "e2e-super-8";
 
 async function entrar(page: Page): Promise<void> {
@@ -53,6 +55,67 @@ test("adotar a proposta da configuração e conferir o circuito na lista", async
   expect(codigo).not.toBe("");
   await expect(dialogo.getByLabel("Trunk do edge *")).toHaveValue("Eth-Trunk127");
   await expect(dialogo.getByLabel("Nome da organização nova *")).not.toHaveValue("");
+
+  // Os blocos do stub precisam ser únicos ao longo da vida do banco e2e, que é
+  // persistente e acumula autorizações: prefixo que outra organização já tem
+  // ativo volta como 409 e deixa o diálogo aberto. A lista de autorizações é a
+  // autoridade sobre o que está ocupado — o mesmo cuidado que o seed toma antes
+  // de criar a dele (e2e/setup.ts) —, então o octeto sai do relógio e anda até
+  // o primeiro livre nos dois /16 do RFC 2544. A caminhada mora em
+  // `discovery-walk.ts` (função pura, com o porquê dela), e os três caminhos
+  // dela estão presos no `test` do fim deste arquivo.
+  const respostaAutorizacoes = await page.request.get("/api/v1/prefix-authorizations?family=ipv4");
+  expect(respostaAutorizacoes.ok()).toBe(true);
+  // Sem `include_disabled`, a lista traz exatamente as ativas — as que o serviço
+  // compara ao recusar um bloco.
+  const autorizacoes = (await respostaAutorizacoes.json()) as { prefix: string }[];
+  // A comparação abaixo é por igualdade de /24, o que pressupõe que toda
+  // autorização do banco seja um /24 alinhado (só o seed e este fumo criam
+  // autorização). Um bloco mais largo cobriria o candidato sem casar aqui: ele
+  // quebra nesta linha, em vez de virar um 409 sem explicação.
+  expect(autorizacoes.every((a) => /^\d{1,3}\.\d{1,3}\.\d{1,3}\.0\/24$/.test(a.prefix))).toBe(
+    true,
+  );
+  const ocupados = new Set(autorizacoes.map((a) => a.prefix));
+
+  const rodada = Date.now();
+  const nomeDoRegistro = `Provedor E2E Registro ${rodada}`;
+  const { octeto, passos } = primeiroOctetoLivre(rodada & 0xff, ocupados);
+  expect(
+    passos,
+    "198.18.0.0/15 sem octeto livre: a faixa acumulada acabou — recrie o banco `gerenet_e2e`.",
+  ).toBeLessThan(256);
+  const blocoA = `198.18.${octeto}.0/24`;
+  const blocoB = `198.19.${octeto}.0/24`;
+
+  // O prefill stubado: o botão, a lista de blocos e o payload são o que o fumo
+  // exercita; a leitura do registro tem os testes dela, e o whois real não é
+  // determinístico no CI.
+  await page.route("**/api/v1/organizations/prefill*", (rota) =>
+    rota.fulfill({
+      json: {
+        asn: 64512,
+        nome: nomeDoRegistro,
+        razao_social: "Provedor E2E Ltda",
+        documento: "12.345.678/0001-99",
+        pais: "BR",
+        as_set_sugerido: "AS-64512",
+        as_sets: ["AS-64512"],
+        blocos: [
+          { prefix: blocoA, family: "ipv4", fonte: "registro", conflito: null },
+          { prefix: blocoB, family: "ipv4", fonte: "registro", conflito: null },
+        ],
+        fontes: { nome: "radb", blocos: "registro" },
+        avisos: [],
+      },
+    }),
+  );
+  await dialogo.getByRole("button", { name: "Buscar no registro" }).click();
+  await expect(dialogo.getByLabel("Nome da organização nova *")).toHaveValue(nomeDoRegistro);
+  await expect(dialogo.getByLabel("Documento (CNPJ/ownerid)")).toHaveValue("12.345.678/0001-99");
+  await expect(dialogo.getByLabel(`Incluir ${blocoA}`)).toBeChecked();
+  await expect(dialogo.getByLabel(`Incluir ${blocoB}`)).toBeChecked();
+
   await dialogo.getByLabel("Equipamento de acesso *").selectOption({ label: "ne8000-disco-01" });
   await dialogo.getByLabel("Porta de acesso *").fill("GE0/0/1");
 
@@ -79,4 +142,37 @@ test("adotar a proposta da configuração e conferir o circuito na lista", async
   // E o circuito está na lista de circuitos, com o código que a revisão gravou.
   await page.goto("/circuits");
   await expect(page.getByRole("link", { name: codigo })).toBeVisible();
+
+  // As autorizações do registro nasceram junto com o circuito (§6.4): os dois
+  // blocos que o operador deixou marcados estão na lista de autorizações.
+  await page.goto("/prefix-authorizations");
+  await expect(page.getByText(blocoA)).toBeVisible();
+  await expect(page.getByText(blocoB)).toBeVisible();
+});
+
+// A caminhada do octeto, sem navegador: o que se prende aqui é a REGRA do
+// arquivo `discovery-walk.ts`. O ramo de avanço do fumo é o que existe porque um
+// mecanismo anterior estava errado, e nas rodadas registradas ele nunca
+// executou — o octeto do relógio caiu livre nas quatro —, então "verificado por
+// leitura" era toda a evidência que ele tinha. Estes três casos são o que o
+// executa de verdade.
+test("a caminhada do octeto avança até o primeiro /24 livre dos dois /16", () => {
+  // Partida livre: não anda (o caso das rodadas registradas).
+  expect(primeiroOctetoLivre(7, new Set(["198.18.9.0/24"]))).toEqual({ octeto: 7, passos: 0 });
+
+  // Um dos dois /16 ocupado já fecha o octeto inteiro — a recusa do serviço é
+  // por sobreposição, e o bloco do stub sai nas duas famílias. Anda UM passo e
+  // para no primeiro livre, seja qual for o lado ocupado.
+  const umLado = new Set(["198.18.5.0/24", "198.19.7.0/24"]);
+  expect(primeiroOctetoLivre(5, umLado)).toEqual({ octeto: 6, passos: 1 });
+  expect(primeiroOctetoLivre(7, umLado)).toEqual({ octeto: 8, passos: 1 });
+
+  // Faixa inteira ocupada: `passos = 256` é o valor que o assert do chamador
+  // pega (`toBeLessThan(256)`), com o octeto de volta na partida.
+  const cheia = new Set<string>();
+  for (let octeto = 0; octeto < 256; octeto += 1) {
+    cheia.add(`198.18.${octeto}.0/24`);
+    cheia.add(`198.19.${octeto}.0/24`);
+  }
+  expect(primeiroOctetoLivre(0, cheia)).toEqual({ octeto: 0, passos: 256 });
 });
