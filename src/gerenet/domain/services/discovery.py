@@ -164,11 +164,28 @@ def adotar_proposta(session: Session, *, proposta, revisao: schemas.AdocaoIn, ac
     Numa proposta vinda de `listar_propostas` cada um desses casos já virou
     conflito (ou diferença de contexto `ensaio`) e quem recusa é uma guarda
     anterior, então nenhuma delas é caminho vivo na listagem.
+
+    A guarda da identidade é outra coisa: pelo CLI a proposta sai dos argumentos
+    e o arquivo é livre, então ela é caminho vivo — a revisão de um equipamento
+    adotada no outro passaria com o `ciente` dela liberando o gate das diferenças
+    deste, e é a identidade errada que ficaria gravada (§6). Ela vem primeiro
+    porque é do pedido, e não do estado da proposta.
     """
     # Import tardio: `automation.discovery` importa este módulo (a lista de
     # ignorados), e no topo o ciclo derruba quem importa este módulo primeiro.
     from gerenet.automation.discovery import _trunk_da_subinterface, conferir_fidelidade
 
+    for campo, do_arquivo, da_proposta in (
+        ("device_id", revisao.device_id, proposta.device_id),
+        ("vrf", revisao.vrf, proposta.vrf),
+        ("subinterface", revisao.subinterface, proposta.subinterface),
+    ):
+        if do_arquivo != da_proposta:
+            raise ValidationError(
+                f"A revisão não é desta proposta: {campo} do arquivo é "
+                f"{do_arquivo!r} e o da proposta é {da_proposta!r}. A revisão de um "
+                "enlace não vale no outro."
+            )
     if proposta.veredito == "nao_adotavel":
         raise ConflictError(
             "A proposta tem conflito: resolva antes de adotar ("

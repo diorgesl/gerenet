@@ -200,6 +200,31 @@ def test_a_auditoria_leva_todas_as_diferencas(db_session, tmp_path) -> None:
                    if d["contexto"] == "subinterface")
 
 
+def test_revisao_de_outro_enlace_recusa(db_session, tmp_path) -> None:
+    """A identidade da revisão é conferida contra a da proposta, campo a campo.
+
+    Pelo CLI a proposta sai dos argumentos e o arquivo é livre: sem a guarda, a
+    revisão de um equipamento adota no outro com o `ciente` dela liberando o gate
+    das diferenças deste, e a identidade errada fica gravada (design §6)."""
+    _site, dev = _ambiente(db_session, tmp_path)
+    outro = create_device(db_session, DeviceCreate(name="ne8000-adoc-outro",
+                                                   management_address="10.0.0.2", asn=65001),
+                          actor="cli")
+    db_session.commit()
+
+    for campo, valor in (("device_id", outro.id), ("vrf", "VPNA"),
+                         ("subinterface", "Eth-Trunk127.9999")):
+        revisao = _revisao(dev)
+        setattr(revisao, campo, valor)
+        with pytest.raises(ValidationError) as exc:
+            adotar_proposta(db_session, proposta=_proposta(db_session, dev),
+                            revisao=revisao, actor="cli")
+        # A mensagem prende QUAL campo divergiu: os outros três campos da
+        # identidade estão iguais, e um recado genérico não diria qual corrigir.
+        assert campo in str(exc.value), campo
+    assert db_session.query(models.Circuit).count() == 0
+
+
 def test_revisao_sem_trunk_recusa(db_session, tmp_path) -> None:
     """O ensaio deriva o trunk do nome da subinterface e a escrita grava o da
     revisão: sem ele o circuito nasce sem o bloco da subinterface conferida."""

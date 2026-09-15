@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 
+from sqlalchemy import select
 from typer.testing import CliRunner
 
 from gerenet.cli.main import app as cli_app
@@ -321,6 +322,155 @@ def test_adopt_com_json_grava_o_circuito(db_session, tmp_path) -> None:
                                 "--json", str(json_revisao)])
     assert r.exit_code == 0, r.output
     assert "ADOC-CLI-1001" in r.output
+    # O código da mensagem vem do próprio arquivo: sem a consulta à SoT uma
+    # adoção que só ecoasse o JSON deixaria o teste verde.
+    circuito = db_session.scalar(
+        select(models.Circuit).where(models.Circuit.code == "ADOC-CLI-1001")
+    )
+    assert circuito is not None
+    assert circuito.access_port == "GE0/0/1"
+    assert circuito.edge_device_id == dev.id
+
+
+def test_adopt_recusa_revisao_de_outro_equipamento(db_session, tmp_path) -> None:
+    """A revisão carrega a identidade de quem a escreveu, e o serviço confere
+    contra a proposta. Sem isso o arquivo de um equipamento adota no outro, com
+    o `ciente` dele liberando o gate das diferenças que o operador não viu."""
+    site = create_site(db_session, SiteCreate(name="pop-cli-revisao-alheia",
+                                              p2p_ipv4_block="100.64.10.0/24"), actor="cli")
+    arquivo = tmp_path / "current.txt"
+    arquivo.write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    devs = []
+    for nome, mgmt in (("ne-cli-revisao-a", "10.0.0.1"), ("ne-cli-revisao-b", "10.0.0.2")):
+        outro = create_device(db_session, DeviceCreate(name=nome, management_address=mgmt,
+                                                       asn=65001), actor="cli")
+        link_device(db_session, site.id, outro.id, actor="cli")
+        db_session.add(models.DeviceSnapshot(
+            device_id=outro.id, status="success",
+            raw_files={"config_backup": [str(arquivo)]},
+        ))
+        devs.append(outro)
+    db_session.commit()
+    dev_a, dev_b = devs
+
+    json_revisao = tmp_path / "revisao-a.json"
+    json_revisao.write_text(json.dumps({
+        "device_id": dev_a.id, "vrf": None, "subinterface": "Eth-Trunk127.1001",
+        "circuit_code": "ADOC-CLI-DE-OUTRO", "access_device_id": dev_a.id,
+        "access_port": "GE0/0/1", "edge_trunk": "Eth-Trunk127",
+        "organizacao_nova": {"name": "Cliente De Outro", "kind": "downstream", "asn": 64512},
+        "sessoes": [{"afi": "ipv4"}, {"afi": "ipv6"}],
+        "ciente": True,
+    }), encoding="utf-8")
+
+    # O peer é o mesmo nos dois equipamentos: a proposta de B existe, e é ela que
+    # a revisão de A encontaria sem a guarda da identidade.
+    r = runner.invoke(cli_app, ["discovery", "adopt", dev_b.name, "100.64.10.1",
+                                "--json", str(json_revisao)])
+    assert r.exit_code == 1, r.output
+    assert "device_id" in r.output
+    assert isinstance(r.exception, SystemExit)
+    assert db_session.scalar(
+        select(models.Circuit).where(models.Circuit.code == "ADOC-CLI-DE-OUTRO")
+    ) is None
+
+
+def test_adopt_com_ciente_na_linha_de_comando(db_session, tmp_path) -> None:
+    """O `--ciente` do terminal marca o aceite sem editar o arquivo, que é o
+    caminho do runbook: o operador revisa e aceita na mesma sessão."""
+    dev = _ambiente(db_session, tmp_path)
+    json_revisao = tmp_path / "revisao.json"
+    json_revisao.write_text(json.dumps({
+        "device_id": dev.id, "vrf": None, "subinterface": "Eth-Trunk127.1001",
+        "circuit_code": "ADOC-CLI-CIENTE-FLAG", "access_device_id": dev.id,
+        "access_port": "GE0/0/1", "edge_trunk": "Eth-Trunk127",
+        "organizacao_nova": {"name": "Cliente Ciente Flag", "kind": "downstream",
+                             "asn": 64512},
+        "sessoes": [{"afi": "ipv4"}, {"afi": "ipv6"}],
+        "ciente": False,
+    }), encoding="utf-8")
+
+    sem_flag = runner.invoke(cli_app, ["discovery", "adopt", dev.name, "100.64.10.1",
+                                       "--json", str(json_revisao)])
+    assert sem_flag.exit_code == 1, sem_flag.output
+
+    com_flag = runner.invoke(cli_app, ["discovery", "adopt", dev.name, "100.64.10.1",
+                                       "--json", str(json_revisao), "--ciente"])
+    assert com_flag.exit_code == 0, com_flag.output
+    assert "ADOC-CLI-CIENTE-FLAG" in com_flag.output
+
+
+def test_adopt_com_arquivo_fora_de_utf8_nao_estoura(db_session, tmp_path) -> None:
+    """Revisão com acento regravada em latin-1 por um editor antigo: o
+    `UnicodeDecodeError` é `ValueError` e não `OSError`, então sem tratamento
+    próprio chegava ao terminal como pilha."""
+    dev = _ambiente(db_session, tmp_path)
+    json_revisao = tmp_path / "revisao-latin1.json"
+    json_revisao.write_bytes(json.dumps({
+        "device_id": dev.id, "vrf": None, "subinterface": "Eth-Trunk127.1001",
+        "circuit_code": "ADOC-CLI-LATIN1", "access_device_id": dev.id,
+        "access_port": "GE0/0/1", "edge_trunk": "Eth-Trunk127",
+        "organizacao_nova": {"name": "Cliente São Paulo", "kind": "downstream",
+                             "asn": 64512},
+        "sessoes": [{"afi": "ipv4"}, {"afi": "ipv6"}],
+        "ciente": True,
+    }, ensure_ascii=False).encode("latin-1"))
+
+    r = runner.invoke(cli_app, ["discovery", "adopt", dev.name, "100.64.10.1",
+                                "--json", str(json_revisao)])
+    assert r.exit_code == 1, r.output
+    # O exit code 1 sozinho não prova nada: o `CliRunner` devolve 1 para qualquer
+    # exceção, e a pilha continuaria no lugar da mensagem.
+    assert isinstance(r.exception, SystemExit)
+    assert "UTF-8" in r.output
+
+
+def test_adopt_com_leitura_parcial_avisa(db_session, tmp_path) -> None:
+    """A leitura sinalizada aparece mesmo quando a proposta é achada: o comando
+    escreve na SoT, e gravar a partir de uma leitura que a ferramenta marca sem
+    nenhum sinal é o que mais custa (a regra do `list` e do `show`)."""
+    site = create_site(db_session, SiteCreate(name="pop-cli-adopt-parcial",
+                                              p2p_ipv4_block="100.64.10.0/24"), actor="cli")
+    dev = create_device(db_session, DeviceCreate(name="ne-cli-adopt-parcial",
+                                                 management_address="10.0.0.3", asn=65001),
+                        actor="cli")
+    link_device(db_session, site.id, dev.id, actor="cli")
+    arquivo = tmp_path / "parcial.txt"
+    # O `ipv4-family multicast` é o cabeçalho fora do escopo que faz a leitura
+    # sair sinalizada; a VLAN fica na faixa que a adoção aceita (2–4094), senão
+    # quem recusaria seria o IDAM e o teste não chegaria ao aviso.
+    arquivo.write_text(
+        "interface Eth-Trunk127.2001\n"
+        " vlan-type dot1q 2001\n"
+        " ip address 100.64.10.0 255.255.255.254\n"
+        "#\n"
+        "bgp 65001\n"
+        " peer 100.64.10.1 as-number 64512\n"
+        " ipv4-family unicast\n"
+        "  peer 100.64.10.1 enable\n"
+        " ipv4-family multicast\n"
+        "  peer 10.0.0.9 enable\n",
+        encoding="utf-8",
+    )
+    db_session.add(models.DeviceSnapshot(device_id=dev.id, status="success",
+                                        raw_files={"config_backup": [str(arquivo)]}))
+    db_session.commit()
+
+    json_revisao = tmp_path / "revisao.json"
+    json_revisao.write_text(json.dumps({
+        "device_id": dev.id, "vrf": None, "subinterface": "Eth-Trunk127.2001",
+        "circuit_code": "ADOC-CLI-PARCIAL", "access_device_id": dev.id,
+        "access_port": "GE0/0/1", "edge_trunk": "Eth-Trunk127",
+        "organizacao_nova": {"name": "Cliente Parcial", "kind": "downstream", "asn": 64512},
+        "sessoes": [{"afi": "ipv4"}],
+        "ciente": True,
+    }), encoding="utf-8")
+
+    r = runner.invoke(cli_app, ["discovery", "adopt", dev.name, "100.64.10.1",
+                                "--json", str(json_revisao)])
+    assert r.exit_code == 0, r.output
+    assert "ADOC-CLI-PARCIAL" in r.output
+    assert "Aviso:" in r.output
 
 
 def test_adopt_sem_ciente_onde_exige_sai_com_erro(db_session, tmp_path) -> None:

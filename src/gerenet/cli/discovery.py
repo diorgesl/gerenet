@@ -230,6 +230,10 @@ def adotar(
     device: str = typer.Argument(..., help="ID ou nome do equipamento."),
     peer: str = typer.Argument(..., help="Endereço remoto de um dos peers do enlace."),
     json_revisao: str = typer.Option(..., "--json", help="Arquivo com a revisão (AdocaoIn)."),
+    ciente: bool = typer.Option(
+        False, "--ciente",
+        help="Assume as diferenças que mudariam o equipamento (o arquivo pode trazê-las).",
+    ),
 ) -> None:
     """Grava a cadeia da proposta na SoT. Nada é enviado ao equipamento."""
     with get_session() as session:
@@ -241,25 +245,39 @@ def adotar(
             revisao = schemas.AdocaoIn.model_validate_json(
                 Path(json_revisao).read_text(encoding="utf-8")
             )
+            if ciente and not revisao.ciente:
+                # A flag do terminal cobre o caso do runbook: o aceite da mesma
+                # sessão, sem editar o arquivo. O `ciente` do arquivo já basta.
+                revisao = revisao.model_copy(update={"ciente": True})
             resultado = listar_propostas(session, encontrado.id)
+            if resultado.aviso:
+                # O sinal sai antes da busca e mesmo com a proposta achada: aqui
+                # a escrita vai para a SoT, e gravar a partir de uma leitura que a
+                # ferramenta marca sem dizer nada é o que mais custa (a regra do
+                # `show`, que imprime o aviso sempre).
+                typer.echo(f"Aviso: {resultado.aviso}")
             proposta = next(
                 (p for p in resultado.propostas
                  if any(c.remote_address == alvo for c in p.candidatos)),
                 None,
             )
             if proposta is None:
-                if resultado.aviso:
-                    # A mesma regra do `show`: "não está entre os candidatos" é
-                    # conclusão, e sem leitura inteira (ou com a parcial) ela
-                    # conclui o que nenhuma leitura sustenta.
-                    typer.echo(f"Aviso: {resultado.aviso}")
-                else:
+                if resultado.aviso is None:
+                    # "Não está entre os candidatos" é conclusão, e sem leitura
+                    # inteira (ou com a parcial) ela conclui o que nenhuma leitura
+                    # sustenta.
                     typer.echo("Peer não está entre os candidatos.", err=True)
                 raise typer.Exit(1)
             circuit_id = adotar_proposta(session, proposta=proposta, revisao=revisao,
                                          actor="cli")
         except (GerenetError, SchemaValidationError) as exc:
             typer.echo(f"Erro: {exc}", err=True)
+            raise typer.Exit(1) from exc
+        except UnicodeDecodeError as exc:
+            # `ValueError`, e não `OSError`: sem este ramo a revisão regravada em
+            # latin-1 chegava ao terminal como pilha.
+            typer.echo(f"Erro ao ler {json_revisao}: o arquivo precisa estar em UTF-8 "
+                       f"({exc}).", err=True)
             raise typer.Exit(1) from exc
         except OSError as exc:
             typer.echo(f"Erro ao ler {json_revisao}: {exc}", err=True)
