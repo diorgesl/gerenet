@@ -1044,6 +1044,7 @@ def _trunk_da_subinterface(proposta: Proposta) -> str | None:
 def _ensaio(
     session: Session, proposta: Proposta,
     perfis: dict[str, dict[str, int | None]] | None = None,
+    edge_trunk: str | None = None,
 ) -> dict:
     """Objetos transitórios com a forma do que a adoção criaria.
 
@@ -1054,6 +1055,12 @@ def _ensaio(
     operador escolheu na revisão. A `Proposta` não carrega perfil nenhum, e sem
     ele o `_bloco_export` sai cedo: a política de exportação nem existiria no
     ensaio, e é o produto dela que a revisão decide (design §6).
+
+    `edge_trunk` é o que a revisão informou, e é o MESMO valor que a adoção
+    grava: é ele que faz o render emitir o bloco da subinterface, e um ensaio com
+    trunk que a escrita não tem daria por fiel um circuito que nasce sem bloco
+    nenhum. Sem valor na revisão, o ensaio deriva o trunk do nome da subinterface
+    (o que a proposta sugere), que é o comportamento de quando não há revisão.
     """
     device = get_device(session, proposta.device_id)
     org_id = proposta.organizacao_id
@@ -1068,7 +1075,9 @@ def _ensaio(
     circ = models.Circuit(
         code=f"ENSAIO-{device.name}-{proposta.vid}", organization_id=org_id,
         site_id=proposta.site_id or device.site_id, access_port="ensaio",
-        edge_device_id=device.id, edge_trunk=_trunk_da_subinterface(proposta),
+        edge_device_id=device.id,
+        # O trunk da revisão vence; sem ela, o derivado do nome da subinterface.
+        edge_trunk=edge_trunk if edge_trunk is not None else _trunk_da_subinterface(proposta),
         stack=proposta.stack, vlan_mode=proposta.vlan_mode,
         qinq=proposta.qinq,          # sem isto a fidelidade acusa diferença em todo QinQ
         p2p_v4_len=proposta.p2p_v4_len or 31,
@@ -1128,6 +1137,7 @@ def _particiona_subinterface(linhas: tuple[str, ...]) -> tuple[tuple[str, ...], 
 def conferir_fidelidade(
     session: Session, proposta: Proposta,
     *, perfis: dict[str, dict[str, int | None]] | None = None,
+    edge_trunk: str | None = None,
 ) -> list[Diferenca]:
     """O que a SoT reproduziria × o que a configuração tem (spec §9).
 
@@ -1136,6 +1146,11 @@ def conferir_fidelidade(
     definição de exportação — o produto dela é justamente o que a revisão
     decide. Sem o mapa, o ensaio fica sem perfil nenhum, como antes desta
     interface existir.
+
+    `edge_trunk` é o trunk que a revisão informou, e entra pelo mesmo motivo: o
+    ensaio tem de ter a forma do que a adoção VAI gravar. Com o trunk vazio na
+    revisão e derivado aqui, a comparação sairia fiel por um circuito que a
+    escrita cria sem bloco de subinterface.
 
     O ensaio roda o render de verdade, e não uma reimplementação da montagem
     dos comandos: é o mesmo código que a adoção usaria, então a conferência não
@@ -1197,7 +1212,7 @@ def conferir_fidelidade(
     ensaio = session.begin_nested()
     try:
         try:
-            criados = _ensaio(session, proposta, perfis)
+            criados = _ensaio(session, proposta, perfis, edge_trunk)
         except IntegrityError:
             # Uma restrição de unicidade recusou o ensaio (a reserva que a
             # proposta pede já existe, na mesma grafia, é o caso comum): sem

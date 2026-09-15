@@ -133,7 +133,14 @@ def _sessao_da_proposta(
     `BgpSessionCreate` e a `Proposta` não os tem: o circuito só existe depois
     que a adoção o cria.
     """
-    dados = next(s for s in proposta.sessoes if s["afi"] == overrides.afi)
+    dados = next((s for s in proposta.sessoes if s["afi"] == overrides.afi), None)
+    if dados is None:
+        # A revisão pediu uma família que o enlace não tem: `ValidationError` (400)
+        # e não um `StopIteration` no meio da escrita.
+        raise ValidationError(
+            f"A proposta não tem sessão {overrides.afi}: a revisão pediu uma família "
+            "que o enlace não tem."
+        )
     campos = set(schemas.BgpSessionCreate.model_fields)
     base = {k: v for k, v in dados.items() if k in campos and k not in _DO_OPERADOR}
     return schemas.BgpSessionCreate(
@@ -152,42 +159,77 @@ def adotar_proposta(session: Session, *, proposta, revisao: schemas.AdocaoIn, ac
     Uma transação só, e é por isso que os serviços de cadastro são chamados com
     `commit=False`: se qualquer passo recusar, nada fica gravado. Nenhum comando
     vai ao equipamento; mudar o roteador continua exigindo change request.
+
+    Quatro guardas são defesa em profundidade: VRF, candidato, site e ASN remoto.
+    Numa proposta vinda de `listar_propostas` cada um desses casos já virou
+    conflito (ou diferença de contexto `ensaio`) e quem recusa é uma guarda
+    anterior, então nenhuma delas é caminho vivo na listagem.
     """
     # Import tardio: `automation.discovery` importa este módulo (a lista de
     # ignorados), e no topo o ciclo derruba quem importa este módulo primeiro.
-    from gerenet.automation.discovery import conferir_fidelidade
+    from gerenet.automation.discovery import _trunk_da_subinterface, conferir_fidelidade
 
     if proposta.veredito == "nao_adotavel":
         raise ConflictError(
             "A proposta tem conflito: resolva antes de adotar ("
-            + "; ".join(c.tipo for c in proposta.conflitos) + ")."
+            + "; ".join(f"{c.tipo}: {c.descricao}" for c in proposta.conflitos) + ")."
         )
     if proposta.vrf is not None:
+        # Sombreada: o peer em VRF já chega como `vrf_nao_renderizavel`.
         raise ConflictError(
             "Sessão em VRF não é reproduzível por esta versão do render: a adoção "
             "gravaria uma sessão que o equipamento não tem nessa instância."
         )
-    # Os perfis revisados entram na conferência: sem eles o ensaio não renderiza
-    # o corpo da política de exportação, que é justamente o que o operador
-    # escolhe errado. A conferência compara o que a adoção VAI gravar.
+    # O trunk é recusado antes da conferência: o ensaio deriva `<trunk>.<vid>` do
+    # nome da subinterface e a escrita grava o `edge_trunk` da revisão. Vazio, o
+    # circuito nasce sem o bloco da subinterface que o operador acabou de
+    # conferir — a conferência precisa dos dois lados iguais (design §6).
+    trunk = _trunk_da_subinterface(proposta)
+    if trunk is not None and not revisao.edge_trunk:
+        raise ValidationError(
+            f"A revisão precisa do trunk de acesso: informe edge_trunk como {trunk}. "
+            f"Sem ele o circuito nasce sem o bloco da subinterface {trunk}.{proposta.vid}, "
+            "que é o que a conferência comparou."
+        )
+    # Sessão a menos é peer que nunca entra no `_conhecidos`: a descoberta
+    # devolveria a mesma subinterface para sempre, agora com `vlan_tomada`.
+    faltando = sorted({s["afi"] for s in proposta.sessoes} - {s.afi for s in revisao.sessoes})
+    if faltando:
+        raise ValidationError(
+            "A revisão não cobre " + ", ".join(faltando) + " do enlace: sem a sessão, o "
+            "peer fica fora da SoT e a descoberta devolve o mesmo enlace para sempre."
+        )
+    # O que o operador escolheu entra na conferência: sem os perfis o ensaio não
+    # renderiza o corpo da política de exportação, que é justamente o que ele
+    # escolhe errado; sem o trunk, a comparação não vale para o que vai gravar.
     perfis = {
         s.afi: {"import_profile_id": s.import_profile_id,
                 "export_profile_id": s.export_profile_id}
         for s in revisao.sessoes
     }
-    difs = conferir_fidelidade(session, proposta, perfis=perfis)
-    if any(d.contexto == "ensaio" for d in difs):
-        raise ConflictError("A conferência não pôde ser feita para esta proposta.")
+    difs = conferir_fidelidade(session, proposta, perfis=perfis, edge_trunk=revisao.edge_trunk)
+    ensaio = [d for d in difs if d.contexto == "ensaio"]
+    if ensaio:
+        # A `explicacao` é a frase escrita para o operador (o ensaio recusado, o
+        # peer em VRF, a proposta sem site): sem ela a recusa não diz o que fazer.
+        detalhe = "; ".join(d.explicacao for d in ensaio if d.explicacao)
+        raise ConflictError(
+            "A conferência não pôde ser feita para esta proposta"
+            + (f": {detalhe}" if detalhe else ".")
+        )
     if any(d.exige_ciente for d in difs) and not revisao.ciente:
         raise ValidationError(
             "Há diferenças que mudariam o equipamento: confirme o ciente para adotar."
         )
     if not proposta.candidatos:
+        # Sombreada: proposta sem candidato é órfã, e a órfã nasce com conflito.
         raise ValidationError("A proposta não tem candidato: nada a adotar.")
     if proposta.site_id is None:
+        # Sombreada: sem site a conferência devolve a diferença de `ensaio`.
         raise ValidationError("O equipamento não está vinculado a um site.")
     asn_remoto = proposta.candidatos[0].asn_remote
     if asn_remoto is None:
+        # Sombreada: o ASN que falta já vira conflito na classificação do peer.
         raise ValidationError("A proposta não tem ASN remoto: não há sessão a criar.")
 
     organizacao_id = revisao.organizacao_id
@@ -196,6 +238,19 @@ def adotar_proposta(session: Session, *, proposta, revisao: schemas.AdocaoIn, ac
             "Informe a organização: escolha uma existente ou crie a nova com o ASN "
             f"{asn_remoto}."
         )
+
+    # O `stack` sai das sessões que vão nascer, e não do que a proposta sugeriu: o
+    # circuito gravado não pode afirmar uma família que não tem sessão. Para a
+    # proposta da listagem a guarda das famílias acima já garante que os dois
+    # valores coincidem, então isto é defesa em profundidade, como as guardas
+    # seguintes. Sem sessão nenhuma (proposta montada à mão) não há o que derivar.
+    afis = sorted({s.afi for s in revisao.sessoes})
+    if not afis:
+        stack = proposta.stack
+    elif len(afis) > 1:
+        stack = "dual"
+    else:
+        stack = afis[0]
 
     try:
         if organizacao_id is None:
@@ -211,7 +266,7 @@ def adotar_proposta(session: Session, *, proposta, revisao: schemas.AdocaoIn, ac
                 site_id=proposta.site_id,
                 access_device_id=revisao.access_device_id, access_port=revisao.access_port,
                 edge_device_id=proposta.device_id, edge_trunk=revisao.edge_trunk,
-                stack=proposta.stack, vlan_mode=proposta.vlan_mode, qinq=proposta.qinq,
+                stack=stack, vlan_mode=proposta.vlan_mode, qinq=proposta.qinq,
                 p2p_v4_len=proposta.p2p_v4_len or 31, vrf=proposta.vrf,
             ),
             actor=actor, commit=False,
@@ -233,15 +288,20 @@ def adotar_proposta(session: Session, *, proposta, revisao: schemas.AdocaoIn, ac
             depois={
                 "device_id": proposta.device_id, "vrf": proposta.vrf,
                 "subinterface": proposta.subinterface,
+                "edge_trunk": revisao.edge_trunk,
                 "snapshot_id": proposta.candidatos[0].snapshot_id,
                 "ciente": revisao.ciente,
                 "perfis": perfis,
+                # Todas as diferenças, e não só as que o `ciente` assumiu: o grupo
+                # que a SoT não gerencia é o que o operador viu e não precisou
+                # aceitar, e o payload é trilha, não decisão (design §17.1). Quem
+                # gateia o aceite continua sendo só o `exige_ciente`.
                 "diferencas": [
                     {"contexto": d.contexto, "sobrando": list(d.sobrando),
                      "faltando": list(d.faltando),
                      "nao_gerenciado": list(d.nao_gerenciado),
                      "explicacao": d.explicacao}
-                    for d in difs if d.exige_ciente
+                    for d in difs
                 ],
             },
         )
