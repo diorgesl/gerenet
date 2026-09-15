@@ -194,20 +194,26 @@ O que ele traz:
   ASNs brasileiros ao registro.br) vêm o documento (`ownerid`, o CNPJ no
   Brasil) e o país — este sem campo no cadastro da organização, e por isso
   ausente da tela.
-- **Blocos** — os `inetnum` alocados ao AS no registro, que entram como
-  autorizações de prefixo da organização nova. Eles nascem **todos marcados**;
+- **Blocos** — os `inetnum` e `inet6num` alocados ao AS no registro (a família
+  sai do prefixo), que entram como autorizações de prefixo da organização nova.
+  Eles nascem marcados, salvo o que já está em uso por outra organização;
   desmarcar é decisão do operador, e o que ficar marcado é gravado junto com a
   adoção, como uma aprovação explícita (§6.4).
 
 O que ele **não** traz, e por quê:
 
 - **O que o AS anuncia de verdade.** O `inetnum` é o bloco *alocado*, e não o
-  anunciado: um cliente que anuncia um more-specific dentro do bloco maior está
-  coberto pela autorização do bloco maior, e um bloco anunciado que não está
-  alocado ao AS não aparece.
+  anunciado: o registro lista os blocos do AS, não os anúncios dele. A lista de
+  importação que nasce das autorizações permite **exatamente** os prefixos
+  autorizados — a entrada do `ip ip-prefix` não leva `ge`/`le`, então casa só o
+  comprimento do próprio prefixo —, e um more-specific anunciado dentro de um
+  bloco maior precisa da autorização dele para passar: sem ela ele é derrubado
+  no import. Já um bloco anunciado que não está alocado ao AS não aparece.
 - **Blocos de ASN estrangeiro.** Fora do LACNIC a consulta não devolve
-  `inetnum`. Nesse caso a organização nasce com a identidade e mais nada, e a
-  tela diz que os blocos não vieram.
+  `inetnum` nem `inet6num`. Nesse caso a organização nasce com a identidade e
+  mais nada, e a tela diz que os blocos não vieram. Sem identidade e sem blocos,
+  não há prefill nenhum: a tela mostra a resposta do registro dizendo que não
+  devolveu nada.
 - **Uma escolha de AS-SET.** Quando o `aut-num` declara mais de um `member-of`,
   só o primeiro preenche o campo AS-SET; o campo é texto livre, e os demais não
   aparecem na tela.

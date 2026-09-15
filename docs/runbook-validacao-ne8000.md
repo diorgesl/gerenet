@@ -282,7 +282,7 @@ reservados **nos valores reais** do equipamento (não nos que o alocador daria) 
 auditoria, o evento `discovery.adopt` com o snapshot de origem, o `ciente` e o diff inteiro,
 com os dois grupos: o que não estiver lá não foi decidido por ninguém.
 
-Duas notas desta etapa:
+Duas notas e um passo desta etapa:
 
 **O nome da subinterface.** O projeto assume que ele **termina no VID** (`Eth-Trunk127.1001`)
 — é assim que o render o monta (`<trunk>.<vid>`), e é desse sufixo que a revisão deriva o
@@ -315,8 +315,8 @@ Adotar, e a parte desta etapa que depende de um serviço de fora.
             identidade sem blocos, com o aviso — e não uma tela vazia;
       - [ ] que um bloco já autorizado para outra organização aparece
             desmarcado, com o nome dela.
-      Nada disso vai ao equipamento: a leitura é do registro, e o que for
-      gravado só entra no Adotar.
+      Nada disso vai ao equipamento: a leitura é do registro, e nada do
+      cadastro é gravado antes do Adotar.
 
 ## Etapa 4 — Registrar o que a leitura errou
 
