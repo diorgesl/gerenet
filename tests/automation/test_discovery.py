@@ -1247,3 +1247,96 @@ def test_mtu_da_subinterface_tambem_sai_do_que_gateia(db_session, tmp_path) -> N
     assert sub.faltando == ()
     assert sub.sobrando == ()
     assert sub.exige_ciente is False
+
+
+def _com_prefixos_autorizados(db_session):
+    """Cliente ALFA com os prefixos das duas famílias autorizados.
+
+    É do que o render precisa para emitir as definições da sessão: sem
+    autorização ativa não há prefix-list nem route-policy de importação a
+    emitir, e sem elas o ensaio não tem corpo de definição a comparar. O
+    ensaio não carrega perfil de exportação (a `Proposta` não tem esse campo),
+    então a importação é o único caminho pelo qual ele gera definição.
+    """
+    from gerenet.domain.schemas import PrefixAuthorizationCreate
+    from gerenet.domain.services.prefix_authorizations import create_authorization
+
+    org = create_organization(db_session, OrganizationCreate(name="Cliente Alfa", asn=64512),
+                              actor="cli")
+    create_authorization(db_session, PrefixAuthorizationCreate(
+        organization_id=org.id, family="ipv4", prefix="200.219.0.0/24"), actor="cli")
+    create_authorization(db_session, PrefixAuthorizationCreate(
+        organization_id=org.id, family="ipv6", prefix="2001:DB8::/32"), actor="cli")
+    return org
+
+
+def test_a_conferencia_compara_o_corpo_das_definicoes(db_session, tmp_path) -> None:
+    """Escolher o produto errado rende linhas de peer idênticas com política
+    diferente, e é isso que a comparação do corpo pega (design §6)."""
+    dev = _ambiente(db_session)
+    _com_prefixos_autorizados(db_session)
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+    contextos = {d.contexto for d in conferir_fidelidade(db_session, alfa)}
+    assert "definicao" in contextos
+
+
+def test_definicao_ausente_no_equipamento_aparece_como_sobrando(db_session, tmp_path) -> None:
+    """O render define `IP-PFX-64512-IN-V4` e a configuração não tem esse bloco:
+    ele aparece inteiro como sobra."""
+    dev = _ambiente(db_session)
+    _com_prefixos_autorizados(db_session)
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+    definicoes = [d for d in conferir_fidelidade(db_session, alfa) if d.contexto == "definicao"]
+    assert any(d.sobrando for d in definicoes)
+    assert any(
+        "IP-PFX-64512-IN-V4" in linha for d in definicoes for linha in d.sobrando
+    )
+
+
+def test_definicao_que_o_equipamento_ja_tem_nao_vira_diferenca(db_session, tmp_path) -> None:
+    """O outro lado da comparação: com o corpo no equipamento, a definição sai
+    vazia — e o comentário na coluna 0 dentro do bloco não pode fechar a leitura.
+
+    O render deste projeto emite comentário com texto na coluna 0 dentro do
+    bloco (`# up-full: ...`, `# TE: ...`), e a parte 1 corrigiu exatamente isso
+    na leitura da interface: com o comentário fechando o bloco, o `if-match` que
+    vem depois sai da comparação e o render o acusa como sobra — diferença que
+    não existe, exigindo ciente de quem não mudaria nada.
+    """
+    dev = _ambiente(db_session)
+    _com_prefixos_autorizados(db_session)
+    _com_texto(db_session, dev, tmp_path,
+               "interface Eth-Trunk127.1001\n"
+               " vlan-type dot1q 1001\n"
+               " ip address 100.64.10.0 255.255.255.254\n"
+               " ipv6 enable\n"
+               " ipv6 address 2804:194C:1000::1100:73:1 126\n"
+               "#\n"
+               "ip ip-prefix IP-PFX-64512-IN-V4 index 10 permit 200.219.0.0/24\n"
+               "#\n"
+               "route-policy RP-64512-IMPORT-V4 permit node 10\n"
+               "# segundo nó não usado nesta borda\n"
+               " if-match ip-prefix IP-PFX-64512-IN-V4\n"
+               "#\n"
+               "ip ipv6-prefix IP-PFX-64512-IN-V6 index 10 permit 2001:DB8::/32\n"
+               "#\n"
+               "route-policy RP-64512-IMPORT-V6 permit node 10\n"
+               " if-match ipv6 address prefix-list IP-PFX-64512-IN-V6\n"
+               "#\n"
+               "bgp 65001\n"
+               " peer 100.64.10.1 as-number 64512\n"
+               " peer 100.64.10.1 description CLIENTE-ALFA\n"
+               " peer 2804:194C:1000::1100:73:2 as-number 64512\n"
+               " peer 2804:194C:1000::1100:73:2 description CLIENTE-ALFA-V6\n")
+    alfa = _propostas(db_session, dev)[1001]
+
+    definicoes = [d for d in conferir_fidelidade(db_session, alfa) if d.contexto == "definicao"]
+
+    # Uma prefix-list e uma route-policy de importação por família: quatro
+    # blocos de definição. A contagem fixa que a leitura do render não pulou
+    # nenhum deles — sem ela, uma chave que deixasse de ser reconhecida sairia
+    # como "nenhuma diferença" e o teste passaria vazio.
+    assert len(definicoes) == 4
+    assert all(d.sobrando == () and d.faltando == () for d in definicoes)

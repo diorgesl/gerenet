@@ -786,7 +786,7 @@ def listar_propostas(session: Session, device_id: int) -> ResultadoPropostas:
 
 @dataclass(frozen=True)
 class Diferenca:
-    contexto: str                  # "peer" | "subinterface" | "ensaio"
+    contexto: str                  # "peer" | "subinterface" | "definicao" | "ensaio"
     sobrando: tuple[str, ...] = ()      # o render produz e a configuração não tem
     faltando: tuple[str, ...] = ()      # a configuração tem e o render não produz
     nao_gerenciado: tuple[str, ...] = ()   # a SoT não emite isto, e não é divergência
@@ -876,6 +876,64 @@ def _mascara_senha(linha: str, endereco: str) -> str:
     if linha[len(prefixo):].startswith("password "):
         return f"{prefixo}password [mascarado]"
     return linha
+
+
+# Blocos de DEFINIÇÃO: o render os emite para a sessão, e o filtro por linha de
+# peer os descarta. A chave é o cabeçalho sem o corpo, e as duas pontas usam a
+# MESMA regra, porque a premissa da comparação é que o texto é o mesmo comando.
+_TIPOS_DEFINICAO = ("prefix_list", "as_path_filter", "community_filter",
+                    "route_policy_import", "route_policy_export")
+
+
+def _chave_definicao(linha: str) -> str | None:
+    """Chave do bloco de definição a partir da linha de cabeçalho.
+
+    `route-policy NOME permit|deny node N` → `route-policy NOME`; os demais são
+    `ip ip-prefix NOME`, `ip ipv6-prefix NOME`, `ip as-path-filter NOME` e
+    `ip community-filter NOME`, todos com o nome no terceiro token.
+    """
+    partes = linha.split()
+    if not partes:
+        return None
+    if partes[0] == "route-policy" and len(partes) >= 2:
+        return f"route-policy {partes[1]}"
+    if partes[0] == "ip" and len(partes) >= 3 and partes[1] in (
+        "ip-prefix", "ipv6-prefix", "as-path-filter", "community-filter"
+    ):
+        return f"ip {partes[1]} {partes[2]}"
+    return None
+
+
+def _indice_definicoes(texto: str) -> dict[str, tuple[str, ...]]:
+    """Blocos de definição da configuração, indexados pela chave.
+
+    Um bloco começa numa linha sem indentação cujo cabeçalho casa
+    `_chave_definicao` e vai até a próxima linha sem indentação — e a chave é
+    que reúne o objeto: a prefix-list de várias entradas é um bloco só, uma
+    linha de cabeçalho por entrada.
+
+    Comentário é qualquer linha começando com `#`, e não só o separador
+    sozinho, e ele some ANTES da regra de contexto — como no
+    `_contexto_interface` e no parser da configuração. O render deste projeto
+    emite comentário com texto na coluna 0 dentro do bloco (`# up-full: ...`,
+    `# TE: ...`), e tratá-lo como linha de topo fecharia o bloco ali mesmo: as
+    linhas seguintes sairiam da leitura em silêncio e o render as acusaria como
+    sobra. É a lição que a parte 1 pagou para aprender.
+    """
+    indice: dict[str, list[str]] = {}
+    chave: str | None = None
+    for bruta in texto.splitlines():
+        linha = bruta.strip()
+        if not linha or linha.startswith("#"):
+            continue
+        if not bruta[:1].isspace():
+            chave = _chave_definicao(linha)
+            if chave is not None:
+                indice.setdefault(chave, []).append(linha)
+            continue
+        if chave is not None:
+            indice[chave].append(linha)
+    return {c: tuple(linhas) for c, linhas in indice.items()}
 
 
 def _normaliza_linhas(linhas: list[str]) -> set[str]:
@@ -1079,6 +1137,26 @@ def conferir_fidelidade(session: Session, proposta: Proposta) -> list[Diferenca]
                 sobrando=tuple(sorted(esperado - encontrado)),
                 faltando=gerenciadas,
                 nao_gerenciado=nao_gerenciadas,
+            ))
+        # O corpo das definições da sessão (design §6). O índice é construído
+        # UMA vez para os blocos todos: dentro do laço, cada definição
+        # re-varreria a configuração inteira — a de uma borda real são centenas
+        # de KB por definição de cada sessão.
+        indice = _indice_definicoes(texto)
+        for bloco in render.blocos:
+            if bloco.objeto != "session" or bloco.objeto_id not in ids_sessoes:
+                continue
+            if bloco.tipo not in _TIPOS_DEFINICAO or not bloco.comandos:
+                continue
+            chave = _chave_definicao(bloco.comandos[0])
+            if chave is None:
+                continue
+            esperado = _normaliza_linhas(bloco.comandos)
+            encontrado = _normaliza_linhas(list(indice.get(chave, ())))
+            resultado.append(Diferenca(
+                contexto="definicao",
+                sobrando=tuple(sorted(esperado - encontrado)),
+                faltando=tuple(sorted(encontrado - esperado)),
             ))
     finally:
         # Desfaz só o ensaio (o SAVEPOINT), pela razão da docstring: o
