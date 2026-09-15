@@ -1518,6 +1518,29 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
   - `GET /api/v1/discovery/fidelidade` com os query params `circuit_code`, `organizacao_id`, `organizacao_nome`, `velocidade_mbps`.
   A Task 9 consome os quatro params na web.
 
+> **Ruling do pré-voo, 10 — a lista de testes quebrados estava certa, mas o
+> `Files:` desta tarefa não virava dois deles em passo nenhum.** O Ruling do
+> pré-voo, 4 já dizia que `test_a_conferencia_usa_o_trunk_da_revisao` "precisa
+> passar a identidade" e que `tests/api/test_discovery_adopt_api.py` entra nesta
+> tarefa. Nenhum dos dois tinha passo, e o `git add` do Step 5 não levava o
+> arquivo da API. Medido agora, antes de despachar: os cinco vermelhos de hoje
+> são os quatro de `tests/domain/test_adocao.py`
+> (`test_ensaio_fiel_aceita_sem_ciente`,
+> `test_a_auditoria_leva_todas_as_diferencas`,
+> `test_a_conferencia_usa_o_trunk_da_revisao`,
+> `test_familia_a_mais_na_revisao_recusa`) e o
+> `test_fidelidade_sob_demanda` da API. Os Steps 1b, 1c e 1d fecham três; os
+> passos 1f e 1g abaixo fecham os dois que faltavam.
+>
+> E a identidade sozinha **não** bastava para o do trunk: no enlace da fixture a
+> descrição do equipamento é `CLIENTE-ALFA` e o render nunca a emite nessa forma
+> (ele monta `<CÓDIGO> <ORG>`, `naming.descricao_subinterface`), então o
+> `derivado.exige_ciente is False` continua inalcançável com aquele texto. O 1f
+> passa a usar o `_CONFIG_FIEL`, que é o único dos dois textos onde o bloco bate
+> linha a linha — o mesmo movimento que o 1b já faz.
+> **Custo se errado:** a frente fecharia com dois vermelhos sem dono, e um deles
+> é o único teste do endpoint que a Task 9 consome.
+
 - [ ] **Step 1: Write the failing test**
 
 Esta tarefa mexe em quatro testes que já existem, e a ordem importa: os que
@@ -1708,6 +1731,111 @@ def test_a_identidade_da_revisao_tira_a_diferenca_falsa_de_descricao(
     assert com_identidade.exige_ciente is False
 ```
 
+**1f. `test_a_conferencia_usa_o_trunk_da_revisao`** passa a conferir com o
+`_CONFIG_FIEL` e com a identidade da revisão. Os dois são necessários e por
+motivos diferentes: sem o texto do 601 a descrição do equipamento é
+`CLIENTE-ALFA` e o bloco nunca bate, e sem a identidade o ensaio emite a do
+`ENSAIO-...`. Só com os dois o `is False` mede o trunk, que é o que o nome do
+teste promete.
+
+```python
+def test_a_conferencia_usa_o_trunk_da_revisao(db_session, tmp_path) -> None:
+    """O ensaio monta o circuito com o trunk da revisão, e não com o derivado do
+    nome: com outro trunk o circuito que nasceria tem outro bloco, e a diferença
+    tem de aparecer em vez de a comparação sair fiel.
+
+    O `_CONFIG_FIEL` entra porque a `description` da subinterface é gerenciada
+    desde a frente da velocidade (§7): só no enlace sem QoS, e com o código e a
+    organização da revisão, o bloco bate linha a linha."""
+    _site, dev = _ambiente(db_session, tmp_path, texto=_CONFIG_FIEL)
+    prop = _proposta(db_session, dev, vid=601)
+    identidade = {"circuit_code": "ADOC-64512-601", "organizacao_nome": "Cliente Alfa"}
+
+    derivado = next(d for d in conferir_fidelidade(db_session, prop, **identidade)
+                    if d.contexto == "subinterface")
+    revisado = next(d for d in conferir_fidelidade(db_session, prop, edge_trunk="Eth-Trunk9",
+                                                   **identidade)
+                    if d.contexto == "subinterface")
+
+    assert derivado.exige_ciente is False
+    assert revisado.exige_ciente is True
+```
+
+**1g. `test_fidelidade_sob_demanda`** (`tests/api/test_discovery_adopt_api.py`)
+prende hoje que a descrição do ALFA está no grupo que **não** gateia, e a Task 6
+tirou-a de lá. O enlace da fixture continua sendo o certo aqui — é o único com
+`qos car` dos dois lados, e é ele que dá o que medir da velocidade. O que muda é
+o que se prende: a descrição aparece nos dois lados da comparação (o
+equipamento tem uma, o ensaio sem identidade emite a do `ENSAIO-...`), o grupo
+que não gateia fica vazio, e a velocidade da revisão tira as duas linhas de
+`qos car` do diff.
+
+```python
+def test_fidelidade_sob_demanda(client, db_session, tmp_path) -> None:
+    """A conferência de UMA proposta, sob demanda, com os parâmetros que a revisão
+    escolheu: a lista não a traz embutida, porque cada conferência roda um ensaio
+    do render inteiro."""
+    ambiente = _ambiente(db_session, tmp_path)
+    url = (f"/api/v1/discovery/fidelidade?device_id={ambiente['dev'].id}"
+           "&subinterface=Eth-Trunk127.1001")
+    resposta = client.get(url, headers=_auth())
+    assert resposta.status_code == 200
+    corpo = resposta.json()
+    assert corpo["device_id"] == ambiente["dev"].id
+    assert corpo["subinterface"] == "Eth-Trunk127.1001"
+    assert isinstance(corpo["diferencas"], list)
+    assert all({"contexto", "sobrando", "faltando", "nao_gerenciado"} <= set(d)
+               for d in corpo["diferencas"])
+    # A lista vazia é o outro jeito de este teste passar sem conferir nada: é a
+    # descrição da subinterface do ALFA que diz que a proposta comparada é a 1001.
+    assert {"peer", "subinterface"} <= {d["contexto"] for d in corpo["diferencas"]}
+    sub = next(d for d in corpo["diferencas"] if d["contexto"] == "subinterface")
+    # A descrição passou a ser gerenciada (§7), então ela aparece nos DOIS lados
+    # quando o ensaio vai sem identidade: a do `ENSAIO-...` sobra no render e a do
+    # equipamento falta nele. É essa diferença que exige o ciente.
+    assert any("description CLIENTE-ALFA" in linha for linha in sub["faltando"])
+    assert any("description ENSAIO-" in linha for linha in sub["sobrando"])
+    # O grupo que não gateia é só o `mtu` desde a frente da velocidade, e esta
+    # subinterface não tem nenhum: ele sai vazio, e não com a descrição dentro.
+    assert sub["nao_gerenciado"] == []
+    # O gate do aceite viaja na resposta: é ele que a tela usa para exigir o ciente.
+    assert any(d["exige_ciente"] for d in corpo["diferencas"])
+
+    # Sem o trunk a conferência deriva o da subinterface, e o nome do bloco bate
+    # dos dois lados; com OUTRO trunk o bloco que nasceria é outro, e o nome
+    # divergente aparece dos dois lados. É o parâmetro que a tela manda junto.
+    revisado = client.get(f"{url}&edge_trunk=Eth-Trunk9", headers=_auth()).json()
+    sub9 = next(d for d in revisado["diferencas"] if d["contexto"] == "subinterface")
+    assert "interface Eth-Trunk9.1001" in sub9["sobrando"]
+    assert "interface Eth-Trunk127.1001" in sub9["faltando"]
+    assert "interface Eth-Trunk127.1001" not in sub["sobrando"] + sub["faltando"]
+
+    # A velocidade da revisão entra na conta do QoS (§5): o equipamento tem
+    # `qos car cir 1024000` nas duas direções (a fixture os traz) e o ensaio sem
+    # ela não emite taxa nenhuma. Com ela, a dobra do `equivalencia_vrp` casa a
+    # forma curta do render com a longa do VRP e as duas somem do diff.
+    assert "qos car cir 1024000 inbound" in sub["faltando"]
+    com_taxa = client.get(f"{url}&velocidade_mbps=1024", headers=_auth()).json()
+    sub_taxa = next(d for d in com_taxa["diferencas"] if d["contexto"] == "subinterface")
+    assert not any("qos car" in linha
+                   for linha in sub_taxa["sobrando"] + sub_taxa["faltando"])
+
+    # Sem perfil nenhum o ensaio não emite o corpo da política de exportação; com o
+    # produto que o operador escolheu na tela, o corpo entra na comparação — e a
+    # consulta leva os perfis justamente para a conferência valer sobre eles.
+    assert "definicao" not in {d["contexto"] for d in corpo["diferencas"]}
+    full = db_session.scalar(select(models.PolicyProfile).where(
+        models.PolicyProfile.name == "full", models.PolicyProfile.direction == "export"))
+    com_perfil = client.get(f"{url}&export_ipv4={full.id}", headers=_auth()).json()
+    definicao = next(d for d in com_perfil["diferencas"] if d["contexto"] == "definicao")
+    assert any("RP-64512-EXPORT-V4" in linha for linha in definicao["sobrando"])
+    assert definicao["exige_ciente"] is True
+```
+
+> O `sub` e o `sub9` vêm do `corpo`/`revisado` **sem** identidade, de propósito:
+> o que este teste mede no `subinterface` é que a diferença existe e por que, e
+> não que ela some — some só no `1e`, que é do domínio e passa a identidade.
+
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/domain/test_adocao.py -q -k "velocidade or identidade"`
@@ -1878,7 +2006,7 @@ Expected: PASS. Se `tests/api` não tiver esse nome, rode `uv run pytest -q` e c
 ```bash
 git add src/gerenet/automation/discovery.py src/gerenet/domain/schemas.py \
         src/gerenet/domain/services/discovery.py src/gerenet/api/routers/discovery.py \
-        tests/domain/test_adocao.py
+        tests/domain/test_adocao.py tests/api/test_discovery_adopt_api.py
 git commit -m "feat(adoção): o ensaio roda com a identidade que a revisão vai gravar, e a velocidade é gravada
 
 Co-Authored-By: Claude Code <noreply@anthropic.com>"
