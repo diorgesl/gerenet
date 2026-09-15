@@ -5,6 +5,8 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 
+import { primeiroOctetoLivre } from "./discovery-walk";
+
 const SENHA = process.env.E2E_PASSWORD ?? "e2e-super-8";
 
 async function entrar(page: Page): Promise<void> {
@@ -56,15 +58,12 @@ test("adotar a proposta da configuração e conferir o circuito na lista", async
 
   // Os blocos do stub precisam ser únicos ao longo da vida do banco e2e, que é
   // persistente e acumula autorizações: prefixo que outra organização já tem
-  // ativo volta como 409 e deixa o diálogo aberto. O relógio sozinho não
-  // sustenta isso. Uma faixa de bits fica parada pelo tempo do seu bit mais
-  // baixo — os bits 24-31 viram a cada ~4,7 h, então duas rodadas na mesma tarde
-  // derivam o mesmo /24 —, e as faixas que viram rápido repetem a cada 256 ms.
-  // E a recusa do serviço é por SOBREPOSIÇÃO: um /32 ou um bloco menor dentro de
-  // um /24 ocupado não escapa da conta. A lista de autorizações é a autoridade
-  // sobre o que está ocupado — o mesmo cuidado que o seed toma antes de criar a
-  // dele (e2e/setup.ts) —, então o octeto sai do relógio e anda até o primeiro
-  // livre nos dois /16 do RFC 2544.
+  // ativo volta como 409 e deixa o diálogo aberto. A lista de autorizações é a
+  // autoridade sobre o que está ocupado — o mesmo cuidado que o seed toma antes
+  // de criar a dele (e2e/setup.ts) —, então o octeto sai do relógio e anda até
+  // o primeiro livre nos dois /16 do RFC 2544. A caminhada mora em
+  // `discovery-walk.ts` (função pura, com o porquê dela), e os três caminhos
+  // dela estão presos no `test` do fim deste arquivo.
   const respostaAutorizacoes = await page.request.get("/api/v1/prefix-authorizations?family=ipv4");
   expect(respostaAutorizacoes.ok()).toBe(true);
   // Sem `include_disabled`, a lista traz exatamente as ativas — as que o serviço
@@ -81,16 +80,11 @@ test("adotar a proposta da configuração e conferir o circuito na lista", async
 
   const rodada = Date.now();
   const nomeDoRegistro = `Provedor E2E Registro ${rodada}`;
-  let octeto = rodada & 0xff;
-  let passos = 0;
-  while (
-    passos < 256 &&
-    (ocupados.has(`198.18.${octeto}.0/24`) || ocupados.has(`198.19.${octeto}.0/24`))
-  ) {
-    octeto = (octeto + 1) % 256;
-    passos += 1;
-  }
-  expect(passos, "198.18.0.0/15 sem octeto livre: a faixa acumulada acabou.").toBeLessThan(256);
+  const { octeto, passos } = primeiroOctetoLivre(rodada & 0xff, ocupados);
+  expect(
+    passos,
+    "198.18.0.0/15 sem octeto livre: a faixa acumulada acabou — recrie o banco `gerenet_e2e`.",
+  ).toBeLessThan(256);
   const blocoA = `198.18.${octeto}.0/24`;
   const blocoB = `198.19.${octeto}.0/24`;
 
@@ -154,4 +148,31 @@ test("adotar a proposta da configuração e conferir o circuito na lista", async
   await page.goto("/prefix-authorizations");
   await expect(page.getByText(blocoA)).toBeVisible();
   await expect(page.getByText(blocoB)).toBeVisible();
+});
+
+// A caminhada do octeto, sem navegador: o que se prende aqui é a REGRA do
+// arquivo `discovery-walk.ts`. O ramo de avanço do fumo é o que existe porque um
+// mecanismo anterior estava errado, e nas rodadas registradas ele nunca
+// executou — o octeto do relógio caiu livre nas quatro —, então "verificado por
+// leitura" era toda a evidência que ele tinha. Estes três casos são o que o
+// executa de verdade.
+test("a caminhada do octeto avança até o primeiro /24 livre dos dois /16", () => {
+  // Partida livre: não anda (o caso das rodadas registradas).
+  expect(primeiroOctetoLivre(7, new Set(["198.18.9.0/24"]))).toEqual({ octeto: 7, passos: 0 });
+
+  // Um dos dois /16 ocupado já fecha o octeto inteiro — a recusa do serviço é
+  // por sobreposição, e o bloco do stub sai nas duas famílias. Anda UM passo e
+  // para no primeiro livre, seja qual for o lado ocupado.
+  const umLado = new Set(["198.18.5.0/24", "198.19.7.0/24"]);
+  expect(primeiroOctetoLivre(5, umLado)).toEqual({ octeto: 6, passos: 1 });
+  expect(primeiroOctetoLivre(7, umLado)).toEqual({ octeto: 8, passos: 1 });
+
+  // Faixa inteira ocupada: `passos = 256` é o valor que o assert do chamador
+  // pega (`toBeLessThan(256)`), com o octeto de volta na partida.
+  const cheia = new Set<string>();
+  for (let octeto = 0; octeto < 256; octeto += 1) {
+    cheia.add(`198.18.${octeto}.0/24`);
+    cheia.add(`198.19.${octeto}.0/24`);
+  }
+  expect(primeiroOctetoLivre(0, cheia)).toEqual({ octeto: 0, passos: 256 });
 });
