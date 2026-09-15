@@ -19,7 +19,9 @@
 - **Nada de segredo em log, snapshot, auditoria, YAML ou Git** (§19). A senha de peer continua mascarada.
 - **Idempotência (§3.2)**: reexecutar a mesma operação não duplica nada; um bloco já conforme não entra no plano.
 - **A fixture `tests/fixtures/huawei_vrp/ne8000_display_current_configuration.txt` é derivada dos templates deste projeto**, não uma captura real — o que o render passa a emitir entra nela.
-- **A ordem das linhas do bloco da subinterface é a do equipamento** (`vlan-type`, `description`, `ip address`, `ipv6 enable`, `ipv6 address`, `statistic enable`, `qos car inbound`, `qos car outbound`) — é o que mantém o bloco comparável linha a linha com a coleta.
+- **A ordem das linhas do bloco da subinterface é a do template** (`interface`, `description`, `vlan-type`, `ip address`, `ipv6 enable`, `ipv6 address`, `statistic enable`, `qos car inbound`, `qos car outbound`) — é o que os goldens de `test_templates.py` pinam. O equipamento escreve `vlan-type` antes de `description` (spec §2), e a diferença não importa: a comparação com a coleta é por **conjunto** (`subinterface.linhas_da_interface` devolve `set`), não por ordem. Não reordene o template para casar com a captura.
+
+> **Ruling do pré-voo, 1 de 2.** Esta linha listava a ordem do equipamento como se fosse a do render. O template emite `description` **antes** do `vlan-type` desde antes desta frente (`subinterface.j2:2-9`), e `test_subinterface_v4_descricao_sem_ipv6` pina isso. Seguir a lista antiga quebraria dois goldens existentes para ganhar nada — a comparação é por conjunto. **Custo se estiver errado:** o bloco sai numa ordem diferente da captura, o que é cosmético; nenhum teste de fidelidade depende disso.
 
 ---
 
@@ -1023,9 +1025,37 @@ Atualizar também a docstring da função, na lista de estados que ela devolve:
     "atualizar": o bloco vai inteiro ao equipamento (§6).
 ```
 
-**3c.** Em `_re_diff`, trocar o corpo do laço por:
+**3c.** Em `_re_diff`, trocar o corpo **inteiro** da função a partir de
+`a_aplicar: list[dict] = []` e incluindo a condição do abort por:
+
+> **Ruling do pré-voo, 2 de 2 — leia antes de escrever.** A versão anterior
+> deste passo mandava só acrescentar `elif estado == "atualizar": a_aplicar.append(bloco)`
+> ao laço, e deixava a condição do abort como estava:
+> `if a_aplicar and any(bloco.get("acao", "create") == "create" for bloco in a_pular)`.
+> **Isso não funciona, e o Step 1 desta tarefa prende a falha**:
+> `test_re_diff_aplica_o_atualizar_e_nao_aborta_com_um_completo` monta um plano com
+> um bloco completo (create → `consta` → `a_pular`) e outro a atualizar
+> (create → `atualizar` → `a_aplicar`), e a condição antiga lê exatamente isso
+> como "parte do plano consta" e aborta. O teste espera `erro is None`.
+>
+> O que a §6 pede é que `atualizar` **não conte** como evidência de plano velho —
+> e a condição antiga conta, porque o lado dela que mede "há algo a aplicar" é o
+> `a_aplicar` inteiro. O abort precisa dos dois lados separados por estado: os
+> creates que **constam** e os blocos que a aplicação manda por o objeto
+> **faltar ou haver remoção**. `atualizar` não é nenhum dos dois.
+> **Custo se estiver errado:** sem esta correção o teste falha e a tarefa não
+> fecha; corrigindo só o lado do teste (afrouxar o `assert`), o parque que já
+> existe continuaria sem convergir em planos mistos.
 
 ```python
+    a_aplicar: list[dict] = []
+    a_pular: list[dict] = []
+    # Os dois lados do abort de plano velho (§12.2): `constam` são os creates que
+    # o plano prometia criar e já estão completos; `por_ausencia` é o que a
+    # aplicação manda por o objeto faltar ou por haver remoção a fazer. Só os
+    # blocos que NÃO são delete entram em `constam`, então ele é só de creates.
+    constam: list[dict] = []
+    por_ausencia: list[dict] = []
     for bloco in blocos:
         estado = _estado_do_bloco(bloco, recursos, texto)
         if estado == "conflito":
@@ -1034,18 +1064,44 @@ Atualizar também a docstring da função, na lista de estados que ela devolve:
                 "identidade do encontrado não confere com o plano (§5.3)."
             )
         if bloco.get("acao", "create") == "delete":
-            (a_pular if estado == "ausente" else a_aplicar).append(bloco)
+            if estado == "ausente":
+                a_pular.append(bloco)
+            else:
+                a_aplicar.append(bloco)
+                por_ausencia.append(bloco)
         elif estado == "atualizar":
             # §6: nome e endereços batem e falta descrição ou QoS. Vai para a
-            # APLICAÇÃO, e não para `a_pular` — é `a_pular` que o abort de plano
-            # velho logo abaixo lê, e um create a atualizar ali abortaria um
-            # plano legítimo (um circuito completo + outro para atualizar).
+            # APLICAÇÃO — e fica FORA dos dois lados do abort logo abaixo. O
+            # objeto está no equipamento (não é ausente) e o que falta é
+            # conteúdo desta frente (não é consta). Contá-lo de qualquer um dos
+            # lados abortaria um plano legítimo com um circuito completo e outro
+            # para atualizar, que são dois creates.
             a_aplicar.append(bloco)
         elif estado == "consta":
             a_pular.append(bloco)
+            constam.append(bloco)
         else:
             a_aplicar.append(bloco)
+            por_ausencia.append(bloco)
+    if por_ausencia and constam:
+        # Só create consta+ausente no mesmo plano é divergência (plano congelado
+        # desatualizado, §12.2). Remove (delete) parcial é natural: pular o que
+        # já não existe e remover o que existe é a própria idempotência (§3.2) —
+        # sem abort, o step reexecutável converge sem reconciliar o plano.
+        bloco = constam[0]
+        return [], [], (
+            f"Estado divergente no objeto {bloco['tipo']} (#{bloco.get('objeto_id')}): apenas "
+            "parte do plano consta do encontrado (config inalterada? §12.2) — "
+            "reexecute com plano atualizado."
+        )
+    return a_aplicar, a_pular, None
 ```
+
+As duas listas novas preservam o comportamento anterior **exatamente** para os
+estados que já existiam: antes do `atualizar`, `a_aplicar` continha os creates
+ausentes mais os deletes presentes, e `a_pular` os creates constam — que é
+exatamente `por_ausencia` e `constam`. `atualizar` é o único estado novo, e é o
+único que fica de fora.
 
 E atualizar a docstring da função, acrescentando à lista de regras:
 
