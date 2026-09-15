@@ -399,8 +399,46 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   DELETE `discovery.unignore`); CLI `gerenet discovery
   list|show|ignore|unignore` (`ignore` pega **um** peer, com `--afi`/`--vrf`/
   `--motivo`; o "Não adotar" da página retira o **enlace inteiro**). A **parte 2
-  (adoção) não existe**. Docs: wiki `/wiki/descoberta` e a seção da descoberta em
-  `docs/runbook-validacao-ne8000.md` (checklist das 21 assunções do parser — a
-  fixture é derivada dos templates do próprio projeto, **não** uma captura real).
+  (adoção)** veio no bullet seguinte. Docs: wiki `/wiki/descoberta` e a seção da
+  descoberta em `docs/runbook-validacao-ne8000.md` (checklist das 21 assunções do
+  parser — a fixture é derivada dos templates do próprio projeto, **não** uma
+  captura real).
+- Descoberta na configuração — parte 2 (adoção, 2026-09-15): a proposta lida da
+  configuração vira circuito na SoT pela revisão da página **Migrar** (diálogo da
+  linha: código, acesso, trunk, organização — escolher uma da lista ou criar a
+  nova com o ASN do peer —, perfil de import/export e caminho do segredo no Vault
+  por família) ou pelo `gerenet discovery adopt <device> <peer> --json <arquivo>
+  [--ciente]`; API `POST /api/v1/discovery/adopt` (201 com o `circuit_id`, 404
+  quando a proposta já não existe, 409 de unicidade, 422 de campo/ciente) e
+  `GET /api/v1/discovery/fidelidade?device_id=&vrf=&subinterface=` — o diff sob
+  demanda, porque cada conferência roda um render do equipamento inteiro e
+  embuti-la na lista faria a página pagar um render por proposta. A escrita é
+  **uma transação só** (`commit=False` em `create_organization`/
+  `create_circuit`/`reservar_adocao`/`create_session`, audit `discovery.adopt`
+  com o snapshot de origem, o `ciente` e o diff inteiro; qualquer recusa desfaz
+  tudo — não existe adoção parcial) e **nada vai ao equipamento**: mudar o
+  roteador continua sendo change request. `reservar_adocao` grava os **valores
+  reais** da proposta (o VID e o par p2p da configuração, com
+  `origem_snapshot_id`), e não o que o alocador first-fit daria. A conferência de
+  fidelidade passou a comparar também o **corpo das definições** que a sessão do
+  ensaio referencia (contexto `definicao`), recebe os perfis e o trunk da
+  revisão — e o **nome da interface** entra na conta, dos dois lados (o
+  `<trunk>.<vid>` que o render monta com o trunk informado contra o nome do bloco
+  lido: o `discard` antigo só dispensava o cabeçalho do render quando ele
+  coincidia com o nome lido, então um trunk errado sobrava de um lado só, e o
+  nome que o equipamento tem — o que diz qual campo corrigir — não aparecia) —, e
+  `Diferenca` ganhou
+  `explicacao` (o `ensaio` parou de sobrecarregar
+  `faltando`); o que a SoT **não gerencia** (`description` e MTU da subinterface)
+  aparece num grupo próprio e **não gateia** — só o grupo que mudaria o
+  equipamento exige o `ciente`, e o aceite caduca quando a conferência é
+  refeita. Fumo `web/e2e/discovery.spec.ts`: o seed (`web/e2e/setup.ts`) passou a
+  escrever o snapshot com a configuração sintética de um enlace por rodada, num
+  equipamento próprio (`ne8000-disco-01` — o `ne8000-01` já tem sessão ativa e a
+  §14.1 admite uma por device/VRF/família), e desativa as sessões desse
+  equipamento antes de cada rodada. Docs: wiki `/wiki/descoberta` (o fluxo de
+  revisão, os dois grupos do diff, quando o `ciente` é exigido e o que a adoção
+  grava) e a Etapa 3 do runbook do NE8000 (adoção num equipamento não crítico,
+  com a CR de remoção do circuito como rollback).
 - Convenções previstas no `.gitignore`: Python com venv e pytest (`.venv/`, `.pytest_cache/`), deploy via Docker Compose (`compose.yaml` na raiz) com `.env` ignorado (o `.gitignore` ainda prevê `deploy/docker/.env`), `config.yaml` local com segredos **fora do repositório**, logs em `logs/` ignorados.
 - `.claude/settings.local.json` contém token e aponta o harness para uma API externa: é arquivo local — não versionar nem alterar.

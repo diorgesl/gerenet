@@ -10,7 +10,7 @@ order: 4
 Todo equipamento já coletado tem a configuração inteira guardada no snapshot. A
 página **Migrar** (rota `/discovery`, grupo Operação) lê essa configuração e
 mostra o que o equipamento tem e a SoT ainda não conhece, para você decidir o
-que cadastrar.
+que cadastrar — e cadastra dali mesmo, na revisão de cada proposta.
 
 ## O que ela lê, e o que ela nunca lê
 
@@ -19,8 +19,8 @@ Lê só o que a coleta já trouxe: o `display current-configuration` e o recurso
 recente **que tenha a configuração salva** — coleta anterior a este recurso não
 serve de fonte. Todo o trabalho é leitura de texto já gravado. **Nenhum comando
 é enviado ao equipamento em nenhum momento**: nem ao abrir a página, nem ao
-rodar o CLI, nem ao mexer na lista de ignorados. Quem fala com o equipamento
-continua sendo só a [coleta](/wiki/operacao).
+rodar o CLI, nem ao mexer na lista de ignorados, nem ao adotar uma proposta.
+Quem fala com o equipamento continua sendo só a [coleta](/wiki/operacao).
 
 O valor da senha de um peer (`password cipher`) nunca é lido. O parser registra
 apenas que existe uma senha configurada, e isso aparece como pendência: o
@@ -74,32 +74,39 @@ passa por aqui.
 
 A **conferência de fidelidade** renderiza o que nasceria com a proposta e
 compara com o bloco da configuração que a originou, mostrando o que sobra no
-render e o que falta nele, em dois contextos: as linhas do peer e as da
-subinterface. É o que impede a SoT de nascer mentindo — se o perfil de política
-ainda não foi escolhido, o render não emite a route-policy, e a conferência diz
-isso em vez de deixar passar. Ela roda o render de verdade (o mesmo código que a
-adoção usaria) sobre um ensaio que é desfeito em seguida, então nada fica
-gravado. Quando a comparação não pôde ser feita — peer em VRF, ou uma restrição
-de unicidade que recusou o ensaio — ela devolve uma diferença de contexto
-`ensaio` dizendo isso, em vez de sair como fiel. Ela aparece no
-`gerenet discovery show`.
+render e o que falta nele. Ela cobre o que a proposta tocaria, em três
+contextos de comparação — as linhas do peer (`peer`), o bloco da subinterface
+(`subinterface`) e o corpo das definições que a sessão referencia (`definicao`:
+o que o peer nomeia e o que essas definições nomeiam) — e devolve um quarto, o
+`ensaio`, que não é comparação e sim o registro de que ela não pôde ser feita.
+É o que impede a SoT de nascer mentindo: escolher o produto errado na revisão
+muda o corpo das route-policies, e é isso que a conferência acusa.
 
-O limite dela, dito sem rodeios: a comparação cobre as linhas do peer e o bloco
-da interface, e **não** o corpo das definições que o render emite junto com a
-sessão (prefix-list, route-policies de importação e exportação, community-filter,
-as-path-filter). Como o nome da route-policy deriva do ASN do par, escolher o
-produto errado na revisão produz linhas de peer idênticas byte a byte com um
-corpo de política completamente diferente, e a conferência não acusa diferença
-nenhuma. Uma conferência limpa não é, por si só, prova de que o produto
-escolhido é o certo.
+Ela roda o render de verdade (o mesmo código que a adoção usaria) sobre um
+ensaio que é desfeito em seguida, então nada fica gravado. Na revisão da página,
+o ensaio recebe o que o operador escolheu — os perfis de cada família e o trunk
+—, porque ele tem de ter a forma do que a adoção **vai** gravar; no
+`gerenet discovery show`, sem essas escolhas, a comparação é a da proposta como
+ela está na lista. Quando a comparação não pôde ser feita — peer em VRF,
+proposta sem site ou sem candidato, ou uma restrição de unicidade que recusou o
+ensaio — ela devolve a diferença de contexto `ensaio` dizendo isso, em vez de
+sair como fiel.
+
+O limite dela, dito sem rodeios: a comparação cobre o que **esta proposta**
+tocaria. O resto da configuração do equipamento não entra, e a conferência não
+afirma nada sobre ele — uma conferência limpa diz que o enlace da proposta é
+reproduzível, não que o equipamento inteiro esteja. O grupo que a SoT não
+gerencia (veja abaixo) também aparece sem bloquear: ele é leitura, não gate.
 
 ## Página e CLI
 
 | Onde | O que faz |
 |---|---|
-| Página **Migrar** | Lista as propostas (VLAN, subinterface, stack, QinQ, peers, código sugerido, veredito), abre o detalhe com reservas, pendências e conflitos, e mantém a lista de ignorados do equipamento. |
+| Página **Migrar** | Lista as propostas (VLAN, subinterface, stack, QinQ, peers, código sugerido, veredito), abre o detalhe com reservas, pendências e conflitos, mantém a lista de ignorados do equipamento e adota pela revisão. |
+| Revisão **Adotar** (na linha da lista) | Os campos que só o operador sabe e o diff da conferência, com o aceite. É a única superfície **da página** onde o `ciente` aparece. |
 | `gerenet discovery list <equipamento>` | A mesma lista no terminal, mais os peers **internos (iBGP)**, que saem numa seção separada com a sugestão de ignorar — a página não os mostra. |
 | `gerenet discovery show <equipamento> <peer>` | Uma proposta, com a conferência de fidelidade. |
+| `gerenet discovery adopt <equipamento> <peer> --json <arquivo> [--ciente]` | Adota a proposta a partir de um arquivo de revisão (`AdocaoIn`), sem passar pela tela; o `--ciente` é o mesmo aceite da caixa. |
 | `gerenet discovery ignore <equipamento> <peer> [--afi] [--vrf] [--motivo]` | Tira **um peer** da lista. |
 | `gerenet discovery unignore <equipamento> <peer> [--afi] [--vrf]` | Traz o peer de volta. |
 
@@ -110,11 +117,75 @@ IPv4 e IPv6. Para ignorar só um deles, use o CLI. O endereço é comparado na
 forma canônica, então a caixa do IPv6 (`2804:194C:...` ou minúsculo) não decide
 nada.
 
-## O que ainda não existe
+## A revisão
 
-A adoção em si. Esta parte entrega a leitura e a lista de ignorados; cadastrar a
-partir da proposta é a parte seguinte, e a lista de ignorados é o único caminho
-de escrita. A leitura também não afirma mais do que leu: sem coleta com a
-configuração a página diz que não há o que comparar, e se a leitura não entendeu
-algum trecho da configuração ela diz isso — são dois avisos diferentes, e o
-segundo pode significar lista incompleta.
+Cada linha da lista abre a revisão pelo botão **Adotar**: um formulário com o
+que o operador decide e, ao lado, o diff da conferência. Nada é gravado enquanto
+ele não aceitar.
+
+| Campo | De onde vem |
+|---|---|
+| Código do circuito | Sugerido da proposta (`ADOC-<ASN>-<VID>`), livre para trocar. |
+| Equipamento e porta de acesso | Em branco: a configuração do edge não diz de que switch e porta o cliente chega. |
+| Trunk do edge | Derivado do nome da subinterface (`Eth-Trunk127.<vid>`) — é com ele que o render monta `<trunk>.<vid>`. |
+| Organização | De uma lista (as desativadas aparecem com o rótulo) ou **Criar a nova**, com o nome digitado e o ASN do peer. |
+| Perfil de importação e de exportação | Por família: é o produto da política que o render emite. |
+| Caminho do segredo no Vault | Por família, quando o peer tem senha — o valor do segredo nunca passa pela tela. |
+
+O que a revisão mostra e não se edita: as reservas que serão gravadas (VID, rede
+e ponta) e os endereços e ASNs das sessões. A classificação do peer **com o
+motivo**, as pendências e os conflitos que a leitura levantou são do **Detalhes**
+da linha — outra janela, não a revisão. O aceite fica **desabilitado** enquanto um
+obrigatório estiver vazio, fora da forma ou acima do tamanho do schema — com o
+motivo escrito ao lado do campo.
+
+O aceite vale para o diff que está na tela: mexer num campo que entra na
+comparação (o perfil, o trunk) refaz a conferência e desmarca a caixa sozinho.
+
+## O diff, em dois grupos — e só um bloqueia
+
+- **Diferenças que mudariam o equipamento**: linha que o render emitiria e o
+  equipamento não tem, ou o contrário. É o que a configuração mudaria se fosse
+  aplicada, e é este grupo que exige o `ciente`.
+- **O que a SoT não gerencia**: linha que o equipamento tem e o render não emite
+  de propósito — hoje o `description` e o `mtu` da subinterface. Numa borda real
+  elas estão em toda proposta, e "diferença exige `ciente`" degeneraria em
+  "marque sempre". Ficam visíveis, para leitura, e não gateiam nada.
+
+O `ciente` é a caixa **Estou ciente destas diferenças**, e só aparece quando o
+primeiro grupo tem alguma linha — o que a SoT não gerencia não é assumido por
+ninguém. Sem ele, a adoção recusa com 422; com ele, as diferenças que a
+conferência viu, dos dois grupos, vão para a auditoria do evento
+`discovery.adopt`: "eu sabia" é uma decisão, e decisão precisa de dono.
+
+Se a comparação não pôde ser feita — a diferença de contexto `ensaio` —, a
+adoção fica bloqueada, e não há `ciente` que a libere.
+
+## O que a adoção grava
+
+Uma transação só, e nada é enviado ao equipamento:
+
+1. a organização, quando a revisão pede uma nova (o ASN é o do peer);
+2. o circuito, com o acesso e o trunk da revisão e a stack derivada das sessões
+   que nascem;
+3. as reservas **pelos valores reais** da proposta — o VID e o par p2p que o
+   equipamento já usa, e não o que o alocador daria: aqui quem manda é a
+   configuração lida, e o snapshot de origem fica gravado na reserva;
+4. uma sessão por família, com o ASN local do equipamento e o remoto lido da
+   configuração;
+5. o evento `discovery.adopt`, com o snapshot, o `ciente` e o diff inteiro.
+
+Se qualquer passo recusar, tudo é desfeito: não existe adoção parcial. A
+proposta adotada sai da lista sozinha, porque a lista é recalculada do que a SoT
+já conhece. E a adoção grava a **intenção**: quem escreve na configuração do
+equipamento é a [mudança controlada](/wiki/mudancas-controladas), com aprovação
+— a adoção não manda um comando sequer.
+
+## O que a leitura não afirma
+
+A leitura não afirma mais do que leu: sem coleta com a configuração a página diz
+que não há o que comparar, e se ela não entendeu algum trecho da configuração
+ela diz isso — são dois avisos diferentes, e o segundo pode significar lista
+incompleta. O `gerenet discovery adopt` imprime o aviso antes de gravar, mesmo
+tendo achado a proposta: a escrita vai para a SoT, e gravar a partir de uma
+leitura que a ferramenta marca não pode acontecer em silêncio.

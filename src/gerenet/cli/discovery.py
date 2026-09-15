@@ -1,22 +1,30 @@
 """Descoberta de peers: o que o equipamento tem e a SoT não conhece (§13).
 
-Somente leitura, mais a lista de ignorados. A adoção é a parte 2.
+Somente leitura NO EQUIPAMENTO: a lista de ignorados e a adoção escrevem na SoT,
+e nenhuma delas manda comando ao roteador — mudar o equipamento continua sendo
+change request.
 """
+from pathlib import Path
+
 import typer
+from pydantic import ValidationError as SchemaValidationError
 from sqlalchemy.orm import Session
 
 from gerenet.automation.discovery import (
     Candidato,
+    Diferenca,
     conferir_fidelidade,
-    listar_candidatos,
     listar_propostas,
 )
 from gerenet.db import get_session
+from gerenet.domain import schemas
 from gerenet.domain.services import devices as dev_svc
 from gerenet.domain.services.discovery import (
+    adotar_proposta,
     esquecer_ignorado,
     ignorar_candidato,
     listar_ignorados,
+    perfis_da_revisao,
 )
 from gerenet.domain.services.errors import GerenetError, NotFoundError
 from gerenet.domain.validators import endereco_canonico
@@ -104,6 +112,47 @@ def _imprime_internos(device: str, internos: list[Candidato]) -> None:
         typer.echo(f"    sugerido ignorar: {_comando_ignore(device, candidato)}")
 
 
+def _idade_da_coleta(segundos: float) -> str:
+    """Idade da coleta em texto curto (mesma escala da tela do dashboard).
+
+    A descoberta recua para um snapshot mais antigo quando os recentes não têm a
+    configuração, e é a idade que diz se o operador está lendo dez minutos ou
+    três dias: em segundos crus os dois números se parecem.
+    """
+    if segundos < 60:
+        return f"{segundos:.0f} s"
+    if segundos < 3600:
+        return f"{segundos / 60:.0f} min"
+    if segundos < 3 * 86400:
+        return f"{segundos / 3600:.1f} h"
+    return f"{segundos / 86400:.1f} d"
+
+
+def _imprime_fidelidade(diferencas: list[Diferenca]) -> None:
+    """O diff da conferência, com o que a SoT não gerencia num bloco próprio.
+
+    O `ensaio` guarda o motivo fora de `sobrando`/`faltando` (§6 do design), e o
+    `nao_gerenciado` é informação, não diferença: cada um tem a sua linha aqui.
+    Contexto que ficou sem nada não imprime cabeçalho — um cabeçalho sozinho é
+    onde o operador não lê por que a adoção está barrada.
+    """
+    for diferenca in diferencas:
+        if not (diferenca.sobrando or diferenca.faltando
+                or diferenca.nao_gerenciado or diferenca.explicacao):
+            continue
+        typer.echo(f"  fidelidade {diferenca.contexto}:")
+        if diferenca.explicacao:
+            typer.echo(f"    {diferenca.explicacao}")
+        for linha in diferenca.sobrando:
+            typer.echo(f"    sobra no render: {linha}")
+        for linha in diferenca.faltando:
+            typer.echo(f"    falta no render: {linha}")
+        if diferenca.nao_gerenciado:
+            typer.echo("    o que a SoT não gerencia (não exige ciente):")
+            for linha in diferenca.nao_gerenciado:
+                typer.echo(f"      {linha}")
+
+
 @app.command("list")
 def listar(device: str = typer.Argument(..., help="ID ou nome do equipamento.")) -> None:
     """Mostra as propostas de adoção do equipamento."""
@@ -111,24 +160,21 @@ def listar(device: str = typer.Argument(..., help="ID ou nome do equipamento."))
         encontrado = _resolve(session, device)
         try:
             resultado = listar_propostas(session, encontrado.id)
-            # `listar_propostas` monta a proposta dos adotáveis e deixa os
-            # internos fora do resultado, onde só `listar_candidatos` os
-            # alcança. A leitura é repetida porque esta parte não mexe no
-            # motor; ela é pura e lê a configuração já gravada.
-            internos = listar_candidatos(session, encontrado.id).internos
         except GerenetError as exc:
             typer.echo(f"Erro: {exc}", err=True)
             raise typer.Exit(1) from exc
         if resultado.aviso:
             typer.echo(f"Aviso: {resultado.aviso}")
+        if resultado.snapshot_age_seconds is not None:
+            typer.echo(f"Coleta usada: há {_idade_da_coleta(resultado.snapshot_age_seconds)}.")
         _imprime_propostas(resultado.propostas)
-        if resultado.aviso is None and not resultado.propostas and not internos:
+        if resultado.aviso is None and not resultado.propostas and not resultado.internos:
             # Sem coleta a lista vazia não sustenta conclusão nenhuma: quem diz
             # que não há peer é a leitura, e ela não aconteceu. E com internos a
             # frase seria falsa: eles estão fora da SoT por definição, e o bloco
             # logo abaixo os mostra.
             typer.echo("Nenhum peer fora da SoT.")
-        _imprime_internos(encontrado.name, internos)
+        _imprime_internos(encontrado.name, resultado.internos)
         ignorados = listar_ignorados(session, encontrado.id)
     if ignorados:
         # Só a contagem: a linha com os endereços devolveria à tela o peer que
@@ -177,12 +223,83 @@ def mostrar(
                 typer.echo("Peer não está entre os candidatos.", err=True)
             raise typer.Exit(1)
         _imprime_propostas([proposta])
-        for diferenca in conferir_fidelidade(session, proposta):
-            typer.echo(f"  fidelidade {diferenca.contexto}:")
-            for linha in diferenca.sobrando:
-                typer.echo(f"    sobra no render: {linha}")
-            for linha in diferenca.faltando:
-                typer.echo(f"    falta no render: {linha}")
+        _imprime_fidelidade(conferir_fidelidade(session, proposta))
+
+
+@app.command("adopt")
+def adotar(
+    device: str = typer.Argument(..., help="ID ou nome do equipamento."),
+    peer: str = typer.Argument(..., help="Endereço remoto de um dos peers do enlace."),
+    json_revisao: str = typer.Option(..., "--json", help="Arquivo com a revisão (AdocaoIn)."),
+    ciente: bool = typer.Option(
+        False, "--ciente",
+        help="Assume as diferenças que mudariam o equipamento (o arquivo pode trazê-las).",
+    ),
+) -> None:
+    """Grava a cadeia da proposta na SoT. Nada é enviado ao equipamento.
+
+    A conferência de fidelidade sai na tela antes da escrita, com o mesmo trunk
+    e os mesmos perfis que a adoção vai gravar: é ela que o `--ciente` assume, e
+    assumir o que não foi mostrado é o que o diff impresso impede.
+    """
+    with get_session() as session:
+        encontrado = _resolve(session, device)
+        # A comparação é pela forma canônica, como no `show`: o IPv6 sai do
+        # equipamento em maiúsculas e o operador digita o que copiou da tela.
+        alvo = endereco_canonico(peer)
+        try:
+            revisao = schemas.AdocaoIn.model_validate_json(
+                Path(json_revisao).read_text(encoding="utf-8")
+            )
+            if ciente and not revisao.ciente:
+                # A flag do terminal cobre o caso do runbook: o aceite da mesma
+                # sessão, sem editar o arquivo. O `ciente` do arquivo já basta.
+                revisao = revisao.model_copy(update={"ciente": True})
+            resultado = listar_propostas(session, encontrado.id)
+            if resultado.aviso:
+                # O sinal sai antes da busca e mesmo com a proposta achada: aqui
+                # a escrita vai para a SoT, e gravar a partir de uma leitura que a
+                # ferramenta marca sem dizer nada é o que mais custa (a regra do
+                # `show`, que imprime o aviso sempre).
+                typer.echo(f"Aviso: {resultado.aviso}")
+            proposta = next(
+                (p for p in resultado.propostas
+                 if any(c.remote_address == alvo for c in p.candidatos)),
+                None,
+            )
+            if proposta is None:
+                if resultado.aviso is None:
+                    # "Não está entre os candidatos" é conclusão, e sem leitura
+                    # inteira (ou com a parcial) ela conclui o que nenhuma leitura
+                    # sustenta.
+                    typer.echo("Peer não está entre os candidatos.", err=True)
+                raise typer.Exit(1)
+            # O diff sai ANTES da escrita, e com os mesmos parâmetros que a
+            # adoção usa: o `--ciente` (ou o `ciente` do arquivo) registra na
+            # auditoria que o operador assumiu estas linhas, e assumir o que o
+            # terminal não mostrou é o que esta impressão existe para impedir.
+            # O `show` imprime o mesmo bloco, mas nada obrigava a passar por
+            # ele — aqui a leitura e o aceite acontecem na mesma tela.
+            _imprime_fidelidade(conferir_fidelidade(
+                session, proposta,
+                perfis=perfis_da_revisao(revisao),
+                edge_trunk=revisao.edge_trunk,
+            ))
+            circuit_id = adotar_proposta(session, proposta=proposta, revisao=revisao,
+                                         actor="cli")
+        except (GerenetError, SchemaValidationError) as exc:
+            typer.echo(f"Erro: {exc}", err=True)
+            raise typer.Exit(1) from exc
+        except UnicodeDecodeError as exc:
+            # `ValueError`, e não `OSError`: sem este ramo a revisão regravada em
+            # latin-1 chegava ao terminal como pilha.
+            typer.echo(f"Erro ao ler {json_revisao}: o arquivo precisa estar em UTF-8 "
+                       f"({exc}).", err=True)
+            raise typer.Exit(1) from exc
+        except OSError as exc:
+            typer.echo(f"Erro ao ler {json_revisao}: {exc}", err=True)
+            raise typer.Exit(1) from exc
+    typer.echo(f"Circuito {revisao.circuit_code} criado (id {circuit_id}).")
 
 
 @app.command("ignore")

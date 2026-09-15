@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -60,6 +60,51 @@ const DUAS_FAMILIAS = {
   ],
 };
 
+// O enlace empilhado reserva uma S-VLAN (`vlan-type dot1q 0x88a8` no
+// equipamento), e o `kind` da reserva é o que diz isso: a coluna QinQ da lista
+// diz que há empilhamento, não qual dos dois VIDs é a S-VLAN.
+const EMPILHADO = {
+  ...DISCOVERY,
+  propostas: [{ ...PROPOSTA, vlans: [{ vid: 1001, kind: "s_vlan", family: null }] }],
+};
+
+// O dual stack com uma família fora da representação do IPAM: o peer existe no
+// equipamento (é candidato, e a revisão tem os campos dele), mas o endereço não
+// é nenhuma das duas pontas do par — `ponta_incoerente` no motor —, então não há
+// sessão a montar para ela. As duas listas que a tela recebe divergem aqui: os
+// candidatos são dois, a sessão é uma.
+const PONTA_INCOERENTE = {
+  ...DISCOVERY,
+  propostas: [
+    {
+      ...PROPOSTA,
+      candidatos: [CANDIDATO_V4, { ...CANDIDATO_V4, afi: "ipv6", remote_address: "2804:194c::9" }],
+      conflitos: [
+        {
+          tipo: "ponta_incoerente",
+          descricao: "O endereço 2804:194c::9 está na rede, mas não é uma das duas pontas do par.",
+        },
+      ],
+    },
+  ],
+};
+
+// Dois enlaces do MESMO equipamento na mesma VLAN: VRFs e portas diferentes
+// (`Eth-Trunk127` e `Eth-Trunk200`). O `vid` não distingue os dois — o nome da
+// subinterface, que é o que o equipamento tem, distingue.
+const MESMO_VID = {
+  ...DISCOVERY,
+  propostas: [
+    { ...PROPOSTA, vrf: "VPNA" },
+    {
+      ...PROPOSTA,
+      vrf: "VPNB",
+      subinterface: "Eth-Trunk200.1001",
+      circuit_code_sugerido: "ADOC-64511-1001",
+    },
+  ],
+};
+
 const SEM_COLETA = {
   device_id: 1,
   snapshot_id: null,
@@ -104,6 +149,88 @@ const IGNORADO = {
   autor: "admin",
 };
 
+// A organização desativada entra na lista com o rótulo: uma proposta pode
+// apontar para ela, e o seletor precisa da opção para não exibir a primeira
+// ("Criar a nova") enquanto o POST manda o id da invisível.
+const ORGANIZACAO_DESATIVADA = {
+  id: 3,
+  name: "CLIENTE-ANTIGO",
+  legal_name: null,
+  kind: "downstream",
+  asn: 64500,
+  irr_as_set: null,
+  notes: null,
+  admin_status: false,
+};
+
+const ORGANIZACOES = [
+  ORGANIZACAO_DESATIVADA,
+  { ...ORGANIZACAO_DESATIVADA, id: 2, name: "CLIENTE-ALFA", asn: 64512, admin_status: true },
+];
+
+// O perfil que a revisão escolhe: é ele que muda o corpo da política de
+// exportação, e é por isso que trocá-lo refaz a conferência.
+const PERFIL_EXPORT = {
+  id: 5,
+  name: "up-full",
+  label: "Full (export)",
+  direction: "export",
+  kind: "export",
+  prefixes: null,
+  notes: null,
+  admin_status: true,
+};
+
+const POLICY_PROFILES = [PERFIL_EXPORT];
+
+// O diff da conferência de fidelidade. A linha de `faltando` é o que a SoT
+// mudaria no equipamento (é ela que levanta o gate do aceite); a de
+// `nao_gerenciado` é o que a SoT não emite — visível, e sem bloquear. As duas
+// moram no MESMO contexto, como no `subinterface` do motor: `description` e
+// `mtu` não gateiam nem quando o bloco tem diferença que gateia.
+const DIFERENCA_MUDA = {
+  contexto: "subinterface",
+  sobrando: [],
+  faltando: ["vlan-type dot1q vid 1001"],
+  nao_gerenciado: ["description CLIENTE-ALFA"],
+  explicacao: null,
+  exige_ciente: true,
+};
+
+const DIFERENCA_SO_NAO_GERENCIADA = {
+  contexto: "subinterface",
+  sobrando: [],
+  faltando: [],
+  nao_gerenciado: ["description CLIENTE-ALFA"],
+  explicacao: null,
+  exige_ciente: false,
+};
+
+// A comparação que não pôde ser feita: o motivo mora na `explicacao`, com
+// `sobrando`/`faltando` vazios de propósito (nada aqui muda o equipamento).
+const DIFERENCA_ENSAIO = {
+  contexto: "ensaio",
+  sobrando: [],
+  faltando: [],
+  nao_gerenciado: [],
+  explicacao:
+    "uma restrição de unicidade recusou o ensaio (reserva já existente, por exemplo): "
+    + "sem o ensaio, a comparação com a configuração não pôde ser feita.",
+  exige_ciente: false,
+};
+
+// O diff refeito depois de trocar o perfil de exportação: outra linha no grupo
+// que gateia — o corpo da política, que o perfil escolhido decide. O aceite
+// marcado sobre o diff anterior não cobre esta.
+const DIFERENCA_MUDA_COM_OUTRO_PERFIL = {
+  contexto: "policy",
+  sobrando: [],
+  faltando: ["route-policy RP-64512-EXPORT-V4 permit node 10"],
+  nao_gerenciado: [],
+  explicacao: null,
+  exige_ciente: true,
+};
+
 function mockFetch(
   opts: {
     descoberta?: unknown;
@@ -112,15 +239,39 @@ function mockFetch(
     ignoradosApos?: unknown[];
     deleteStatus?: number;
     postFalhaPara?: string;
+    /** O diff que o `GET /fidelidade` devolve para a revisão aberta. Com
+     * `diferencasApos`, a partir da segunda conferência (o diff refeito depois
+     * de trocar o perfil ou o trunk). */
+    diferencas?: unknown[];
+    diferencasApos?: unknown[];
   } = {},
 ) {
   let leituras = 0;
+  let conferencias = 0;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
       const json = (corpo: unknown, status = 200) =>
         new Response(JSON.stringify(corpo), { status, headers: { "Content-Type": "application/json" } });
       if (url === "/api/v1/devices") return json(DEVICES);
+      if (url.startsWith("/api/v1/organizations")) {
+        // O mock responde conforme o pedido, como o serviço: sem a flag, a lista
+        // é a das vivas. Um mock que devolvesse sempre as duas deixaria a
+        // asserção do rótulo passar mesmo sem o `include_disabled` na URL.
+        const comDesativadas =
+          new URL(url, "http://local").searchParams.get("include_disabled") === "true";
+        return json(comDesativadas ? ORGANIZACOES : ORGANIZACOES.filter((o) => o.admin_status));
+      }
+      if (url === "/api/v1/policy-profiles") return json(POLICY_PROFILES);
+      if (url.startsWith("/api/v1/discovery/fidelidade")) {
+        conferencias += 1;
+        return json({
+          device_id: 1,
+          subinterface: "Eth-Trunk127.1001",
+          diferencas: (conferencias > 1 ? opts.diferencasApos : undefined) ?? opts.diferencas ?? [],
+        });
+      }
+      if (url === "/api/v1/discovery/adopt") return json({ circuit_id: 9 }, 201);
       if (url.startsWith("/api/v1/discovery/ignore")) {
         if (init?.method === "DELETE") {
           return opts.deleteStatus === 404
@@ -140,6 +291,52 @@ function mockFetch(
       return json({ detail: "Não encontrado." }, 404);
     }),
   );
+}
+
+/** A revisão aberta, com o diff que o `GET /fidelidade` devolve.
+ *
+ * Com `exigeCiente` a conferência traz uma linha no grupo que muda o
+ * equipamento (a que o aceite tem de assumir); sem ele, só o grupo que a SoT
+ * não gerencia. Com `ensaio`, a comparação não pôde ser feita. `depois` é o
+ * diff das conferências seguintes — o refeito. */
+function mockFetchComFidelidade({
+  exigeCiente = false,
+  ensaio = false,
+  depois,
+}: { exigeCiente?: boolean; ensaio?: boolean; depois?: unknown[] } = {}) {
+  mockFetch({
+    diferencas: ensaio
+      ? [DIFERENCA_ENSAIO]
+      : [exigeCiente ? DIFERENCA_MUDA : DIFERENCA_SO_NAO_GERENCIADA],
+    diferencasApos: depois,
+  });
+}
+
+/** O equipamento de acesso e a porta: os campos que a configuração do edge não
+ * tem e que a revisão preenche — o código já vem sugerido e o trunk, derivado
+ * do nome da subinterface. */
+async function preencheAcesso(dialog: HTMLElement) {
+  await userEvent.selectOptions(
+    within(dialog).getByRole("combobox", { name: /Equipamento de acesso/ }),
+    "1",
+  );
+  await userEvent.type(within(dialog).getByRole("textbox", { name: /Porta de acesso/ }), "GE0/0/1");
+}
+
+/** Os pedidos de conferência já feitos ao servidor (o `GET /fidelidade`). */
+function conferencias(): string[] {
+  return chamadas()
+    .map((c) => String(c[0]))
+    .filter((url) => url.startsWith("/api/v1/discovery/fidelidade"));
+}
+
+/** Espera uma conferência NOVA — a que ainda não tinha sido pedida.
+ *
+ * Sem a espera, a asserção seguinte fala do diff anterior: o mock responde
+ * igual nas duas, e o teste passaria sem provar nada. O prazo é folgado porque
+ * o trunk tem a espera curta antes de entrar na consulta. */
+async function esperaConferenciaNova(antes: number) {
+  await waitFor(() => expect(conferencias().length).toBeGreaterThan(antes), { timeout: 2000 });
 }
 
 function renderDiscovery(entrada: string) {
@@ -301,6 +498,442 @@ describe("Discovery", () => {
     await userEvent.click(screen.getByRole("button", { name: "Detalhes" }));
     expect(screen.getByText("Proposta sem enlace")).toBeInTheDocument();
     expect(screen.getByText(/endereco_sem_subinterface/)).toBeInTheDocument();
+  });
+
+  it("o botão Adotar fica habilitado na proposta adotável", async () => {
+    mockFetch();
+    renderDiscovery("/discovery?device_id=1");
+    expect(await screen.findByRole("button", { name: "Adotar" })).toBeEnabled();
+  });
+
+  it("a proposta não adotável deixa o Adotar barrado", async () => {
+    mockFetch({ descoberta: { ...DISCOVERY, propostas: [ORFA] } });
+    renderDiscovery("/discovery?device_id=1");
+    // O mesmo enlace cujo "Não adotar" já sai desabilitado: a adoção não é
+    // caminho para uma proposta com conflito, e o motivo está em Detalhes.
+    expect(await screen.findByRole("button", { name: "Não adotar" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Adotar" })).toBeDisabled();
+  });
+
+  it("a revisão pede o aceite quando a diferença muda o equipamento", async () => {
+    mockFetchComFidelidade({ exigeCiente: true });
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+    expect(await within(dialog).findByText(/mudariam o equipamento/)).toBeInTheDocument();
+    expect(within(dialog).getByText("vlan-type dot1q vid 1001")).toBeInTheDocument();
+    // O grupo que não gateia aparece junto, mesmo vindo do mesmo contexto: o
+    // que a SoT não gerencia é informação, e a linha não some por haver
+    // diferença que gateia no mesmo bloco.
+    expect(await within(dialog).findByText(/não gerencia/)).toBeInTheDocument();
+    expect(within(dialog).getByText("description CLIENTE-ALFA")).toBeInTheDocument();
+
+    await preencheAcesso(dialog);
+    // A espera é o que faz a asserção falar do gate do aceite, e não da
+    // conferência em voo (com o diff ainda não respondido o botão fica barrado
+    // pelo mesmo motivo).
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeDisabled(),
+    );
+
+    await userEvent.click(within(dialog).getByLabelText(/ciente/i));
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeEnabled(),
+    );
+  });
+
+  it("o que a SoT não gerencia aparece sem pedir aceite", async () => {
+    mockFetchComFidelidade();
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+    expect(await within(dialog).findByText(/não gerencia/)).toBeInTheDocument();
+    expect(within(dialog).getByText("description CLIENTE-ALFA")).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText(/ciente/i)).not.toBeInTheDocument();
+
+    await preencheAcesso(dialog);
+    // Aguardado como as irmãs: sem a espera a asserção dependeria de a
+    // conferência já ter voltado, e é isso que fica no fio sob carga.
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeEnabled(),
+    );
+  });
+
+  it("o ensaio recusado bloqueia o aceite e diz por quê", async () => {
+    mockFetchComFidelidade({ ensaio: true });
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+    // O motivo mora na `explicacao` — sem ela o operador não sabe o que resolver.
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(/não pôde ser feita/);
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(/restrição de unicidade/);
+
+    await preencheAcesso(dialog);
+    // Sem comparação não há aceite que valha (§6): nem o ciente libera — e sem
+    // grupo que muda não há sequer o que marcar.
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeDisabled(),
+    );
+    expect(within(dialog).queryByLabelText(/ciente/i)).not.toBeInTheDocument();
+  });
+
+  it("o trunk sai do nome da subinterface e a conferência já nasce com ele", async () => {
+    mockFetchComFidelidade({ exigeCiente: true });
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+    // `Eth-Trunk127.1001` → `Eth-Trunk127`, a mesma regra do
+    // `_trunk_da_subinterface` do serviço: o campo nasce preenchido e a primeira
+    // conferência já é a do trunk certo, sem uma tecla digitada — cada tecla
+    // refaria o render do equipamento inteiro no servidor.
+    expect(within(dialog).getByRole("textbox", { name: /Trunk do edge/ })).toHaveValue(
+      "Eth-Trunk127",
+    );
+    await waitFor(() => expect(conferencias().length).toBeGreaterThan(0));
+    expect(conferencias().every((url) => url.includes("edge_trunk=Eth-Trunk127"))).toBe(true);
+  });
+
+  it("trocar o trunk refaz a conferência com o valor novo, sem uma consulta por tecla", async () => {
+    mockFetchComFidelidade({ exigeCiente: true });
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+    await waitFor(() => expect(conferencias().length).toBeGreaterThan(0));
+    const antes = conferencias().length;
+
+    const campoDoTrunk = within(dialog).getByRole("textbox", { name: /Trunk do edge/ });
+    await userEvent.clear(campoDoTrunk);
+    await userEvent.type(campoDoTrunk, "Eth-Trunk200");
+    // O valor só entra na consulta depois da última tecla: a conferência que
+    // chega é a do valor final. O limite é folgado de propósito — a contagem
+    // exata depende do relógio da máquina (sem a espera seriam as doze teclas).
+    await esperaConferenciaNova(antes);
+    expect(conferencias()[conferencias().length - 1]).toContain("edge_trunk=Eth-Trunk200");
+    expect(conferencias().length - antes).toBeLessThan(5);
+  });
+
+  it("o aceite não atravessa a espera do trunk: o botão exige a conferência do valor digitado", async () => {
+    // A espera do trunk abre a janela que este teste fecha: a tela mostra o diff
+    // do valor anterior e o campo já tem o novo. O `ciente` é um booleano sem
+    // vínculo com o diff que assumiu, então ele valeria contra o diff velho e o
+    // corpo levaria o trunk novo — o servidor recalcula o diff, mas não sabe
+    // contra qual deles o aceite foi dado.
+    mockFetchComFidelidade({ exigeCiente: true });
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+    await preencheAcesso(dialog);
+    await userEvent.click(await within(dialog).findByLabelText(/ciente/i));
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeEnabled(),
+    );
+
+    // A tecla é do operador e a consulta ainda não saiu: o diff na tela é o do
+    // trunk anterior, e é só ele que o aceite cobre.
+    await userEvent.type(within(dialog).getByRole("textbox", { name: /Trunk do edge/ }), "9");
+    expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeDisabled();
+
+    // Chegada a conferência do valor novo, com o mesmo diff, o caminho reabre
+    // sem tocar no aceite: a espera não é um diff diferente, e o que o operador
+    // marcou continua valendo — zerá-lo aqui pediria a marca de novo a cada
+    // tecla do trunk, mesmo quando nada mudou na comparação.
+    await waitFor(
+      () => expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeEnabled(),
+      { timeout: 2000 },
+    );
+    expect(within(dialog).getByLabelText(/ciente/i)).toBeChecked();
+  });
+
+  it("trocar o perfil de exportação zera o aceite: o diff é outro", async () => {
+    mockFetchComFidelidade({ exigeCiente: true, depois: [DIFERENCA_MUDA_COM_OUTRO_PERFIL] });
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+    await preencheAcesso(dialog);
+    await userEvent.click(await within(dialog).findByLabelText(/ciente/i));
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeEnabled(),
+    );
+
+    const antes = conferencias().length;
+    await userEvent.selectOptions(
+      within(dialog).getByRole("combobox", { name: /Perfil de exportação \(ipv4\)/ }),
+      "5",
+    );
+    await esperaConferenciaNova(antes);
+    // O corpo da política mudou com o perfil: a linha nova que o aceite
+    // assumiria ninguém leu, e o §6 não deixa o "estou ciente" atravessar.
+    expect(
+      await within(dialog).findByText("route-policy RP-64512-EXPORT-V4 permit node 10"),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(within(dialog).getByLabelText(/ciente/i)).not.toBeChecked());
+    expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeDisabled();
+  });
+
+  it("o Adotar grava a revisão inteira e fecha o diálogo", async () => {
+    mockFetchComFidelidade({ exigeCiente: true });
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+    await preencheAcesso(dialog);
+    await userEvent.type(
+      within(dialog).getByRole("textbox", { name: /Caminho do segredo no Vault \(ipv4\)/ }),
+      "gerenet/bgp/100.64.10.1",
+    );
+    await userEvent.click(within(dialog).getByLabelText(/ciente/i));
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeEnabled(),
+    );
+    await userEvent.click(within(dialog).getByRole("button", { name: "Adotar" }));
+
+    // O corpo é a revisão inteira: a identidade da proposta (a que o serviço
+    // confere, e a que faz a revisão de um enlace não valer no outro), o
+    // circuito com o acesso e o trunk derivado, a organização nova com o `kind`
+    // e o ASN do candidato, a sessão com o caminho do segredo — nunca o valor —
+    // e o ciente.
+    await waitFor(() =>
+      expect(corpoDoPost()).toEqual({
+        device_id: 1,
+        vrf: null,
+        subinterface: "Eth-Trunk127.1001",
+        circuit_code: "ADOC-64512-1001",
+        access_device_id: 1,
+        access_port: "GE0/0/1",
+        edge_trunk: "Eth-Trunk127",
+        organizacao_id: null,
+        organizacao_nova: { name: "CLIENTE-ALFA", kind: "downstream", asn: 64512 },
+        sessoes: [
+          {
+            afi: "ipv4",
+            import_profile_id: null,
+            export_profile_id: null,
+            password_ref: "gerenet/bgp/100.64.10.1",
+          },
+        ],
+        ciente: true,
+      }),
+    );
+
+    // O diálogo fecha no sucesso: sem isso ficaria aberto sobre uma proposta que
+    // já não existe, e o segundo clique responderia 404. O relato do circuito
+    // fica na página, como o dos ignorados.
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Proposta adotada: o circuito 9 foi gravado na SoT.",
+    );
+  });
+
+  it("o que será gravado abre pelas reservas e nomeia a S-VLAN", async () => {
+    // As reservas são o que a adoção grava sem passar por campo nenhum da tela —
+    // não há o que revisar, e sem a lista o operador adota um VID que nunca leu
+    // (§6 do design). A S-VLAN é o caso que só existe aqui: a coluna QinQ diz
+    // que o enlace empilha, não qual dos VIDs é a S-VLAN.
+    mockFetch({ descoberta: EMPILHADO, diferencas: [DIFERENCA_SO_NAO_GERENCIADA] });
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+
+    const itens = within(dialog).getAllByRole("listitem");
+    expect(itens[0]).toHaveTextContent("S-VLAN 1001");
+    expect(itens[1]).toHaveTextContent("100.64.10.0/31 (ponta inferior)");
+    expect(itens[2]).toHaveTextContent("100.64.10.1 AS64512 (downstream)");
+  });
+
+  it("o corpo manda as sessões da proposta, e não uma por candidato", async () => {
+    // Quem casa a revisão com o que a leitura entregou é o `_sessao_da_proposta`
+    // do serviço, pela família: o payload tem de seguir a lista que essa guarda
+    // confere. Com a lista dos candidatos, a família sem sessão — a que o
+    // endereço não é nenhuma das duas pontas do par — viajaria como sessão, e o
+    // serviço a recusaria inteira ("a revisão não cobre").
+    mockFetch({ descoberta: PONTA_INCOERENTE, diferencas: [DIFERENCA_SO_NAO_GERENCIADA] });
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+    await preencheAcesso(dialog);
+    await userEvent.click(within(dialog).getByRole("button", { name: "Adotar" }));
+
+    await waitFor(() =>
+      expect(corpoDoPost().sessoes).toEqual([
+        { afi: "ipv4", import_profile_id: null, export_profile_id: null, password_ref: null },
+      ]),
+    );
+  });
+
+  it("a organização desativada aparece com o rótulo, e não como se a tela criasse a nova", async () => {
+    // A proposta aponta para uma organização desativada: sem a opção na lista, o
+    // `<select>` exibiria a primeira ("Criar a nova") e o POST mandaria o id da
+    // invisível — a tela diria uma coisa e o circuito nasceria em outra.
+    mockFetch({
+      descoberta: { ...DISCOVERY, propostas: [{ ...PROPOSTA, organizacao_id: 3 }] },
+      diferencas: [DIFERENCA_SO_NAO_GERENCIADA],
+    });
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+    await waitFor(() =>
+      expect(within(dialog).getByRole("combobox", { name: /Organização/ })).toHaveValue("3"),
+    );
+    expect(
+      within(dialog).getByRole("option", { name: "CLIENTE-ANTIGO (AS64500) (desativada)" }),
+    ).toBeInTheDocument();
+    // Quem traz a opção é o pedido das desativadas. O mock responde conforme o
+    // pedido, então as duas metades da verificação (a URL e o rótulo) caem
+    // juntas se a flag sair do hook.
+    expect(
+      chamadas().some(([url]) => String(url) === "/api/v1/organizations?include_disabled=true"),
+    ).toBe(true);
+  });
+
+  it("o nome da organização nova e a porta fora do padrão barram o aceite na tela", async () => {
+    // O peer sem `description` na configuração chega sem nome sugerido: o campo
+    // nasce vazio, e o clique não pode sair daqui como o 422 do Pydantic.
+    mockFetch({
+      descoberta: { ...DISCOVERY, propostas: [{ ...PROPOSTA, organizacao_sugerida: null }] },
+      diferencas: [DIFERENCA_SO_NAO_GERENCIADA],
+    });
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+    await preencheAcesso(dialog);
+    // Todo o resto está preenchido: quem barra é o nome que falta, e o campo diz
+    // isso em português.
+    expect(within(dialog).getByText("Informe o nome da organização nova.")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeDisabled();
+
+    await userEvent.type(
+      within(dialog).getByRole("textbox", { name: /Nome da organização nova/ }),
+      "CLIENTE-BETA",
+    );
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeEnabled(),
+    );
+
+    // Um ponto não é porta (o padrão do schema é `[A-Za-z0-9/-]`): o campo avisa
+    // e o botão volta a barrar, sem 422 em inglês.
+    await userEvent.type(within(dialog).getByRole("textbox", { name: /Porta de acesso/ }), ".");
+    expect(within(dialog).getByText(/A porta aceita só letras/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeDisabled(),
+    );
+  });
+
+  it("o valor acima do teto do schema barra o aceite e diz qual é o teto", async () => {
+    // Os tetos são os do schema do serviço. Um campo que os passa devolve o 422
+    // do Pydantic, em inglês: é o mesmo caso do nome vazio e do ponto na porta,
+    // por outra porta de entrada.
+    mockFetch({
+      descoberta: { ...DISCOVERY, propostas: [{ ...PROPOSTA, organizacao_sugerida: null }] },
+      diferencas: [DIFERENCA_SO_NAO_GERENCIADA],
+    });
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+    await preencheAcesso(dialog);
+    const botao = () => within(dialog).getByRole("button", { name: "Adotar" });
+    // A colagem é como um valor comprido chega de verdade (o operador copia da
+    // documentação), e uma tecla por vez custaria 129 eventos só no nome.
+    const colar = (nome: RegExp, valor: string) =>
+      fireEvent.change(within(dialog).getByRole("textbox", { name: nome }), {
+        target: { value: valor },
+      });
+
+    colar(/Nome da organização nova/, "A".repeat(129));
+    expect(
+      within(dialog).getByText("O nome da organização aceita até 128 caracteres."),
+    ).toBeInTheDocument();
+    expect(botao()).toBeDisabled();
+    colar(/Nome da organização nova/, "CLIENTE-BETA");
+    await waitFor(() => expect(botao()).toBeEnabled());
+
+    colar(/Código do circuito/, "C".repeat(65));
+    expect(
+      within(dialog).getByText("O código do circuito aceita até 64 caracteres."),
+    ).toBeInTheDocument();
+    expect(botao()).toBeDisabled();
+    colar(/Código do circuito/, "CIRC-1");
+
+    colar(/Caminho do segredo no Vault \(ipv4\)/, "v".repeat(256));
+    expect(
+      within(dialog).getByText("O caminho do segredo aceita até 255 caracteres."),
+    ).toBeInTheDocument();
+    expect(botao()).toBeDisabled();
+    colar(/Caminho do segredo no Vault \(ipv4\)/, "");
+    await waitFor(() => expect(botao()).toBeEnabled());
+
+    // O trunk fecha a lista, e a volta ao valor derivado pode ter de esperar a
+    // conferência dele: o `waitFor` cobre a espera do campo.
+    colar(/Trunk do edge/, "T".repeat(65));
+    expect(
+      within(dialog).getByText("O trunk do edge aceita até 64 caracteres."),
+    ).toBeInTheDocument();
+    expect(botao()).toBeDisabled();
+    colar(/Trunk do edge/, "Eth-Trunk127");
+    await waitFor(() => expect(botao()).toBeEnabled(), { timeout: 2000 });
+  });
+
+  it("a proposta sem ASN remoto não manda ASN sentinela no corpo", async () => {
+    // Estado que a listagem não produz — sem ASN remoto o peer é conflito, e a
+    // revisão nem abre. O teste é do que não pode sair daqui (como o
+    // `vazioDaLista(undefined)` acima): o corpo não leva `asn: 0`, um valor que
+    // o serviço recusaria por conta própria. O gate é só da organização NOVA,
+    // que é quem precisa do ASN; escolhendo uma existente, ele libera.
+    mockFetch({
+      descoberta: {
+        ...DISCOVERY,
+        propostas: [{ ...PROPOSTA, candidatos: [{ ...CANDIDATO_V4, asn_remote: null }] }],
+      },
+      diferencas: [DIFERENCA_SO_NAO_GERENCIADA],
+    });
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+    await preencheAcesso(dialog);
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeDisabled(),
+    );
+
+    await userEvent.selectOptions(
+      within(dialog).getByRole("combobox", { name: /Organização/ }),
+      "2",
+    );
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeEnabled(),
+    );
+  });
+
+  it("trocar de proposta no mesmo vid não herda o formulário da anterior", async () => {
+    // A `key` do diálogo é a identidade da revisão, e o `vid` não identifica uma
+    // proposta: dois enlaces do mesmo equipamento podem estar na MESMA VLAN
+    // (outra VRF, outra porta). Com o vid na frente, o React reaproveita a
+    // instância no troco — o código, a porta digitada, o trunk e o aceite da
+    // primeira revisão chegariam inteiros sobre a segunda, que é outro enlace.
+    mockFetch({ descoberta: MESMO_VID, diferencas: [DIFERENCA_SO_NAO_GERENCIADA] });
+    renderDiscovery("/discovery?device_id=1");
+    const linhas = await screen.findAllByRole("button", { name: "Adotar" });
+    expect(linhas).toHaveLength(2);
+
+    await userEvent.click(linhas[0]);
+    const dialog = () => screen.getByRole("dialog");
+    expect(within(dialog()).getByRole("textbox", { name: /Código do circuito/ })).toHaveValue(
+      "ADOC-64512-1001",
+    );
+    await userEvent.type(
+      within(dialog()).getByRole("textbox", { name: /Porta de acesso/ }),
+      "GE0/0/9",
+    );
+
+    // A outra linha é a troca de revisão: o botão continua no DOM por baixo do
+    // diálogo, e é por ele que a página passa de uma proposta para a outra.
+    fireEvent.click(linhas[1]);
+
+    expect(within(dialog()).getByRole("textbox", { name: /Código do circuito/ })).toHaveValue(
+      "ADOC-64511-1001",
+    );
+    expect(within(dialog()).getByRole("textbox", { name: /Porta de acesso/ })).toHaveValue("");
+    // O trunk é derivado do nome da subinterface, e o nome é o da outra linha.
+    expect(within(dialog()).getByRole("textbox", { name: /Trunk do edge/ })).toHaveValue(
+      "Eth-Trunk200",
+    );
   });
 
   it("voltar a considerar manda a quádrupla e não fica com mensagem órfã", async () => {

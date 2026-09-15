@@ -6,6 +6,7 @@ peer desconhecido com o palpite de classificação e o motivo que o sustenta.
 """
 import ipaddress
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -17,7 +18,7 @@ from gerenet.automation.parsers.huawei_vrp.config_vrp import (
     PeerConfig,
     parse_config_vrp,
 )
-from gerenet.automation.render import render_desejado
+from gerenet.automation.render import TIPO_ORDEM, RenderResult, render_desejado
 from gerenet.automation.snapshots import texto_backup
 from gerenet.domain import models
 from gerenet.domain.services.bgp_sessions import list_sessions
@@ -63,11 +64,15 @@ class ResultadoDescoberta:
     internos: list[Candidato] = field(default_factory=list)
 
 
-def _snapshot_com_config(session: Session, device_id: int) -> models.DeviceSnapshot | None:
-    """Snapshot mais recente que ainda tenha a configuração em disco.
+def _snapshot_com_config(
+    session: Session, device_id: int,
+) -> tuple[models.DeviceSnapshot | None, str]:
+    """Snapshot mais recente que ainda tenha a configuração, e o texto dele.
 
     Uma coleta anterior a esta frente pode não trazer o recurso, então olhar só
-    o último snapshot daria "sem configuração" com a configuração existindo.
+    o último snapshot daria "sem configuração" com a configuração existindo. O
+    texto vem junto porque quem chama precisa dele para parsear, e ler o
+    arquivo de novo seria uma segunda leitura do mesmo disco.
     """
     snaps = session.scalars(
         select(models.DeviceSnapshot)
@@ -76,9 +81,10 @@ def _snapshot_com_config(session: Session, device_id: int) -> models.DeviceSnaps
         .limit(5)
     ).all()
     for snap in snaps:
-        if texto_backup(snap).strip():
-            return snap
-    return None
+        texto = texto_backup(snap)
+        if texto.strip():
+            return snap, texto
+    return None, ""
 
 
 def _conhecidos(session: Session, device_id: int) -> set[tuple[str | None, str, str]]:
@@ -147,11 +153,11 @@ def _classificar(
 def listar_candidatos(session: Session, device_id: int) -> ResultadoDescoberta:
     """Peers da configuração que a SoT não conhece (spec §4)."""
     device = get_device(session, device_id)
-    snap = _snapshot_com_config(session, device.id)
+    snap, texto = _snapshot_com_config(session, device.id)
     if snap is None:
         return ResultadoDescoberta(device_id=device.id, snapshot_id=None, aviso=AVISO_SEM_CONFIG)
 
-    config = parse_config_vrp(texto_backup(snap))
+    config = parse_config_vrp(texto)
     conhecidos = _conhecidos(session, device.id)
     ignorados = {
         (i.vrf, i.afi, endereco_canonico(i.remote_address))
@@ -232,6 +238,13 @@ class ResultadoPropostas:
     snapshot_id: int | None
     aviso: str | None = None
     propostas: list[Proposta] = field(default_factory=list)
+    # Os iBGP vêm de `listar_candidatos` e não têm proposta: sem eles aqui, quem
+    # mostra a lista teria de ler e parsear a configuração de novo.
+    internos: list[Candidato] = field(default_factory=list)
+    # A idade do texto usado: o motor recua para um snapshot mais antigo quando
+    # os recentes não têm a configuração, e uma resposta de dez minutos atrás e
+    # uma de três dias atrás não valem o mesmo (§8 do design).
+    snapshot_age_seconds: float | None = None
 
 
 def _enlace(subs, afi: str, endereco_remoto: str):
@@ -642,7 +655,7 @@ def listar_propostas(session: Session, device_id: int) -> ResultadoPropostas:
     descoberta = listar_candidatos(session, device_id)
     resultado = ResultadoPropostas(
         device_id=descoberta.device_id, snapshot_id=descoberta.snapshot_id,
-        aviso=descoberta.aviso,
+        aviso=descoberta.aviso, internos=descoberta.internos,
     )
     # Quem manda parar é a AUSÊNCIA de coleta, não a presença de aviso: `aviso`
     # carrega dois estados (sem coleta e leitura parcial), e abortar por leitura
@@ -654,6 +667,7 @@ def listar_propostas(session: Session, device_id: int) -> ResultadoPropostas:
 
     device = get_device(session, descoberta.device_id)
     snap = session.get(models.DeviceSnapshot, descoberta.snapshot_id)
+    resultado.snapshot_age_seconds = (datetime.now(UTC) - snap.started_at).total_seconds()
     config = parse_config_vrp(texto_backup(snap))
 
     por_enlace: dict[tuple[str | None, str], Proposta] = {}
@@ -772,9 +786,16 @@ def listar_propostas(session: Session, device_id: int) -> ResultadoPropostas:
 
 @dataclass(frozen=True)
 class Diferenca:
-    contexto: str                  # "peer" | "subinterface" | "ensaio"
-    sobrando: tuple[str, ...]      # o render produz e a configuração não tem
-    faltando: tuple[str, ...]      # a configuração tem e o render não produz
+    contexto: str                  # "peer" | "subinterface" | "definicao" | "ensaio"
+    sobrando: tuple[str, ...] = ()      # o render produz e a configuração não tem
+    faltando: tuple[str, ...] = ()      # a configuração tem e o render não produz
+    nao_gerenciado: tuple[str, ...] = ()   # a SoT não emite isto, e não é divergência
+    explicacao: str | None = None          # quando a comparação não pôde ser feita
+
+    @property
+    def exige_ciente(self) -> bool:
+        """Só o que a SoT VAI MUDAR no equipamento gateia o aceite (design §6)."""
+        return bool(self.sobrando or self.faltando)
 
 
 def _equivalencia_vrp(texto: str) -> str:
@@ -799,9 +820,10 @@ def _equivalencia_vrp(texto: str) -> str:
 def _contexto_interface(texto: str, nome: str) -> set[str]:
     """Linhas da configuração dentro do bloco `interface <nome>`.
 
-    O cabeçalho fica de fora: ele abre o contexto, não é linha dele — e o lado
-    do render o descarta pelo mesmo motivo (`conferir_fidelidade`), para a
-    comparação não começar com o cabeçalho presente de um lado só.
+    O cabeçalho fica de fora daqui: ele abre o contexto, não é linha dele. Quem
+    compara o nome é a conferência, e por fora — ela põe `interface <nome>` nos
+    dois lados (`conferir_fidelidade`), porque o `<trunk>.<vid>` do render
+    contra o nome do bloco lido é a única linha que denuncia um trunk errado.
 
     Comentário (`#`, com ou sem texto) também fica de fora, e antes da regra de
     contexto: o `_normaliza_linhas` já descarta os dois do lado do render, e um
@@ -857,6 +879,140 @@ def _mascara_senha(linha: str, endereco: str) -> str:
     return linha
 
 
+# Blocos de DEFINIÇÃO: o render os emite para a sessão, e o filtro por linha de
+# peer os descarta. A chave é o cabeçalho sem o corpo, e as duas pontas usam a
+# MESMA regra, porque a premissa da comparação é que o texto é o mesmo comando.
+#
+# Derivados do `TIPO_ORDEM` do render em vez de repetidos aqui: um tipo de
+# definição novo lá passa a ser conferido sem ninguém precisar lembrar, e o que
+# não é definição sai por nome — a subinterface, o bloco do peer e o
+# comentário-dívida, que não tem corpo a comparar.
+_NAO_DEFINICAO = ("subinterface", "bgp_peer", "comentario")
+_TIPOS_DEFINICAO = tuple(t for t in TIPO_ORDEM if t not in _NAO_DEFINICAO)
+
+
+def _chave_definicao(linha: str) -> str | None:
+    """Chave do bloco de definição a partir da linha de cabeçalho.
+
+    `route-policy NOME permit|deny node N` → `route-policy NOME`; os demais são
+    `ip ip-prefix NOME`, `ip ipv6-prefix NOME`, `ip as-path-filter NOME` e
+    `ip community-filter NOME`, todos com o nome no terceiro token.
+    """
+    partes = linha.split()
+    if not partes:
+        return None
+    if partes[0] == "route-policy" and len(partes) >= 2:
+        return f"route-policy {partes[1]}"
+    if partes[0] == "ip" and len(partes) >= 3 and partes[1] in (
+        "ip-prefix", "ipv6-prefix", "as-path-filter", "community-filter"
+    ):
+        return f"ip {partes[1]} {partes[2]}"
+    return None
+
+
+def _cabecalho_do_bloco(comandos: list[str]) -> str:
+    """O primeiro comando que não é comentário: o cabeçalho do bloco.
+
+    O import de upstream abre com `# up-full: ...` (e o fail-safe, com
+    `# fail-safe: ...`) antes do `route-policy`. Tomar a linha 0 como cabeçalho
+    faria a chave sair nula e o bloco seria pulado sem diferença nenhuma — o
+    modo de falha silencioso que esta conferência existe para fechar. Sem
+    comando nenhum, devolve o texto vazio, que não casa chave alguma.
+    """
+    return next((linha for linha in comandos if not linha.strip().startswith("#")), "")
+
+
+def _referencias(linhas: list[str]) -> set[str]:
+    """Chaves de definição que estas linhas de comando referenciam.
+
+    O bloco do peer nomeia a route-policy (`peer <endereço> import route-policy
+    <nome>` e `peer <endereço> export route-policy <nome>`), e o corpo de uma
+    route-policy nomeia os filtros que ela usa (`if-match ip-prefix <lista>`,
+    `if-match ipv6 address prefix-list <lista>`, `if-match as-path-filter
+    <nome>` e `if-match community-filter <nome>`). As chaves saem na mesma forma
+    que `_chave_definicao` reconhece no cabeçalho, que é como as duas pontas da
+    comparação se encontram.
+    """
+    saida: set[str] = set()
+    for bruta in linhas:
+        partes = bruta.split()
+        if "route-policy" in partes:
+            posicao = partes.index("route-policy") + 1
+            if posicao < len(partes):
+                saida.add(f"route-policy {partes[posicao]}")
+            continue
+        if len(partes) >= 3 and partes[0] == "if-match":
+            if partes[1] in ("ip-prefix", "as-path-filter", "community-filter"):
+                saida.add(f"ip {partes[1]} {partes[2]}")
+            elif len(partes) >= 5 and partes[1:4] == ["ipv6", "address", "prefix-list"]:
+                saida.add(f"ip ipv6-prefix {partes[4]}")
+    return saida
+
+
+def _chaves_do_ensaio(render: RenderResult, ids_sessoes: set[int]) -> set[str]:
+    """Chaves de definição que o ensaio referencia, em dois níveis.
+
+    O bloco do peer da sessão do ensaio nomeia as route-policies, e o corpo
+    delas nomeia os filtros. O `objeto_id` do bloco de definição NÃO serve de
+    critério: `_apensa_definicao` apensa a definição uma vez só, com o id da
+    PRIMEIRA sessão que a produziu, então num PE com dois enlaces do mesmo
+    cliente o bloco do segundo vem marcado com o id do primeiro — que a adoção
+    anterior já criou — e conferir por id deixaria a sessão do ensaio sem nada
+    a comparar, em silêncio. O bloco está no render; quem o referencia é que
+    decide se ele entra.
+    """
+    por_chave: dict[str, list[str]] = {}
+    for bloco in render.blocos:
+        if bloco.tipo not in _TIPOS_DEFINICAO:
+            continue
+        chave = _chave_definicao(_cabecalho_do_bloco(bloco.comandos))
+        if chave is not None:
+            por_chave.setdefault(chave, []).extend(bloco.comandos)
+    politicas = {
+        chave
+        for bloco in render.blocos
+        if bloco.objeto == "session" and bloco.objeto_id in ids_sessoes
+        for chave in _referencias(bloco.comandos)
+    }
+    return politicas | {
+        chave
+        for politica in politicas
+        for chave in _referencias(por_chave.get(politica, []))
+    }
+
+
+def _indice_definicoes(texto: str) -> dict[str, tuple[str, ...]]:
+    """Blocos de definição da configuração, indexados pela chave.
+
+    Um bloco começa numa linha sem indentação cujo cabeçalho casa
+    `_chave_definicao` e vai até a próxima linha sem indentação — e a chave é
+    que reúne o objeto: a prefix-list de várias entradas é um bloco só, uma
+    linha de cabeçalho por entrada.
+
+    Comentário é qualquer linha começando com `#`, e não só o separador
+    sozinho, e ele some ANTES da regra de contexto — como no
+    `_contexto_interface` e no parser da configuração. O render deste projeto
+    emite comentário com texto na coluna 0 dentro do bloco (`# up-full: ...`,
+    `# TE: ...`), e tratá-lo como linha de topo fecharia o bloco ali mesmo: as
+    linhas seguintes sairiam da leitura em silêncio e o render as acusaria como
+    sobra. É a lição que a parte 1 pagou para aprender.
+    """
+    indice: dict[str, list[str]] = {}
+    chave: str | None = None
+    for bruta in texto.splitlines():
+        linha = bruta.strip()
+        if not linha or linha.startswith("#"):
+            continue
+        if not bruta[:1].isspace():
+            chave = _chave_definicao(linha)
+            if chave is not None:
+                indice.setdefault(chave, []).append(linha)
+            continue
+        if chave is not None:
+            indice[chave].append(linha)
+    return {c: tuple(linhas) for c, linhas in indice.items()}
+
+
 def _normaliza_linhas(linhas: list[str]) -> set[str]:
     """Compara por conjunto dentro do contexto: a ordem do render e a da
     configuração não é a mesma, e `undo ...` é negação de default, não ajuste."""
@@ -886,11 +1042,26 @@ def _trunk_da_subinterface(proposta: Proposta) -> str | None:
     return proposta.subinterface[: -len(sufixo)]
 
 
-def _ensaio(session: Session, proposta: Proposta) -> dict:
+def _ensaio(
+    session: Session, proposta: Proposta,
+    perfis: dict[str, dict[str, int | None]] | None = None,
+    edge_trunk: str | None = None,
+) -> dict:
     """Objetos transitórios com a forma do que a adoção criaria.
 
     Sem passar pelos serviços, que commitam: aqui nada pode virar escrito. O
     chamador desfaz a transação.
+
+    `perfis` é o mapa {afi: {"import_profile_id", "export_profile_id"}} do que o
+    operador escolheu na revisão. A `Proposta` não carrega perfil nenhum, e sem
+    ele o `_bloco_export` sai cedo: a política de exportação nem existiria no
+    ensaio, e é o produto dela que a revisão decide (design §6).
+
+    `edge_trunk` é o que a revisão informou, e é o MESMO valor que a adoção
+    grava: é ele que faz o render emitir o bloco da subinterface, e um ensaio com
+    trunk que a escrita não tem daria por fiel um circuito que nasce sem bloco
+    nenhum. Sem valor na revisão, o ensaio deriva o trunk do nome da subinterface
+    (o que a proposta sugere), que é o comportamento de quando não há revisão.
     """
     device = get_device(session, proposta.device_id)
     org_id = proposta.organizacao_id
@@ -905,7 +1076,9 @@ def _ensaio(session: Session, proposta: Proposta) -> dict:
     circ = models.Circuit(
         code=f"ENSAIO-{device.name}-{proposta.vid}", organization_id=org_id,
         site_id=proposta.site_id or device.site_id, access_port="ensaio",
-        edge_device_id=device.id, edge_trunk=_trunk_da_subinterface(proposta),
+        edge_device_id=device.id,
+        # O trunk da revisão vence; sem ela, o derivado do nome da subinterface.
+        edge_trunk=edge_trunk if edge_trunk is not None else _trunk_da_subinterface(proposta),
         stack=proposta.stack, vlan_mode=proposta.vlan_mode,
         qinq=proposta.qinq,          # sem isto a fidelidade acusa diferença em todo QinQ
         p2p_v4_len=proposta.p2p_v4_len or 31,
@@ -926,15 +1099,61 @@ def _ensaio(session: Session, proposta: Proposta) -> dict:
         # conseguiria criá-la: o ensaio espelha apenas o que nasceria de verdade.
         if dados.get("asn_remote") is None:
             continue
-        sessao = models.BgpSession(circuit_id=circ.id, device_id=device.id, **dados)
+        # Cópia porque o `**campos` não pode repetir argumento se a leitura um
+        # dia passar a preencher os perfis no dict da proposta: o que veio da
+        # revisão vence, e o resto passa como veio.
+        campos = dict(dados)
+        campos.update({
+            nome: valor
+            for nome, valor in (perfis or {}).get(dados.get("afi"), {}).items()
+            if nome in ("import_profile_id", "export_profile_id")
+        })
+        sessao = models.BgpSession(circuit_id=circ.id, device_id=device.id, **campos)
         session.add(sessao)
         sessoes.append(sessao)
     session.flush()
     return {"circuito": circ, "sessoes": sessoes}
 
 
-def conferir_fidelidade(session: Session, proposta: Proposta) -> list[Diferenca]:
+# Linhas de subinterface que o render não emite: o slot `description` do
+# template existe e nada o preenche, e não há `mtu` de subinterface.
+_NAO_GERENCIADAS_SUBINTERFACE = ("description ", "mtu ")
+
+
+def _particiona_subinterface(linhas: tuple[str, ...]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Separa o que a SoT gerencia do que ela só não emite (design §17.1).
+
+    O render não tem `description` de subinterface (o slot existe no template e
+    nada o preenche) nem `mtu`, e numa borda real os dois estão em toda
+    subinterface. Deixá-los no `faltando` faria "diferença exige ciente"
+    degenerar em "marque sempre".
+    """
+    gerenciadas, nao_gerenciadas = [], []
+    for linha in linhas:
+        alvo = nao_gerenciadas if linha.startswith(_NAO_GERENCIADAS_SUBINTERFACE) else gerenciadas
+        alvo.append(linha)
+    return tuple(sorted(gerenciadas)), tuple(sorted(nao_gerenciadas))
+
+
+def conferir_fidelidade(
+    session: Session, proposta: Proposta,
+    *, perfis: dict[str, dict[str, int | None]] | None = None,
+    edge_trunk: str | None = None,
+) -> list[Diferenca]:
     """O que a SoT reproduziria × o que a configuração tem (spec §9).
+
+    `perfis` é o que o operador escolheu na revisão, no mapa {afi:
+    {"import_profile_id", "export_profile_id"}}, e é o que faz o ensaio emitir a
+    definição de exportação — o produto dela é justamente o que a revisão
+    decide. Sem o mapa, o ensaio fica sem perfil nenhum, como antes desta
+    interface existir.
+
+    `edge_trunk` é o trunk que a revisão informou, e entra pelo mesmo motivo: o
+    ensaio tem de ter a forma do que a adoção VAI gravar. Com o trunk vazio na
+    revisão e derivado aqui, a comparação sairia fiel por um circuito que a
+    escrita cria sem bloco de subinterface. É ele que o render usa para nomear a
+    subinterface, e o nome entra na comparação contra o do bloco lido: um trunk
+    divergente vira diferença nos dois lados, e exige `ciente`.
 
     O ensaio roda o render de verdade, e não uma reimplementação da montagem
     dos comandos: é o mesmo código que a adoção usaria, então a conferência não
@@ -953,10 +1172,32 @@ def conferir_fidelidade(session: Session, proposta: Proposta) -> list[Diferenca]
     em VRF, que o render não reproduz), devolve a diferença de contexto
     `ensaio` dizendo isso, em vez de estourar: uma exceção aqui chegaria a quem
     chamou esperando uma lista de diferenças, e uma lista vazia leria como
-    "está tudo fiel".
+    "está tudo fiel". O que a diferença diz vai em `explicacao`, com `sobrando`
+    e `faltando` vazios: eles são o que a SoT mudaria no equipamento, e uma
+    linha dentro deles faria um `ensaio` gatear o aceite de uma comparação que
+    não aconteceu (design §6).
     """
-    if not proposta.candidatos or proposta.site_id is None:
-        return []
+    if not proposta.candidatos:
+        # Sem candidato não há endereço de peer nem snapshot a ler: a comparação
+        # não tem por onde começar, e a lista vazia leria como fidelidade.
+        return [Diferenca(
+            contexto="ensaio",
+            explicacao=(
+                "a proposta não tem candidato: sem o peer lido na configuração não "
+                "há endereço nem coleta com que comparar."
+            ),
+        )]
+    if proposta.site_id is None:
+        # O circuito do ensaio precisa do site (a coluna é NOT NULL) e é dele
+        # que sai o render a comparar: sem site, a reserva não acontece.
+        return [Diferenca(
+            contexto="ensaio",
+            explicacao=(
+                "o equipamento não está vinculado a um site, e o IPAM reserva por "
+                "site: sem a reserva o ensaio não tem como acontecer, e sem ele não "
+                "há comparação com a configuração."
+            ),
+        )]
     if proposta.vrf is not None:
         # Defesa em profundidade: a proposta já carrega o conflito
         # `vrf_nao_renderizavel`, mas a conferência é chamada para qualquer
@@ -967,21 +1208,19 @@ def conferir_fidelidade(session: Session, proposta: Proposta) -> list[Diferenca]
             "sessões na instância pública: a comparação não é confiável para uma "
             "sessão em VRF."
         )
-        return [Diferenca(contexto="ensaio", sobrando=(), faltando=(mensagem,))]
+        return [Diferenca(contexto="ensaio", explicacao=mensagem)]
     snap = session.get(models.DeviceSnapshot, proposta.candidatos[0].snapshot_id)
     texto = texto_backup(snap)
     resultado: list[Diferenca] = []
     ensaio = session.begin_nested()
     try:
         try:
-            criados = _ensaio(session, proposta)
+            criados = _ensaio(session, proposta, perfis, edge_trunk)
         except IntegrityError:
             # Uma restrição de unicidade recusou o ensaio (a reserva que a
             # proposta pede já existe, na mesma grafia, é o caso comum): sem
             # ensaio não há comparação a fazer, e é isso que a diferença diz.
-            return [Diferenca(
-                contexto="ensaio", sobrando=(), faltando=(AVISO_SEM_ENSAIO,),
-            )]
+            return [Diferenca(contexto="ensaio", explicacao=AVISO_SEM_ENSAIO)]
         render = render_desejado(session, proposta.device_id)
         id_circuito = criados["circuito"].id
         ids_sessoes = {s.id for s in criados["sessoes"]}
@@ -1008,10 +1247,44 @@ def conferir_fidelidade(session: Session, proposta: Proposta) -> list[Diferenca]
             ))
         if proposta.subinterface is not None:
             esperado = _normaliza_linhas(comandos_sub)
-            esperado.discard(f"interface {proposta.subinterface}")
             encontrado = _contexto_interface(texto, proposta.subinterface)
+            # O NOME da interface entra na conta, dos dois lados: o `<trunk>.<vid>`
+            # que o render monta (com o trunk da revisão, que a adoção grava) e o
+            # nome do bloco lido da configuração. O `discard` que estava aqui só
+            # dispensava o cabeçalho quando ele COINCIDIA com o nome lido, então a
+            # divergência de trunk aparecia de um lado só — a linha do render
+            # sobrava, e o nome que o equipamento tem, que é o que o operador
+            # precisa ver para corrigir o campo, não aparecia em lugar nenhum. Com
+            # os dois nomes, um trunk digitado errado na revisão vira diferença nos
+            # dois lados e exige `ciente`: sem ele a adoção gravava um `edge_trunk`
+            # que o equipamento não tem, e o render passava a intencionar uma
+            # subinterface num trunk inexistente.
+            encontrado.add(f"interface {proposta.subinterface}")
+            gerenciadas, nao_gerenciadas = _particiona_subinterface(
+                tuple(sorted(encontrado - esperado))
+            )
             resultado.append(Diferenca(
                 contexto="subinterface",
+                sobrando=tuple(sorted(esperado - encontrado)),
+                faltando=gerenciadas,
+                nao_gerenciado=nao_gerenciadas,
+            ))
+        # O corpo das definições que a sessão do ensaio referencia (design §6).
+        # O índice é construído UMA vez para os blocos todos: dentro do laço,
+        # cada definição re-varreria a configuração inteira — a de uma borda
+        # real são centenas de KB por definição de cada sessão.
+        chaves = _chaves_do_ensaio(render, ids_sessoes)
+        indice = _indice_definicoes(texto)
+        for bloco in render.blocos:
+            if bloco.tipo not in _TIPOS_DEFINICAO or not bloco.comandos:
+                continue
+            chave = _chave_definicao(_cabecalho_do_bloco(bloco.comandos))
+            if chave is None or chave not in chaves:
+                continue
+            esperado = _normaliza_linhas(bloco.comandos)
+            encontrado = _normaliza_linhas(list(indice.get(chave, ())))
+            resultado.append(Diferenca(
+                contexto="definicao",
                 sobrando=tuple(sorted(esperado - encontrado)),
                 faltando=tuple(sorted(encontrado - esperado)),
             ))

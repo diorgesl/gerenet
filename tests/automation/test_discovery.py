@@ -375,8 +375,8 @@ def test_leitura_parcial_ainda_propoe(db_session, tmp_path) -> None:
     dev = _ambiente(db_session)
     arquivo = tmp_path / "current.txt"
     arquivo.write_text(
-        "interface Eth-Trunk127.6001\n"
-        " vlan-type dot1q 6001\n"
+        "interface Eth-Trunk127.2601\n"
+        " vlan-type dot1q 2601\n"
         " ip address 100.64.10.0 255.255.255.254\n"
         "#\n"
         "bgp 65001\n"
@@ -412,12 +412,12 @@ def test_mesmo_asn_em_enlaces_diferentes_vira_pendencia(db_session, tmp_path) ->
     dev = _ambiente(db_session)
     arquivo = tmp_path / "current.txt"
     arquivo.write_text(
-        "interface Eth-Trunk127.5001\n"
-        " vlan-type dot1q 5001\n"
+        "interface Eth-Trunk127.2501\n"
+        " vlan-type dot1q 2501\n"
         " ip address 100.64.10.0 255.255.255.254\n"
         "#\n"
-        "interface Eth-Trunk127.5002\n"
-        " vlan-type dot1q 5002\n"
+        "interface Eth-Trunk127.2502\n"
+        " vlan-type dot1q 2502\n"
         " ipv6 address 2804:194C:1000::1100:73:1 126\n"
         "#\n"
         "bgp 65001\n"
@@ -429,8 +429,8 @@ def test_mesmo_asn_em_enlaces_diferentes_vira_pendencia(db_session, tmp_path) ->
                                         raw_files={"config_backup": [str(arquivo)]}))
     db_session.commit()
     por_vid = _propostas(db_session, dev)
-    assert "mesmo_asn_em_outro_enlace" in {p.tipo for p in por_vid[5001].pendencias}
-    assert "mesmo_asn_em_outro_enlace" in {p.tipo for p in por_vid[5002].pendencias}
+    assert "mesmo_asn_em_outro_enlace" in {p.tipo for p in por_vid[2501].pendencias}
+    assert "mesmo_asn_em_outro_enlace" in {p.tipo for p in por_vid[2502].pendencias}
 
 
 def _com_config_e_interfaces(db_session, dev, tmp_path: Path, *, vpn: str | None = None):
@@ -614,8 +614,8 @@ def test_equipamento_sem_site_e_conflito(db_session, tmp_path) -> None:
 
 
 _SEM_ASN = (
-    "interface Eth-Trunk127.8001\n"
-    " vlan-type dot1q 8001\n"
+    "interface Eth-Trunk127.2801\n"
+    " vlan-type dot1q 2801\n"
     " ip address 100.64.10.0 255.255.255.254\n"
     "#\n"
     "bgp 65001\n"
@@ -626,12 +626,12 @@ _SEM_ASN = (
 
 def test_peer_sem_as_number_nao_sugere_codigo(db_session, tmp_path) -> None:
     """Sem `as-number` lido não há ASN para o código — e o `codigo_em_uso` só
-    confere o código que existe: `ADOC-None-8001` seria um código mostrado ao
+    confere o código que existe: `ADOC-None-2801` seria um código mostrado ao
     operador e nunca conferido contra a SoT."""
     dev = _ambiente(db_session)
     _com_texto(db_session, dev, tmp_path, _SEM_ASN)
     (prop,) = listar_propostas(db_session, dev.id).propostas
-    assert prop.vid == 8001  # o enlace tem VLAN: o `None` vem do ASN que falta
+    assert prop.vid == 2801  # o enlace tem VLAN: o `None` vem do ASN que falta
     assert prop.circuit_code_sugerido is None
 
 
@@ -719,21 +719,21 @@ def test_duas_subinterfaces_com_o_mesmo_vid_sao_dois_enlaces(db_session, tmp_pat
 
 
 def test_enlace_qinq_propoe_s_vlan(db_session, tmp_path) -> None:
-    """`vlan-type dot1q 0x88a8 vid 7001` é empilhado: a reserva nasce como
+    """`vlan-type dot1q 0x88a8 vid 2701` é empilhado: a reserva nasce como
     S-VLAN (o IPAM criaria `kind='s_vlan'`) e o render só emite a linha
     empilhada com `Circuit.qinq` ligado. `vlan_mode` segue "unica": a mesma
     VLAN carrega as duas famílias — isso é outro eixo."""
     dev = _ambiente(db_session)
     _com_texto(db_session, dev, tmp_path,
-               "interface Eth-Trunk127.7001\n"
-               " vlan-type dot1q 0x88a8 vid 7001\n"
+               "interface Eth-Trunk127.2701\n"
+               " vlan-type dot1q 0x88a8 vid 2701\n"
                " ip address 100.64.10.0 255.255.255.254\n"
                "#\n"
                "bgp 65001\n"
                " peer 100.64.10.1 as-number 64512\n")
     (prop,) = listar_propostas(db_session, dev.id).propostas
     assert prop.qinq is True
-    assert prop.vlans == [{"vid": 7001, "kind": "s_vlan", "family": None}]
+    assert prop.vlans == [{"vid": 2701, "kind": "s_vlan", "family": None}]
     assert prop.vlan_mode == "unica"
 
 
@@ -810,7 +810,7 @@ def test_sessao_do_mesmo_equipamento_e_conflito(db_session, tmp_path) -> None:
     assert "ativa" not in conflito.descricao
 
 
-from gerenet.automation.discovery import conferir_fidelidade
+from gerenet.automation.discovery import Proposta, conferir_fidelidade
 
 
 def test_fidelidade_aponta_a_politica_que_o_render_nao_reproduz(db_session, tmp_path) -> None:
@@ -833,8 +833,8 @@ def test_fidelidade_ignora_comentario_dentro_da_interface(db_session, tmp_path) 
     sobra nelas."""
     dev = _ambiente(db_session)
     _com_texto(db_session, dev, tmp_path,
-               "interface Eth-Trunk127.6001\n"
-               " vlan-type dot1q 6001\n"
+               "interface Eth-Trunk127.2601\n"
+               " vlan-type dot1q 2601\n"
                "# second-dot1q: encapsulamento interno duplo\n"
                " ip address 100.64.10.0 255.255.255.254\n"
                "#\n"
@@ -852,8 +852,8 @@ def test_fidelidade_do_peer_que_casa_com_o_render(db_session, tmp_path) -> None:
     dev = _ambiente(db_session)
     arquivo = tmp_path / "current.txt"
     arquivo.write_text(
-        "interface Eth-Trunk127.6001\n"
-        " vlan-type dot1q 6001\n"
+        "interface Eth-Trunk127.2601\n"
+        " vlan-type dot1q 2601\n"
         " ip address 100.64.10.0 255.255.255.254\n"
         "#\n"
         "bgp 65001\n"
@@ -926,11 +926,13 @@ def test_fidelidade_de_proposta_com_conflito_explica_em_vez_de_estourar(
 
     assert [d.contexto for d in diferencas] == ["ensaio"]
     assert diferencas[0].sobrando == ()
+    assert diferencas[0].faltando == ()
     # A mensagem diz o que a função sabe (uma restrição de unicidade recusou o
     # ensaio), e não uma causa que ela não pode conhecer: qualquer colisão de
     # unicidade do ensaio cai na mesma captura, e o `prefixo_tomado` na mesma
     # grafia é só a mais provável.
-    assert "restrição de unicidade" in diferencas[0].faltando[0]
+    assert diferencas[0].explicacao is not None
+    assert "restrição de unicidade" in diferencas[0].explicacao
     # O ensaio que morreu no meio (organização e circuito já tinham ido para a
     # transação) também é desfeito: sobra só o circuito tomado, com a VLAN dele.
     assert db_session.query(models.Circuit).count() == 1
@@ -964,12 +966,16 @@ def test_fidelidade_de_peer_em_vrf_avisa_que_a_comparacao_nao_vale(
 
     assert [d.contexto for d in diferencas] == ["ensaio"]
     assert diferencas[0].sobrando == ()
-    assert "VPNA" in diferencas[0].faltando[0]
-    assert "instância pública" in diferencas[0].faltando[0]
+    # A explicação sai do `faltando`: linha lá dentro faria a diferença de
+    # `ensaio` exigir ciente de uma comparação que não aconteceu.
+    assert diferencas[0].faltando == ()
+    assert diferencas[0].explicacao is not None
+    assert "VPNA" in diferencas[0].explicacao
+    assert "instância pública" in diferencas[0].explicacao
 
 
 def test_fidelidade_nao_acusa_as_duas_formas_da_mesma_linha(db_session, tmp_path) -> None:
-    """`vlan-type dot1q 6001` e `vlan-type dot1q vid 6001` são a mesma linha, e
+    """`vlan-type dot1q 2601` e `vlan-type dot1q vid 2601` são a mesma linha, e
     o mesmo vale para `ipv6 address <endereço> 126` e `<endereço>/126`: o
     equipamento escreve a primeira forma, o render a segunda. Sem a
     equivalência, toda proposta com VLAN e IPv6 nasceria com dois falsos
@@ -977,8 +983,8 @@ def test_fidelidade_nao_acusa_as_duas_formas_da_mesma_linha(db_session, tmp_path
     mudança de estado da interface tem de aparecer — ficaria sempre sujo."""
     dev = _ambiente(db_session)
     _com_texto(db_session, dev, tmp_path,
-               "interface Eth-Trunk127.6001\n"
-               " vlan-type dot1q 6001\n"
+               "interface Eth-Trunk127.2601\n"
+               " vlan-type dot1q 2601\n"
                " ip address 100.64.10.0 255.255.255.254\n"
                " ipv6 enable\n"
                " ipv6 address 2804:194C:1000::1100:73:1 126\n"
@@ -1060,8 +1066,8 @@ def test_endereco_fora_das_pontas_do_par_e_conflito(db_session, tmp_path) -> Non
     `ponta_local: superior` e uma sessão de endereço local igual ao do par."""
     dev = _ambiente(db_session)
     _com_texto(db_session, dev, tmp_path,
-               "interface Eth-Trunk127.9001\n"
-               " vlan-type dot1q 9001\n"
+               "interface Eth-Trunk127.2903\n"
+               " vlan-type dot1q 2903\n"
                " ip address 100.64.10.3 255.255.255.252\n"
                "#\n"
                "bgp 65001\n"
@@ -1080,8 +1086,8 @@ def test_endereco_v6_fora_das_pontas_do_par_e_conflito(db_session, tmp_path) -> 
     """O irmão v6: `...:3` está no /126 `...::0/126`, cujas pontas são `:1` e `:2`."""
     dev = _ambiente(db_session)
     _com_texto(db_session, dev, tmp_path,
-               "interface Eth-Trunk127.9002\n"
-               " vlan-type dot1q 9002\n"
+               "interface Eth-Trunk127.2904\n"
+               " vlan-type dot1q 2904\n"
                " ipv6 address 2804:194C:1000::1100:73:3 126\n"
                "#\n"
                "bgp 65001\n"
@@ -1103,12 +1109,12 @@ def test_peer_sem_enable_em_nenhuma_familia_vira_pendencia(db_session, tmp_path)
     `ipv4-family unicast` não recebe nada."""
     dev = _ambiente(db_session)
     _com_texto(db_session, dev, tmp_path,
-               "interface Eth-Trunk127.9101\n"
-               " vlan-type dot1q 9101\n"
+               "interface Eth-Trunk127.2901\n"
+               " vlan-type dot1q 2901\n"
                " ip address 100.64.10.0 255.255.255.254\n"
                "#\n"
-               "interface Eth-Trunk127.9102\n"
-               " vlan-type dot1q 9102\n"
+               "interface Eth-Trunk127.2902\n"
+               " vlan-type dot1q 2902\n"
                " ip address 100.64.20.0 255.255.255.254\n"
                "#\n"
                "bgp 65001\n"
@@ -1118,10 +1124,10 @@ def test_peer_sem_enable_em_nenhuma_familia_vira_pendencia(db_session, tmp_path)
                " ipv4-family unicast\n"
                "  peer 100.64.20.1 enable\n")
     por_vid = _propostas(db_session, dev)
-    pendencia = next(p for p in por_vid[9101].pendencias if p.tipo == "peer_nao_habilitado")
+    pendencia = next(p for p in por_vid[2901].pendencias if p.tipo == "peer_nao_habilitado")
     assert "não o habilita em nenhuma família" in pendencia.descricao
-    assert por_vid[9101].veredito == "adotavel_com_pendencias"
-    assert "peer_nao_habilitado" not in {p.tipo for p in por_vid[9102].pendencias}
+    assert por_vid[2901].veredito == "adotavel_com_pendencias"
+    assert "peer_nao_habilitado" not in {p.tipo for p in por_vid[2902].pendencias}
 
 
 def test_veredito_adotavel_do_upstream_com_organizacao(db_session, tmp_path) -> None:
@@ -1137,3 +1143,371 @@ def test_veredito_adotavel_do_upstream_com_organizacao(db_session, tmp_path) -> 
     assert gama.pendencias == []
     assert gama.conflitos == []
     assert gama.veredito == "adotavel"
+
+
+def test_o_resultado_traz_os_internos_e_a_idade_da_coleta(db_session, tmp_path) -> None:
+    """O `list` do CLI parava de parsear a config duas vezes só por causa disto."""
+    dev = _ambiente(db_session)
+    _com_config(db_session, dev, tmp_path)
+    resultado = listar_propostas(db_session, dev.id)
+    assert [c.remote_address for c in resultado.internos] == ["10.0.0.9"]
+    assert resultado.snapshot_age_seconds is not None
+    assert resultado.snapshot_age_seconds >= 0
+
+
+def test_diferenca_separa_o_que_a_sot_nao_gerencia(db_session, tmp_path) -> None:
+    """Descrição e MTU da subinterface saem do que exige ciente (design §6)."""
+    dev = _ambiente(db_session)
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+    diferencas = conferir_fidelidade(db_session, alfa)
+    sub = next(d for d in diferencas if d.contexto == "subinterface")
+    assert any("description" in linha for linha in sub.nao_gerenciado)
+    assert not any("description" in linha for linha in sub.faltando + sub.sobrando)
+
+
+def test_exige_ciente_so_quando_o_render_mudaria_o_equipamento(db_session, tmp_path) -> None:
+    dev = _ambiente(db_session)
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+    sub = next(d for d in conferir_fidelidade(db_session, alfa) if d.contexto == "subinterface")
+    assert sub.exige_ciente is False  # só descrição sobra, que não é gerenciada
+
+
+def test_o_ensaio_nao_usa_faltando_para_explicar(db_session, tmp_path) -> None:
+    """A explicação do ensaio vai no campo dela: `sobrando` e `faltando` vazios
+    num contexto `ensaio` leriam como fidelidade."""
+    dev = _ambiente(db_session)
+    _com_config(db_session, dev, tmp_path)
+    vpn = next(p for p in listar_propostas(db_session, dev.id).propostas if p.vrf == "VPNA")
+    (diferenca,) = conferir_fidelidade(db_session, vpn)
+    assert diferenca.contexto == "ensaio"
+    assert diferenca.explicacao is not None
+    assert diferenca.sobrando == ()
+    assert diferenca.faltando == ()
+
+
+def test_conferencia_de_proposta_sem_site_explica(db_session, tmp_path) -> None:
+    """Sem site o circuito do ensaio nem nasce (a coluna é NOT NULL) e não há
+    render a comparar. A conferência diz isso — sem o `explicacao`, o `return []`
+    que a parte 1 devolvia leria como "está tudo fiel"."""
+    dev = create_device(db_session, DeviceCreate(name="ne8000-sem-site-fid",
+                                                 management_address="10.0.0.9", asn=65001),
+                        actor="cli")
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+
+    (diferenca,) = conferir_fidelidade(db_session, alfa)
+
+    assert diferenca.contexto == "ensaio"
+    assert diferenca.sobrando == ()
+    assert diferenca.faltando == ()
+    assert diferenca.explicacao is not None
+    assert "site" in diferenca.explicacao
+
+
+def test_conferencia_de_proposta_sem_candidato_explica(db_session) -> None:
+    """Proposta sem candidato não tem endereço de peer nem coleta a ler. Hoje
+    `listar_propostas` sempre põe um candidato em cada proposta, então o caminho
+    só é alcançável por quem monta a `Proposta` à mão — e é o que a adoção (que
+    confere antes de checar o candidato) faria."""
+    proposta = Proposta(device_id=1, vrf=None, subinterface=None, vid=None,
+                        stack="ipv4", vlan_mode="unica", p2p_v4_len=None)
+
+    (diferenca,) = conferir_fidelidade(db_session, proposta)
+
+    assert diferenca.contexto == "ensaio"
+    assert diferenca.sobrando == ()
+    assert diferenca.faltando == ()
+    assert diferenca.explicacao is not None
+    assert "candidato" in diferenca.explicacao
+
+
+def test_mtu_da_subinterface_tambem_sai_do_que_gateia(db_session, tmp_path) -> None:
+    """A fixture tem `description` e não tem `mtu`: sem este caso, o braço do
+    `"mtu "` da tupla não é exercitado por teste nenhum e uma entrada apagada
+    passaria na suíte inteira. Numa borda real o `mtu` está em toda subinterface,
+    e no `faltando` ele faria toda proposta voltar a exigir ciente."""
+    dev = _ambiente(db_session)
+    _com_texto(db_session, dev, tmp_path,
+               "interface Eth-Trunk127.2601\n"
+               " vlan-type dot1q 2601\n"
+               " ip address 100.64.10.0 255.255.255.254\n"
+               " mtu 9000\n"
+               "#\n"
+               "bgp 65001\n"
+               " peer 100.64.10.1 as-number 64512\n"
+               " ipv4-family unicast\n"
+               "  peer 100.64.10.1 enable\n")
+    (prop,) = listar_propostas(db_session, dev.id).propostas
+
+    sub = next(d for d in conferir_fidelidade(db_session, prop) if d.contexto == "subinterface")
+
+    assert sub.nao_gerenciado == ("mtu 9000",)
+    assert sub.faltando == ()
+    assert sub.sobrando == ()
+    assert sub.exige_ciente is False
+
+
+def test_o_trunk_revisado_divergente_aparece_no_nome_da_interface(db_session, tmp_path) -> None:
+    """O trunk da revisão é o que o render usa para NOMEAR a subinterface.
+
+    A conta antiga dispensava o cabeçalho do render só quando ele coincidia com o
+    nome lido, e a divergência aparecia de um lado só: a linha do render sobrava,
+    e o nome que o equipamento tem — o que diz qual campo corrigir — não aparecia
+    em lugar nenhum. Sem os dois nomes a conferência até pegava o trunk errado,
+    mas não dizia qual é o certo, e o `ciente` virava um aceite sobre um nome que
+    só existe do lado do render. O nome entra na conta dos dois lados: o que o
+    render emitiria contra o nome real do bloco da configuração.
+    """
+    dev = _ambiente(db_session)
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+
+    sub = next(
+        d for d in conferir_fidelidade(db_session, alfa, edge_trunk="Eth-Trunk9")
+        if d.contexto == "subinterface"
+    )
+
+    assert "interface Eth-Trunk9.1001" in sub.sobrando
+    assert "interface Eth-Trunk127.1001" in sub.faltando
+    assert sub.exige_ciente is True
+
+
+def _com_prefixos_autorizados(db_session):
+    """Cliente ALFA com os prefixos das duas famílias autorizados.
+
+    É do que o render precisa para emitir as definições da sessão: sem
+    autorização ativa não há prefix-list nem route-policy de importação a
+    emitir, e sem elas o ensaio não tem corpo de definição a comparar. O
+    ensaio não carrega perfil de exportação (a `Proposta` não tem esse campo),
+    então a importação é o único caminho pelo qual ele gera definição.
+    """
+    from gerenet.domain.schemas import PrefixAuthorizationCreate
+    from gerenet.domain.services.prefix_authorizations import create_authorization
+
+    org = create_organization(db_session, OrganizationCreate(name="Cliente Alfa", asn=64512),
+                              actor="cli")
+    create_authorization(db_session, PrefixAuthorizationCreate(
+        organization_id=org.id, family="ipv4", prefix="200.219.0.0/24"), actor="cli")
+    create_authorization(db_session, PrefixAuthorizationCreate(
+        organization_id=org.id, family="ipv6", prefix="2001:DB8::/32"), actor="cli")
+    return org
+
+
+def test_a_conferencia_compara_o_corpo_das_definicoes(db_session, tmp_path) -> None:
+    """Escolher o produto errado rende linhas de peer idênticas com política
+    diferente, e é isso que a comparação do corpo pega (design §6)."""
+    dev = _ambiente(db_session)
+    _com_prefixos_autorizados(db_session)
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+    contextos = {d.contexto for d in conferir_fidelidade(db_session, alfa)}
+    assert "definicao" in contextos
+
+
+def test_definicao_ausente_no_equipamento_aparece_como_sobrando(db_session, tmp_path) -> None:
+    """O render define `IP-PFX-64512-IN-V4` e a configuração não tem esse bloco:
+    ele aparece inteiro como sobra."""
+    dev = _ambiente(db_session)
+    _com_prefixos_autorizados(db_session)
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+    definicoes = [d for d in conferir_fidelidade(db_session, alfa) if d.contexto == "definicao"]
+    assert any(d.sobrando for d in definicoes)
+    assert any(
+        "IP-PFX-64512-IN-V4" in linha for d in definicoes for linha in d.sobrando
+    )
+
+
+def test_definicao_que_o_equipamento_ja_tem_nao_vira_diferenca(db_session, tmp_path) -> None:
+    """O outro lado da comparação: com o corpo no equipamento, a definição sai
+    vazia — e o comentário na coluna 0 dentro do bloco não pode fechar a leitura.
+
+    O render deste projeto emite comentário com texto na coluna 0 dentro do
+    bloco (`# up-full: ...`, `# TE: ...`), e a parte 1 corrigiu exatamente isso
+    na leitura da interface: com o comentário fechando o bloco, o `if-match` que
+    vem depois sai da comparação e o render o acusa como sobra — diferença que
+    não existe, exigindo ciente de quem não mudaria nada.
+    """
+    dev = _ambiente(db_session)
+    _com_prefixos_autorizados(db_session)
+    _com_texto(db_session, dev, tmp_path, _config_com_definicoes())
+    alfa = _propostas(db_session, dev)[1001]
+
+    definicoes = [d for d in conferir_fidelidade(db_session, alfa) if d.contexto == "definicao"]
+
+    # Uma prefix-list e uma route-policy de importação por família: quatro
+    # blocos de definição. A contagem fixa que a leitura do render não pulou
+    # nenhum deles — sem ela, uma chave que deixasse de ser reconhecida sairia
+    # como "nenhuma diferença" e o teste passaria vazio.
+    assert len(definicoes) == 4
+    assert all(d.sobrando == () and d.faltando == () for d in definicoes)
+
+
+def _config_com_definicoes(corpo_v4: str = "if-match ip-prefix IP-PFX-64512-IN-V4") -> str:
+    """A configuração do ALFA com os blocos de definição que o render emite.
+
+    Os blocos saem na forma do VRP: cabeçalho na coluna 0 e corpo indentado. O
+    `#` com texto na coluna 0 dentro do bloco é a forma que o render deste
+    projeto emite (`# second-dot1q ...`, `# TE: ...`). O `corpo_v4` existe para
+    o teste divergir o corpo sem mexer na chave.
+    """
+    return (
+        "interface Eth-Trunk127.1001\n"
+        " vlan-type dot1q 1001\n"
+        " ip address 100.64.10.0 255.255.255.254\n"
+        " ipv6 enable\n"
+        " ipv6 address 2804:194C:1000::1100:73:1 126\n"
+        "#\n"
+        "ip ip-prefix IP-PFX-64512-IN-V4 index 10 permit 200.219.0.0/24\n"
+        "#\n"
+        "route-policy RP-64512-IMPORT-V4 permit node 10\n"
+        "# segundo nó não usado nesta borda\n"
+        f" {corpo_v4}\n"
+        "#\n"
+        "ip ipv6-prefix IP-PFX-64512-IN-V6 index 10 permit 2001:DB8::/32\n"
+        "#\n"
+        "route-policy RP-64512-IMPORT-V6 permit node 10\n"
+        " if-match ipv6 address prefix-list IP-PFX-64512-IN-V6\n"
+        "#\n"
+        "bgp 65001\n"
+        " peer 100.64.10.1 as-number 64512\n"
+        " peer 100.64.10.1 description CLIENTE-ALFA\n"
+        " peer 2804:194C:1000::1100:73:2 as-number 64512\n"
+        " peer 2804:194C:1000::1100:73:2 description CLIENTE-ALFA-V6\n"
+    )
+
+
+def test_o_corpo_divergente_da_definicao_aparece_nos_dois_lados(db_session, tmp_path) -> None:
+    """O caso que a tarefa existe para pegar: a chave é a mesma, o corpo do
+    equipamento é outro — as linhas do peer saem idênticas byte a byte e a
+    política que está lá não é a que o render emitiria. Sem a comparação do
+    corpo, a conferência sairia fiel."""
+    dev = _ambiente(db_session)
+    _com_prefixos_autorizados(db_session)
+    _com_texto(db_session, dev, tmp_path,
+               _config_com_definicoes("if-match ip-prefix OUTRA-LISTA"))
+    alfa = _propostas(db_session, dev)[1001]
+
+    definicoes = [d for d in conferir_fidelidade(db_session, alfa) if d.contexto == "definicao"]
+
+    divergente = next(
+        (d for d in definicoes if "if-match ip-prefix OUTRA-LISTA" in d.faltando), None
+    )
+    assert divergente is not None, "o corpo divergente não apareceu na conferência"
+    assert divergente.sobrando == ("if-match ip-prefix IP-PFX-64512-IN-V4",)
+    assert divergente.exige_ciente is True
+    # O resto casa linha a linha: só o corpo trocado vira diferença, e uma
+    # comparação que só olhasse o cabeçalho não acharia esta.
+    assert all(d.sobrando == () and d.faltando == () for d in definicoes if d is not divergente)
+
+
+def test_a_definicao_marcada_com_outra_sessao_pelo_dedup_e_conferida(
+    db_session, tmp_path,
+) -> None:
+    """O dedup do render apensa a definição uma vez só, com o id da PRIMEIRA
+    sessão que a produziu (`_apensa_definicao`). Num PE com dois enlaces do
+    mesmo cliente, o bloco do segundo vem marcado com o id do primeiro, que já
+    foi adotado: conferir pelo id deixaria a sessão do ensaio sem nada a
+    comparar, e o operador adotaria achando que a SoT reproduz o bloco. Quem a
+    sessão referencia, a conferência compara — esteja o bloco marcado com o id
+    de quem estiver.
+    """
+    from gerenet.domain.schemas import CircuitCreate
+    from gerenet.domain.services.circuits import create_circuit
+
+    dev = _ambiente(db_session)
+    org = _com_prefixos_autorizados(db_session)
+    site = db_session.scalar(select(models.Site))
+    # O primeiro enlace do cliente, já na SoT: mesmo ASN e, por isso, as mesmas
+    # definições — o texto idêntico é o que faz o dedup do render pular o bloco.
+    adotado = create_circuit(db_session, CircuitCreate(
+        code="CIRC-ADOTADO-64512", organization_id=org.id, site_id=site.id,
+        access_device_id=dev.id, access_port="GE0/0/9", edge_device_id=dev.id,
+    ), actor="cli")
+    db_session.add(models.BgpSession(
+        circuit_id=adotado.id, device_id=dev.id, afi="ipv4",
+        local_address="100.64.140.0", remote_address="100.64.140.1",
+        asn_local=65001, asn_remote=64512,
+    ))
+    db_session.commit()
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+
+    definicoes = [d for d in conferir_fidelidade(db_session, alfa) if d.contexto == "definicao"]
+    sobras = [linha for d in definicoes for linha in d.sobrando]
+
+    assert any("IP-PFX-64512-IN-V4" in linha for linha in sobras)
+    assert any("RP-64512-IMPORT-V4" in linha for linha in sobras)
+
+
+def test_o_perfil_de_exportacao_da_revisao_entra_no_ensaio(db_session, tmp_path) -> None:
+    """O produto de exportação é justamente o que o operador escolhe na revisão,
+    e a `Proposta` não carrega perfil nenhum: sem o mapa, o `_bloco_export` sai
+    cedo e a política que a SoT passaria a emitir fica fora da conferência — o
+    caso nomeado no design §6, descoberto."""
+    from gerenet.domain.services.policy_profiles import list_policy_profiles
+
+    dev = _ambiente(db_session)
+    _com_prefixos_autorizados(db_session)
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+    full_id = next(
+        p.id for p in list_policy_profiles(db_session, direction="export") if p.name == "full"
+    )
+
+    sem = [d for d in conferir_fidelidade(db_session, alfa) if d.contexto == "definicao"]
+    com = [
+        d for d in conferir_fidelidade(
+            db_session, alfa, perfis={"ipv4": {"export_profile_id": full_id}},
+        )
+        if d.contexto == "definicao"
+    ]
+
+    assert not any("RP-64512-EXPORT-V4" in linha for d in sem for linha in d.sobrando)
+    assert any("RP-64512-EXPORT-V4" in linha for d in com for linha in d.sobrando)
+    assert len(com) == len(sem) + 1
+
+
+def test_o_cabecalho_do_bloco_pula_o_comentario_de_abertura() -> None:
+    """O import de upstream abre com `# up-full: ...` (e o fail-safe, com
+    `# fail-safe: ...`) antes do `route-policy`: tomar a linha 0 como cabeçalho
+    faria a chave sair nula e o bloco seria pulado sem diferença nenhuma. Hoje o
+    ensaio não cria vínculo de upstream, então o caminho não é alcançável pela
+    conferência, e o teste chama o helper direto — como os do runner já fazem.
+    """
+    from gerenet.automation.discovery import _cabecalho_do_bloco, _chave_definicao
+
+    comandos = [
+        "# up-full: accept-all do provedor, exceto as proteções",
+        "route-policy RP-64512-IMPORT-V4 permit node 10",
+        "if-match ip-prefix IP-PFX-64512-IN-V4",
+    ]
+
+    assert _chave_definicao(_cabecalho_do_bloco(comandos)) == "route-policy RP-64512-IMPORT-V4"
+    assert _chave_definicao(_cabecalho_do_bloco(["# só comentário"])) is None
+
+
+def test_as_referencias_incluem_os_filtros_do_corpo_da_politica() -> None:
+    """Os filtros que só o caminho de upstream usa (`if-match as-path-filter` e
+    `if-match community-filter`) não são alcançáveis pelo ensaio hoje, e a regra
+    fica presa aqui em vez de ficar sem teste nenhum: um erro de digitação nela
+    passaria despercebido até o dia em que o caminho existir — em silêncio, que
+    é o modo de falha que esta conferência combate.
+    """
+    from gerenet.automation.discovery import _referencias
+
+    assert _referencias([
+        "peer 10.0.0.2 import route-policy RP-64501-IMPORT-V4",
+        "peer 10.0.0.2 export route-policy RP-64501-EXPORT-V4",
+    ]) == {"route-policy RP-64501-IMPORT-V4", "route-policy RP-64501-EXPORT-V4"}
+    assert _referencias([
+        "if-match as-path-filter AS-PATH-65001-OWN",
+        "if-match community-filter CF-64501-BLK-1",
+        "if-match ipv6 address prefix-list IP-PFX-64501-IN-V6",
+    ]) == {
+        "ip as-path-filter AS-PATH-65001-OWN",
+        "ip community-filter CF-64501-BLK-1",
+        "ip ipv6-prefix IP-PFX-64501-IN-V6",
+    }

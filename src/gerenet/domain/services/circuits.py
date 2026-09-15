@@ -24,7 +24,10 @@ def _valida_vinculos(session: Session, site_id: int, dump: dict) -> None:
             raise ValidationError(f"Equipamento {dev.name} não pertence ao site {site_id}.")
 
 
-def create_circuit(session: Session, data: CircuitCreate, *, actor: str) -> models.Circuit:
+def create_circuit(
+    session: Session, data: CircuitCreate, *, actor: str, commit: bool = True
+) -> models.Circuit:
+    """Cria o circuito; `commit=False` é para a adoção encadear os três numa transação (design §3)."""
     get_organization(session, data.organization_id)
     dump = data.model_dump()
     _valida_vinculos(session, data.site_id, dump)
@@ -36,11 +39,13 @@ def create_circuit(session: Session, data: CircuitCreate, *, actor: str) -> mode
             session, tipo="circuit.create", ator=actor, objeto="circuit", objeto_id=circ.id,
             antes=None, depois=dump,
         )
-        session.commit()
+        if commit:
+            session.commit()
     except IntegrityError as exc:
         session.rollback()
         raise ConflictError(f"Já existe um circuito com o código {data.code}.") from exc
-    session.refresh(circ)
+    if commit:
+        session.refresh(circ)
     return circ
 
 

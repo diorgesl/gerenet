@@ -26,8 +26,9 @@ def _confere_asn_livre(session: Session, asn: int | None, ignorando_id: int | No
 
 
 def create_organization(
-    session: Session, data: OrganizationCreate, *, actor: str
+    session: Session, data: OrganizationCreate, *, actor: str, commit: bool = True
 ) -> models.Organization:
+    """Cria a organização; `commit=False` é para a adoção encadear os três numa transação (design §3)."""
     dump = data.model_dump()
     _valida_asn(dump.get("asn"))
     _confere_asn_livre(session, dump.get("asn"))
@@ -39,11 +40,13 @@ def create_organization(
             session, tipo="organization.create", ator=actor, objeto="organization",
             objeto_id=org.id, antes=None, depois=dump,
         )
-        session.commit()
+        if commit:
+            session.commit()
     except IntegrityError as exc:
         session.rollback()
         raise ConflictError(f"Já existe organização com o nome {data.name}.") from exc
-    session.refresh(org)
+    if commit:
+        session.refresh(org)
     return org
 
 

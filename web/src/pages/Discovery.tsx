@@ -13,6 +13,7 @@ import { FormField } from "@/components/FormField";
 import { Modal } from "@/components/Modal";
 import { PageHeader } from "@/components/PageHeader";
 import { help } from "@/help";
+import { AdocaoDialog } from "./DiscoveryAdopt";
 import type { DiscoveryOut, DiscoveryPropostaOut } from "@/api/types";
 
 // A conclusão chata ("não há peer fora da SoT") só sai quando a leitura
@@ -40,12 +41,20 @@ function textoDeIgnorados(quantidade: number): string {
     : `${quantidade} peers foram para a lista de ignorados.`;
 }
 
+/** O circuito que a adoção gravou. O diálogo fecha e a linha sai da lista: sem
+ * o relato, o operador que acabou de escrever na SoT não vê confirmação nenhuma
+ * — e ele gravou um circuito, não uma linha de lista. */
+function textoDeAdocao(circuitId: number): string {
+  return `Proposta adotada: o circuito ${circuitId} foi gravado na SoT.`;
+}
+
 export default function Discovery() {
   const [params, setParams] = useSearchParams();
   const { data: devices } = useDevices();
   const deviceParam = Number(params.get("device_id") ?? 0);
   const [deviceSel, setDeviceSel] = useState<number>(deviceParam);
   const [detalhe, setDetalhe] = useState<DiscoveryPropostaOut | null>(null);
+  const [revisando, setRevisando] = useState<DiscoveryPropostaOut | null>(null);
   const [ignorando, setIgnorando] = useState<DiscoveryPropostaOut | null>(null);
   const [motivo, setMotivo] = useState("");
   const [resultado, setResultado] = useState<string | null>(null);
@@ -163,6 +172,26 @@ export default function Discovery() {
               </button>
               <button
                 type="button"
+                // A adoção é o fluxo da proposta sem conflito: a com conflito
+                // não tem revisão a fazer (o serviço recusa), e o motivo está
+                // nos conflitos do detalhe.
+                disabled={p.veredito === "nao_adotavel"}
+                title={
+                  p.veredito === "nao_adotavel"
+                    ? "A proposta não é adotável: veja os conflitos em Detalhes."
+                    : undefined
+                }
+                onClick={() => {
+                  setRevisando(p);
+                  // Como no ignorar: o relato é do que acabou de ser gravado, e
+                  // abrir outra revisão o deixaria contando outra história.
+                  setResultado(null);
+                }}
+              >
+                Adotar
+              </button>
+              <button
+                type="button"
                 // A proposta órfã (endereço sem subinterface) vem sem candidato:
                 // sem peer identificado não há o que mandar à lista de ignorados.
                 disabled={p.candidatos.length === 0}
@@ -252,6 +281,21 @@ export default function Discovery() {
           </div>
         )}
       </Modal>
+
+      {/* A `key` por proposta é o que reabre o formulário do zero: sem ela o
+          estado da revisão anterior sobrevive à troca de linha. Quem identifica
+          é a subinterface (o nome que o equipamento tem): dois enlaces do mesmo
+          equipamento podem estar na MESMA VLAN — VRFs, stacks e portas
+          diferentes —, e aí o `vid` sozinho faria a segunda linha reusar o
+          formulário da primeira. */}
+      {revisando && (
+        <AdocaoDialog
+          key={revisando.subinterface ?? revisando.vid}
+          proposta={revisando}
+          onFechar={() => setRevisando(null)}
+          onAdotada={(circuitId) => setResultado(textoDeAdocao(circuitId))}
+        />
+      )}
 
       <Modal
         aberto={ignorando !== null}

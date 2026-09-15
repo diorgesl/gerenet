@@ -79,12 +79,19 @@ sanitizado do servidor; nenhum markdown é renderizado no cliente). Cada página
 `title`/`secao`/`order`/`em_breve` — `em_breve: true` mostra o aviso
 "Recurso planejado — não disponível ainda." no topo da página.
 
-## Descoberta na configuração — "Migrar" (parte 1)
+## Descoberta na configuração — "Migrar" (partes 1 e 2)
 
 A página `/discovery` (menu Operação, "Migrar") e o grupo
-`gerenet discovery list|show|ignore|unignore` leem o `display current-configuration`
-já coletado e mostram o que o equipamento tem que a SoT ainda não conhece. É
-somente leitura: nenhum comando vai ao equipamento por esses caminhos, e a lista
-de ignorados (na SoT) é a única escrita. A adoção a partir da proposta é a parte
-2, ainda não implementada. Operação: `docs/wiki/descoberta.md`; validação contra
-um NE8000 real: `docs/runbook-validacao-ne8000.md`.
+`gerenet discovery list|show|ignore|unignore|adopt` leem o `display
+current-configuration` já coletado e mostram o que o equipamento tem que a SoT
+ainda não conhece. A **parte 1** é a leitura: nenhum comando vai ao equipamento
+por esses caminhos, e a lista de ignorados (na SoT) era a única escrita. A
+**parte 2** é a adoção — a revisão de uma proposta na página, ou `gerenet
+discovery adopt <equipamento> <peer> --json <arquivo>`, grava organização,
+circuito, reservas (nos valores reais da configuração) e sessões **numa
+transação só**, com a conferência de fidelidade na frente e o `ciente` quando
+ela achar diferença que mudaria o equipamento. Adotar não manda comando nenhum:
+mudar o roteador continua sendo change request. Operação:
+`docs/wiki/descoberta.md`; validação contra um NE8000 real (com a adoção num
+equipamento não crítico e o rollback ao lado):
+`docs/runbook-validacao-ne8000.md`.

@@ -220,6 +220,10 @@ class BgpSessionCreate(BaseModel):
     graceful_restart: bool = False
     shutdown: bool = False
     allow_default_route: bool = False
+    # O caminho do segredo no Vault, nunca o valor (`models.BgpSession.password_ref`).
+    # A revisão da adoção escolhe o caminho e o `create_session` o grava pelo
+    # `model_dump`; a senha em si continua entrando só pelo `set_password`.
+    password_ref: str | None = Field(default=None, max_length=255)
 
 
 class BgpSessionUpdate(BaseModel):
@@ -1040,6 +1044,13 @@ class DiscoveryOut(BaseModel):
     aviso: str | None
     gerado_em: datetime
     propostas: list[PropostaOut]
+    # Os iBGP não têm proposta e não podem virar adoção: o lugar deles é a lista
+    # separada, e não o lixo do `propostas`.
+    internos: list[CandidatoOut] = []
+    # A idade do texto usado pela leitura: o motor recua para um snapshot mais
+    # antigo quando os recentes não têm a configuração, e o operador precisa
+    # saber se está olhando dez minutos ou três dias atrás.
+    snapshot_age_seconds: float | None = None
 
 
 class IgnorarIn(BaseModel):
@@ -1067,3 +1078,76 @@ class IgnoradoOut(BaseModel):
     remote_address: str
     motivo: str | None
     autor: str
+
+
+class AdocaoSessaoIn(BaseModel):
+    """O que o operador decide por sessão; o resto vem da proposta."""
+
+    afi: Literal["ipv4", "ipv6"]
+    import_profile_id: int | None = None
+    export_profile_id: int | None = None
+    password_ref: str | None = Field(default=None, max_length=255)
+
+
+class AdocaoIn(BaseModel):
+    """A revisão de uma proposta (design §6).
+
+    A organização vem por id (existente) ou por `organizacao_nova`; o resto é o
+    que o operador corrige do que a proposta leu: o código sugerido, o acesso e
+    o trunk do lado do cliente, os perfis de cada família e o caminho do segredo
+    no Vault quando o equipamento tem senha.
+    """
+
+    device_id: int
+    vrf: str | None = None
+    subinterface: str | None = None
+    circuit_code: str = Field(min_length=1, max_length=64)
+    access_device_id: int
+    access_port: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9/\-]+$")
+    edge_trunk: str | None = Field(default=None, max_length=64)
+    organizacao_id: int | None = None
+    organizacao_nova: OrganizationCreate | None = None
+    sessoes: list[AdocaoSessaoIn] = Field(default_factory=list)
+    ciente: bool = False
+
+    @field_validator("edge_trunk", mode="before")
+    @classmethod
+    def _apara_o_trunk(cls, v: str | None) -> str | None:
+        """Só espaços é vazio com outra roupa, e a guarda do serviço olha falsy.
+
+        Sem o aparo o valor passa, é gravado como veio, e todo render seguinte
+        monta `interface <espaços>.<vid>` — um nome de interface que o
+        equipamento não tem. O irmão `access_port` fecha o caso pela outra
+        ponta, o `pattern`; aqui a regra vem por strip porque o trunk é texto
+        livre (nome de Eth-Trunk, de Vlanif, do que o equipamento tiver). O
+        que sobra depois do aparo é o MESMO texto que a guarda mede, a
+        conferência compara e a escrita grava.
+        """
+        if not isinstance(v, str):
+            return v
+        return v.strip() or None
+
+
+class DiferencaOut(BaseModel):
+    """Uma diferença da conferência, na forma do `Diferenca` do motor."""
+
+    contexto: str
+    sobrando: list[str]
+    faltando: list[str]
+    nao_gerenciado: list[str]
+    explicacao: str | None
+    exige_ciente: bool
+
+
+class FidelidadeOut(BaseModel):
+    """O diff de UMA proposta, pedido sob demanda (design §7)."""
+
+    device_id: int
+    subinterface: str | None
+    diferencas: list[DiferencaOut]
+
+
+class AdocaoOut(BaseModel):
+    """O que a adoção devolve: o circuito que nasceu na SoT."""
+
+    circuit_id: int

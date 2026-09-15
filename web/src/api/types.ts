@@ -605,7 +605,10 @@ export interface DiscoveryPropostaOut {
   circuit_code_sugerido: string | null;
   vlans: { vid: number; kind: string; family: string | null }[];
   prefixos: { network: string; ponta_local: string }[];
-  sessoes: Record<string, unknown>[];
+  // As sessões que a proposta leu do equipamento, uma por família: o resto do
+  // conteúdo é genérico (a tela não o lê), mas o `afi` é a chave com que a
+  // revisão casa os perfis e o caminho do segredo.
+  sessoes: ({ afi: string } & Record<string, unknown>)[];
   candidatos: DiscoveryCandidatoOut[];
   pendencias: DiscoveryPendenciaOut[];
   conflitos: DiscoveryConflitoOut[];
@@ -629,4 +632,44 @@ export interface DiscoveryIgnoradoOut {
   remote_address: string;
   motivo: string | null;
   autor: string;
+}
+
+// A conferência de fidelidade da proposta (design §6–§7): o render num ensaio ×
+// a configuração lida. `exige_ciente` é o gate do aceite — só o que a SoT
+// mudaria no equipamento o levanta; `nao_gerenciado` é informação.
+export interface DiscoveryDiferencaOut {
+  contexto: string;
+  sobrando: string[];
+  faltando: string[];
+  nao_gerenciado: string[];
+  explicacao: string | null;
+  exige_ciente: boolean;
+}
+
+export interface DiscoveryFidelidadeOut {
+  device_id: number;
+  subinterface: string | null;
+  diferencas: DiscoveryDiferencaOut[];
+}
+
+// A revisão que a adoção grava (AdocaoIn do backend): a identidade da proposta
+// tem de ser a dela — a revisão de um enlace não vale no outro.
+export interface DiscoveryAdocaoIn {
+  device_id: number;
+  vrf: string | null;
+  subinterface: string | null;
+  circuit_code: string;
+  access_device_id: number;
+  access_port: string;
+  edge_trunk: string | null;
+  organizacao_id: number | null;
+  organizacao_nova: { name: string; kind?: string; asn: number } | null;
+  sessoes: {
+    afi: string;
+    import_profile_id: number | null;
+    export_profile_id: number | null;
+    /** Caminho do segredo no Vault — nunca o valor (§19). */
+    password_ref: string | null;
+  }[];
+  ciente: boolean;
 }

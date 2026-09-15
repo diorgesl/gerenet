@@ -143,6 +143,13 @@ export const HELP = {
   "discovery.veredito": "adotavel, adotavel_com_pendencias ou nao_adotavel — sempre com o motivo ao lado.",
   "discovery.nao_adotar":
     "O botão retira o enlace inteiro: no dual stack os dois peers saem juntos. Para ignorar um peer só (o IPv6 sem o IPv4, por exemplo), use o `--afi` do CLI — `gerenet discovery ignore DEVICE PEER --afi ipv6`.",
+
+  // Adoção da proposta (revisão)
+  "adocao.acesso": "De que switch e porta o cliente chega: a configuração do edge não tem isso.",
+  "adocao.organizacao": "A organização é casada pelo ASN do par; criar uma nova exige o nome.",
+  "adocao.trunk": "O trunk do edge onde as subinterfaces do circuito moram. Sem ele a SoT não reproduz o bloco da subinterface do equipamento.",
+  "adocao.ciente": "As diferenças listadas fariam o render mudar o equipamento. Marcar aqui registra que você assumiu, e a decisão fica na auditoria.",
+  "adocao.segredo": "Caminho do segredo do peer no Vault (ex.: gerenet/bgp/100.64.10.1) — só o caminho: o valor nunca passa por esta tela. Em branco, a sessão nasce sem a senha conhecida pela SoT.",
 } as const;
 
 export type HelpKey = keyof typeof HELP;

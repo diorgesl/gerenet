@@ -178,17 +178,18 @@ se o servidor negocia outra chave — registrar a que o paramiko recebe (o erro 
 
 ---
 
-# Runbook — validação da descoberta (`Migrar`) contra NE8000 real (read-only)
+# Runbook — validação da descoberta (`Migrar`) contra NE8000 real (leitura do equipamento, escrita na SoT)
 
-> A descoberta (spec §13, parte 1) lê o `display current-configuration` **já coletado** e
-> propõe o que cadastrar. Esta validação é **read-only e sem comando novo**: nenhuma etapa
-> abaixo abre sessão SSH no equipamento, nem abrir a página, nem rodar o CLI, nem mexer na
-> lista de ignorados. Quem fala com o equipamento é só a coleta (Passos 1 a 4 acima), e ela
-> executa apenas comandos `display`.
+> A descoberta (spec §13) lê o `display current-configuration` **já coletado**, propõe o que
+> cadastrar e — na parte 2 — grava a proposta adotada **na SoT**. Nenhuma etapa da leitura
+> abre sessão SSH no equipamento: nem abrir a página, nem rodar o CLI, nem mexer na lista de
+> ignorados, nem adotar. Quem fala com o equipamento é só a coleta (Passos 1 a 4 acima), e
+> ela executa apenas comandos `display`. A **única** etapa que escreve no equipamento é o
+> rollback da Etapa 3, e é por isso que a adoção é validada num equipamento não crítico.
 >
-> O que esta validação procura é **onde a leitura da configuração errou**. O parser é novo,
-> e a fixture que o testa é derivada, não capturada (o checklist no fim lista o que
-> conferir contra a captura do equipamento).
+> O que esta validação procura é **onde a leitura da configuração errou** e o que a adoção
+> grava. O parser é novo, e a fixture que o testa é derivada, não capturada (o checklist no
+> fim lista o que conferir contra a captura do equipamento).
 
 ## Etapa 1 — Coletar e abrir a página
 
@@ -242,10 +243,65 @@ que o render emitiria e a configuração não tem, e o que a configuração tem 
 emitiria. Diferença de fidelidade não é necessariamente erro: o equipamento pode ter uma
 política que o sistema ainda não conhece. Linha estranha é onde o parser errou.
 
-Confirme também que a descoberta **não** mexeu em nada: nenhuma sessão, circuito ou VLAN
-nova na SoT (só a lista de ignorados escreve, e só na SoT).
+Confirme também que, **até aqui**, a descoberta não mexeu em nada: nenhuma sessão, circuito
+ou VLAN nova na SoT (a lista de ignorados é a única escrita desta etapa, e é só na SoT).
 
-## Etapa 3 — Registrar o que a leitura errou
+## Etapa 3 — Adotar num equipamento não crítico, com o rollback ao lado
+
+As Etapas 1 e 2 conferiram a leitura. Esta é a única que **escreve**, e escreve em dois
+lugares: na SoT (a adoção) e, se o rollback for executado, no equipamento. Por isso ela é
+feita num equipamento e num enlace **não críticos** — um circuito de teste/homologação, ou o
+enlace menos sensível da borda —, nunca num cliente em produção.
+
+**O rollback, logo depois de adotar.** O enlace existe no equipamento (foi isso que a
+descoberta acabou de ler), então tirar o circuito da SoT não desfaz nada lá — quem desfaz é a
+CR de remoção, com o `undo peer` e o `undo interface` que o plano dela mostra. Como ela é do
+circuito que a adoção **acabou de criar**, a ordem é: **adotar → abrir a CR de remoção do
+circuito adotado → aprová-la → deixá-la parada**. Antes da adoção ela não tem como existir
+(sem circuito na SoT não há o que remover, nem plano a aprovar); o que a regra de sempre pede
+— rollback aprovado antes da mudança — vale aqui como "antes de executar qualquer coisa", e
+só a execute se a decisão for desfazer: ela é a única etapa deste runbook que manda comando ao
+equipamento.
+
+**Adote pela revisão.** Na página **Migrar**, abra a proposta do enlace e confira antes de
+aceitar:
+
+- o grupo **Diferenças que mudariam o equipamento** tem de estar vazio, ou ter só linha que
+  você sabe explicar — é o que o `ciente` assume, e ele fica registrado na auditoria;
+- o grupo **O que a SoT não gerencia** (o `description` e o MTU da subinterface) é o
+  esperado, e não gateia nada;
+- o trunk derivado do nome da subinterface, o equipamento/porta de acesso e a organização
+  estão certos;
+- os perfis de importação e exportação são os deste enlace: é o produto deles que o render
+  emite, e é o corpo dessas políticas que a conferência de fidelidade compara.
+
+**Confira o que nasceu.** O circuito na lista de **Circuitos**, com a VLAN e o par p2p
+reservados **nos valores reais** do equipamento (não nos que o alocador daria) e a sessão no
+**Roteamento**, com o ASN local do equipamento e o remoto lido da configuração. Em
+`gerenet discovery list <equipamento>`, a proposta adotada tem de ter saído da lista. E na
+auditoria, o evento `discovery.adopt` com o snapshot de origem, o `ciente` e o diff inteiro,
+com os dois grupos: o que não estiver lá não foi decidido por ninguém.
+
+Duas notas desta etapa:
+
+**O nome da subinterface.** O projeto assume que ele **termina no VID** (`Eth-Trunk127.1001`)
+— é assim que o render o monta (`<trunk>.<vid>`), e é desse sufixo que a revisão deriva o
+trunk. Num nome fora da convenção o campo do trunk nasce **em branco**, para ser digitado à
+mão, e o que a conferência acusa é o **nome da interface** divergir: o `<trunk>.<vid>` que o
+render monta com o trunk informado de um lado, e o nome do bloco lido do equipamento do outro.
+É diferença que exige `ciente`, e é esta conta que denuncia um trunk informado errado. Antes
+dos dois nomes a divergência aparecia de um lado só — a linha do render sobrava, e o nome do
+bloco lido, que é o que diz qual campo corrigir, ficava de fora. Não é erro da leitura — é o que a
+adoção assumiria —, e vale registrar quantos enlaces deste equipamento estão fora da
+convenção.
+
+**O VID.** Os IDs de VLAN da SoT vão de **2 a 4094**. Um número maior que apareça na
+configuração (o TPID em decimal — `34984`, assunção 14 do checklist —, ou um ID de serviço
+lido como VLAN) não é uma VLAN: se ele virar o VID de uma proposta, a adoção recusa na
+reserva com `VID fora do intervalo permitido (2–4094)`. É caso para o registro da Etapa 2, e
+não para o `ciente`.
+
+## Etapa 4 — Registrar o que a leitura errou
 
 Para cada divergência, anote a linha exata da configuração, o que a leitura devolveu e o que
 era o certo, e o item do checklist abaixo a que ela corresponde. É esse registro que vira
@@ -307,9 +363,17 @@ deste checklist precisa de ajuste.
 - [ ] Cada proposta conferida contra a configuração real (VLAN, subinterface, endereços,
       ASN, políticas) — divergências registradas com a linha da captura
 - [ ] Conferência de fidelidade rodada em pelo menos uma proposta (`discovery show`)
+- [ ] Um enlace **adotado** num equipamento não crítico, com o rollback (a CR de remoção do
+      circuito adotado) aberto e aprovado logo depois da adoção, e executado só se a decisão
+      for desfazer
+- [ ] O circuito adotado confere com a configuração lida: VLAN e par p2p nos valores reais
+      do equipamento, sessão com o ASN remoto lido, e a proposta fora da lista depois
+- [ ] Auditoria do `discovery.adopt` com o snapshot de origem, o `ciente` e o diff inteiro
+      (os dois grupos)
 - [ ] Nenhuma linha do checklist acima sem conferência (ou marcada como não observável na
       captura)
-- [ ] Nenhum comando enviado ao equipamento em nenhuma etapa; nenhuma linha nova na SoT
-      além da lista de ignorados, se usada
+- [ ] Comando ao equipamento só na CR de rollback, e só se ela for executada; fora as
+      reservas do enlace adotado (e a lista de ignorados, se usada), nenhuma linha nova na
+      SoT
 - [ ] Config crua fora do git (`data/backups/`); nenhum valor de senha em log, resposta ou
       fixture
