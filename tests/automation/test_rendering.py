@@ -508,3 +508,27 @@ def test_subinterface_usa_a_ponta_superior_quando_a_linha_diz(db_session: Sessio
     inferior_v6 = pontas_v6(redes[6], "inferior")[0]
     assert any(linha.strip() == f"ipv6 address {esperado_v6}" for linha in linhas)
     assert not any(linha.strip() == f"ipv6 address {inferior_v6}" for linha in linhas)
+
+
+def test_subinterface_qos_vem_da_velocidade_contratada(db_session: Session) -> None:
+    """O `cir` sai de `velocidade_mbps × 1000` (kbps), não de um literal.
+
+    O mesmo campo tem duas contas, e elas não são a mesma: o sufixo da
+    descrição (`naming._velocidade_legivel`) divide por 1024 — 1024 Mbps são
+    `[1G]` — enquanto o `cir` do VRP é em kbps e converte por mil. Prender as
+    duas no mesmo teste é o que impede a unificação silenciosa: um `× 1024`
+    deixaria o sufixo lendo `[1G]` e o equipamento recebendo `cir 1048576` —
+    limitador de taxa errado, invisível até alguém inspecionar o QoS na caixa.
+    """
+    from gerenet.automation.render import render_desejado
+
+    env = _ambiente(db_session)
+    circ_id = _circuito_reservado(
+        db_session, env, code="CIRC-R-VEL", stack="ipv4", velocidade_mbps=1024
+    )
+    _sessao(db_session, env, circ_id, afi="ipv4")
+
+    texto = render_desejado(db_session, env["ne_id"]).texto
+    assert "description CIRC-R-VEL CLIENTE RENDER [1G]" in texto
+    assert "qos car cir 1024000 inbound" in texto
+    assert "qos car cir 1024000 outbound" in texto
