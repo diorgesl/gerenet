@@ -11,7 +11,9 @@
 //   do solicitante (spec §3.3) para o fumo de mudança (change.spec.ts).
 // - Objetos do seed: API com X-Api-Key (settings.api_key). POSTs idempotentes
 //   (201 → segue com o id do corpo; 409 → segue com o id achado na listagem).
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 const BASE = "http://localhost:8000";
 const API_KEY = process.env.GERENET_API_KEY ?? "dev-key-change-me";
@@ -271,6 +273,212 @@ async function seed(): Promise<void> {
       );
     }
   }
+
+  // Equipamento do fumo da descoberta — SEPARADO do `ne8000-01` de propósito. A
+  // adoção grava a sessão do enlace no equipamento DA PROPOSTA
+  // (`adotar_proposta` → `create_session(device_id=proposta.device_id)`), e a
+  // §14.1 admite uma única sessão ativa por (equipamento, VRF, família) — o
+  // circuito da operadora acima já tem uma sessão ipv4 ativa no `ne8000-01` na
+  // VRF pública. Com a proposta lida daquele equipamento, a adoção do fumo seria
+  // recusada com 409 ("já existe sessão ipv4 ativa") e não haveria o que
+  // exercitar. O nome evita o prefixo do outro (`/ne8000-01/` casa por substring
+  // nas linhas das outras páginas).
+  const idEquipDisco = await criarOuAchar("/devices", "ne8000-disco-01", {
+    name: "ne8000-disco-01",
+    management_address: "10.99.99.2",
+    vendor: "huawei",
+    model: "NE8000M12",
+    family: "NE8000",
+    role: "edge",
+    site_id: idSite,
+  });
+
+  await seedDescoberta(idEquipDisco);
+}
+
+// --- Snapshot da descoberta (parte 2) -----------------------------------------
+//
+// A página **Migrar** não coleta nada: ela lê o `display current-configuration`
+// que já está num snapshot. Sem esse snapshot o fumo da adoção não teria
+// proposta nenhuma para adotar — e nenhuma API cria snapshot (quem coleta é o
+// worker, de um equipamento de verdade). Então o seed escreve a configuração
+// sintética e a linha de `device_snapshots` à mão, pelo mesmo `get_session()`
+// do CLI, via `uv run python -c`.
+//
+// Os valores são por rodada (`Date.now()`): se o endereço do peer, o ASN ou o
+// nome do cliente repetissem uma execução anterior, ou o peer já estaria na SoT
+// (e não viraria proposta), ou a adoção esbarraria em `par_em_uso`/409 de nome
+// repetido — nos dois casos o fumo ficaria sem o que adotar.
+
+/** Raiz do repositório, achada de baixo para cima pelo `pyproject.toml`. O
+ * globalSetup roda com o CWD em `web/` (o comando é `npm run test:e2e`), mas
+ * não vale depender disso: o caminho gravado no snapshot é ABSOLUTO de
+ * propósito — quem lê depois é a API, que roda na raiz. */
+function raizDoRepo(): string {
+  let dir = process.cwd();
+  for (;;) {
+    if (existsSync(join(dir, "pyproject.toml"))) return dir;
+    const pai = dirname(dir);
+    if (pai === dir) throw new Error("Raiz do repositório não encontrada (pyproject.toml).");
+    dir = pai;
+  }
+}
+const RAIZ = raizDoRepo();
+const DIR_CONFIG = join(RAIZ, "data", "e2e");
+
+/** O maior VID livre do site do equipamento.
+ *
+ * O VID do fumo vem da CONFIGURAÇÃO (é o que o equipamento tem), não do
+ * alocador: com o VID já reservado no site, a proposta nasceria `nao_adotavel`
+ * e não haveria o que adotar. O alocador first-fit dos circuitos cresce de 2
+ * para cima, então o maior livre é o que a rodada não disputa com ele — nem com
+ * as rodadas anteriores, que ficam reservadas no banco dedicado.
+ */
+const SCRIPT_VID_LIVRE = `
+import json, sys
+from sqlalchemy import select
+from gerenet.db import get_session
+from gerenet.domain import models
+with get_session() as session:
+    device = session.get(models.Device, int(sys.argv[1]))
+    if device is None:
+        raise SystemExit("equipamento do seed nao encontrado")
+    site_id = device.site_id
+    tomados = set(session.scalars(select(models.Vlan.vid).where(
+        models.Vlan.site_id == site_id,
+        models.Vlan.device_id.is_(None),
+        models.Vlan.status == "reservada",
+    )))
+livre = next(v for v in range(4094, 1, -1) if v not in tomados)
+print(json.dumps({"vid": livre, "site_id": site_id}))
+`;
+
+/** A linha de `device_snapshots` que aponta para a configuração escrita. */
+const SCRIPT_SNAPSHOT = `
+import sys
+from datetime import datetime, timezone
+from gerenet.db import get_session
+from gerenet.domain import models
+with get_session() as session:
+    snap = models.DeviceSnapshot(
+        device_id=int(sys.argv[1]),
+        status="success",
+        finished_at=datetime.now(timezone.utc),
+        resources={},
+        errors={},
+        raw_files={"config_backup": [sys.argv[2]]},
+        duration_ms=0,
+    )
+    session.add(snap)
+    session.flush()
+    print(snap.id)
+`;
+
+/** Roda um script de seed do banco pelo mesmo `uv run` do CLI.
+ *
+ * `execFileSync` com a lista de argumentos, e não `execSync` com uma linha de
+ * shell: o script é multi-linha e tem aspas — numa linha de shell ele seria
+ * remontado, e o caminho da configuração viraria sintaxe do Python. */
+function python(args: string[]): string {
+  return execFileSync("uv", ["run", "python", "-c", ...args], {
+    env: process.env,
+    encoding: "utf8",
+  });
+}
+
+/** A configuração sintética da rodada: a forma do `display
+ * current-configuration` com UM enlace que a SoT ainda não conhece
+ * (subinterface com `vlan-type`/`ip address` + o peer BGP dela). Ela não vem de
+ * equipamento nenhum, e é a única fonte de proposta do fumo.
+ *
+ * O `description` da subinterface é de propósito: é a linha que a SoT não
+ * gerencia (§6), e é ela que faz a revisão mostrar o grupo de informação. */
+function configDoEnlace(v: {
+  vid: number;
+  cliente: string;
+  ipLocal: string;
+  ipRemoto: string;
+  asn: number;
+}): string {
+  return `#
+# Configuração SINTÉTICA do fumo de descoberta (web/e2e/setup.ts) — imita a
+# forma do \`display current-configuration\` e não vem de equipamento nenhum.
+#
+sysname NE8000-E2E
+#
+interface Eth-Trunk127.${v.vid}
+ vlan-type dot1q ${v.vid}
+ description ${v.cliente}
+ ip address ${v.ipLocal} 255.255.255.254
+#
+bgp 64601
+ peer ${v.ipRemoto} as-number ${v.asn}
+ peer ${v.ipRemoto} description ${v.cliente}
+ ipv4-family unicast
+  peer ${v.ipRemoto} enable
+#
+return
+`;
+}
+
+/** Desativa as sessões ativas do equipamento do fumo da descoberta.
+ *
+ * A adoção de cada rodada grava UMA sessão na SoT, e a §14.1 admite uma única
+ * sessão ativa por (equipamento, VRF, família): na rodada seguinte a adoção
+ * bateria na sessão ativa da rodada anterior e o fumo morreria com 409 — um
+ * e2e que só passa em banco limpo não serve. Desativar é o caminho da operação
+ * para tirar uma sessão de cena (sessão não se exclui), e o circuito da rodada
+ * anterior fica como ficou.
+ */
+async function desativarSessoesDoFumo(deviceId: number): Promise<void> {
+  // O default da listagem já é `include_disabled=false`: só as ativas voltam.
+  const lista = await api<{ id: number }[]>(`/bgp-sessions?device_id=${deviceId}`);
+  if (lista.status !== 200 || lista.data === null) {
+    throw new Error(
+      `GET /bgp-sessions (equipamento do fumo) inesperado: ${lista.status} ${lista.detail}`,
+    );
+  }
+  for (const sessao of lista.data) {
+    const desativada = await api(`/bgp-sessions/${sessao.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ admin_status: false }),
+    });
+    if (desativada.status !== 200) {
+      throw new Error(
+        `PATCH /bgp-sessions/${sessao.id} inesperado: ${desativada.status} ${desativada.detail}`,
+      );
+    }
+  }
+}
+
+async function seedDescoberta(deviceId: number): Promise<void> {
+  await desativarSessoesDoFumo(deviceId);
+  const n = Date.now();
+  // O par p2p dentro do bloco privado do IPAM (`100.64.0.0/10`), lá em cima: o
+  // alocador first-fit anda de baixo para cima e não chega perto, e os bits
+  // baixos do relógio fazem o par (e o peer) serem novos a cada rodada.
+  const o2 = 64 + ((n >>> 16) & 0x3f);
+  const o3 = (n >>> 8) & 0xff;
+  const o4 = n & 0xfe;
+  const ipLocal = `100.${o2}.${o3}.${o4}`;
+  const ipRemoto = `100.${o2}.${o3}.${o4 + 1}`;
+  // ASN de 32 bits fora das faixas reservadas (os 4 bi) e sem organização
+  // cadastrada: é o que faz a revisão exercitar o caminho "Criar a nova".
+  const asn = 4_000_000_000 + (n % 100_000_000);
+  // O nome do cliente vira a descrição do peer E o nome da organização nova.
+  const cliente = `CLIENTE-E2E-${n}`;
+
+  const saida = python([SCRIPT_VID_LIVRE, String(deviceId)]);
+  const { vid } = JSON.parse(saida.trim()) as { vid: number };
+
+  mkdirSync(DIR_CONFIG, { recursive: true });
+  const arquivo = join(DIR_CONFIG, `discovery-${n}.txt`);
+  writeFileSync(arquivo, configDoEnlace({ vid, cliente, ipLocal, ipRemoto, asn }), "utf8");
+  const snapshotId = python([SCRIPT_SNAPSHOT, String(deviceId), arquivo]).trim();
+
+  console.log(
+    `[seed] descoberta: snapshot ${snapshotId}, VLAN ${vid}, peer ${ipRemoto} AS${asn} (${arquivo})`,
+  );
 }
 
 // --- globalSetup ---------------------------------------------------------------

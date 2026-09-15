@@ -1,8 +1,9 @@
 # Fumos e2e da interface web (Playwright)
 
-Os 10 fumos (3 de login + 3 de smoke + 1 de mudança + 1 de MPLS + 1 de
-upstream + 1 de credencial) exercitam a SPA real contra o backend real
-(FastAPI + PostgreSQL) — sem mocks. Rodam tudo por um único comando:
+Os 11 fumos (3 de login + 3 de smoke + 1 de mudança + 1 de MPLS + 1 de
+upstream + 1 de credencial + 1 de descoberta/adoção) exercitam a SPA real
+contra o backend real (FastAPI + PostgreSQL) — sem mocks. Rodam tudo por um
+único comando:
 
 ```bash
 # 0. Infra local (postgres, redis, vault) — uma vez
@@ -66,6 +67,18 @@ docker compose start api worker
     estáveis, sem vínculos), circuito `e2e-circ-operadora-01` + sessão BGP
     V4 par `10.99.128.1/2` e community `prepend`/Região Sul — checados
     antes de POSTar (padrão do prefix-authorization, sem 409 como controle).
+  - descoberta (parte 2): o equipamento `ne8000-disco-01` (próprio do fumo —
+    no `ne8000-01` a adoção morreria com 409, porque o circuito da operadora
+    acima já tem sessão ipv4 ativa e a §14.1 admite uma por
+    device/VRF/família) com **uma configuração sintética por rodada** e uma
+    linha de `device_snapshots` apontando para ela — nenhuma API cria
+    snapshot (quem coleta é o worker), então o seed escreve o arquivo em
+    `data/e2e/discovery-<ms>.txt` (gitignored) e insere a linha por
+    `uv run python -c` + `get_session()`. O enlace (VID, par p2p, ASN de 32
+    bits e nome do cliente) deriva de `Date.now()` para que a rodada sempre
+    tenha o que adotar, e as sessões ativas desse equipamento são
+    **desativadas** antes de cada rodada (o fumo é rerun-safe como os
+    outros).
 
 ## Banco dedicado `gerenet_e2e`
 
@@ -89,8 +102,11 @@ default (`postgresql+psycopg://gerenet:gerenet@localhost:5432/gerenet`).
 
 Os fumos acumulam objetos entre execuções no banco dedicado (device/circuito/
 sessão e CR por rodada, CRs deixadas em `executando`, jobs órfãos na fila RQ
-`gerenet-change` e a CR/circuito/sessão da rodada que falhou): inofensivo por
-design — o banco é dedicado, o seed e o fumo são rerun-safe (nada deles
+`gerenet-change`, a CR/circuito/sessão da rodada que falhou e a cadeia que cada
+adoção da descoberta grava — organização, circuito, reservas e sessão —, com a
+sessão da rodada anterior desativada pelo seed, além do
+`data/e2e/discovery-<ms>.txt` de cada rodada em `data/`, gitignored): inofensivo
+por design — o banco é dedicado, o seed e o fumo são rerun-safe (nada deles
 reutiliza esses objetos) e um job órfão consumido depois pelo worker é no-op
 (aponta para uma CR que só existe no `gerenet_e2e`).
 
@@ -124,6 +140,15 @@ reutiliza esses objetos) e um job órfão consumido depois pelo worker é no-op
   vincula o circuito pela UI (matriz principal × contingência), adiciona a
   community `prepend`/Região Sul pelo dialog e solicita a CR de escopo
   `upstream` no detalhe — aprovada pelo `e2e-aprovador` (usuário distinto).
+- `discovery.spec.ts` — descoberta/adoção (parte 2): pelo caminho do operador
+  (lista de Equipamentos → "Migrar" do `ne8000-disco-01`), confere que a
+  proposta do seed está lá com o "Adotar" habilitado, abre a revisão, confere
+  o código sugerido, o trunk derivado e o nome da organização nova, preenche
+  o acesso, marca o `ciente` se a página pedir, adota e confere o relato, a
+  proposta fora da lista e o circuito na lista de Circuitos. A fixture não
+  pede `ciente` (a única diferença é o `description` da subinterface, que é
+  do grupo que a SoT não gerencia) — a marcação é defensiva, porque a caixa
+  só aparece quando há diferença que mudaria o equipamento.
 
 Relatório: `playwright-report/` (html) e artefatos em `test-results/`
 (ambos ignorados pelo git).
