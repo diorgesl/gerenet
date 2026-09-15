@@ -510,6 +510,23 @@ def _marca_conflitos(session: Session, payload: dict) -> dict:
     }
 
 
+def _forma_do_registro(payload: object) -> bool:
+    """O payload do cache tem a forma que `_identifica` produz?
+
+    O `gerenet irr query` aceita `--source` de texto livre e grava em
+    `irr_cache` sob a MESMA chave do prefill (`source="registro"`,
+    `key=str(asn)`), então um payload de outro formato gravado ali — o
+    `{"asns", "prefixos"}` do `consultar`, por exemplo — cegaria o prefill por
+    24 h: `_marca_conflitos` devolveria blocos vazios em cima de um ASN que
+    tem blocos, ou estouraria no `bloco["prefix"]` de um payload torto, que é
+    um 500 na cara do operador. Sem a forma, o cache é tratado como MISS nos
+    dois pontos de leitura: a consulta ao whois acontece, e o refúgio da falha
+    de rede não o devolve. A forma mínima é a que `_identifica` inicializa:
+    `nome` e `blocos`.
+    """
+    return isinstance(payload, dict) and "nome" in payload and "blocos" in payload
+
+
 def identificar_asn(asn: int, *, ttl_horas: int = 24) -> dict:
     """Identidade e blocos alocados de um ASN → payload do prefill.
 
@@ -533,13 +550,13 @@ def identificar_asn(asn: int, *, ttl_horas: int = 24) -> dict:
                 models.IrrCache.key == str(asn),
             )
         )
-        if linha is not None and _fresca(linha, agora):
+        if linha is not None and _fresca(linha, agora) and _forma_do_registro(linha.payload):
             return _marca_conflitos(session, dict(linha.payload))
         try:
             payload = _identifica(asn)
         except _FalhaRede as exc:
             logger.warning("Consulta ao registro para AS%d falhou: %s", asn, exc)
-            if linha is not None and _vivo(linha, agora):
+            if linha is not None and _vivo(linha, agora) and _forma_do_registro(linha.payload):
                 return _marca_conflitos(session, dict(linha.payload))
             raise IrrError(
                 f"Consulta ao registro para AS{asn} falhou ({exc}) "

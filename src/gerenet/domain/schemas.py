@@ -1117,6 +1117,8 @@ class IgnoradoOut(BaseModel):
 class AdocaoSessaoIn(BaseModel):
     """O que o operador decide por sessão; o resto vem da proposta."""
 
+    model_config = ConfigDict(extra="forbid")  # chave torta não passa calada (AdocaoIn)
+
     afi: Literal["ipv4", "ipv6"]
     import_profile_id: int | None = None
     export_profile_id: int | None = None
@@ -1131,6 +1133,8 @@ class AdocaoAutorizacaoIn(BaseModel):
     revisou nesta tela.
     """
 
+    model_config = ConfigDict(extra="forbid")  # chave torta não passa calada (AdocaoIn)
+
     prefix: str = Field(min_length=1, max_length=64)
     family: Literal["ipv4", "ipv6"]
 
@@ -1142,7 +1146,14 @@ class AdocaoIn(BaseModel):
     que o operador corrige do que a proposta leu: o código sugerido, o acesso e
     o trunk do lado do cliente, os perfis de cada família e o caminho do segredo
     no Vault quando o equipamento tem senha.
+
+    `extra="forbid"` (e nos três modelos, este e os dois filhos): o corpo vem de
+    um `--json` escrito à mão e a API responde 201 calada a uma chave digitada
+    errado — `document` → `documment` e o operador acredita que o CNPJ entrou.
+    O 422 diz qual campo sobrou, em vez de a adoção seguir sem ele.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     device_id: int
     vrf: str | None = None

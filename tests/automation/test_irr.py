@@ -679,6 +679,55 @@ def test_identificar_asn_com_uma_fonte_fora_usa_o_cache_como_refugio(session, mo
     assert identificar_asn(264289)["nome"] == "PROVEINTERLTDA-AS"
 
 
+def test_identificar_asn_nao_serve_cache_com_forma_de_fora(session, monkeypatch):
+    """Payload de outro formato na chave do prefill é cache MISS.
+
+    O `gerenet irr query` aceita `--source` de texto livre e grava em
+    `irr_cache` sob a MESMA chave daqui (`source="registro"`, `key=str(asn)`):
+    um payload do `consultar` (`{"asns", "prefixos"}`) gravado ali seria
+    servido por 24 h como se fosse a resposta do registro — um ASN sem nome e
+    sem bloco nenhum, em cima de blocos que existem. A linha está fresca de
+    propósito: sem a guarda ela venceria a consulta.
+    """
+    session.add(models.IrrCache(
+        source="registro", key="264289",
+        payload={"asns": [264289], "prefixos": ["138.121.28.0/22"]},
+        queried_at=datetime.now(UTC),
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+    ))
+    session.commit()
+    disparos: list[list[str]] = []
+    monkeypatch.setattr("gerenet.automation.irr.subprocess.run",
+        _mapa_whois(disparos, _mapa_do_registro(
+            264289, radb=RESPOSTA_AUT_NUM, registro=RESPOSTA_REGISTRO)))
+
+    payload = identificar_asn(264289)
+
+    assert len(disparos) == 2  # as duas consultas do registro aconteceram
+    assert [b["prefix"] for b in payload["blocos"]] == [
+        "138.121.28.0/22", "2804:2594::/32"
+    ]
+    assert "asns" not in payload
+
+
+def test_identificar_asn_refugio_nao_devolve_cache_de_outra_forma(session, monkeypatch):
+    """A outra ponta da guarda: com a rede fora, o payload torto — vivo, sem
+    TTL — não é o refúgio. `IrrError` diz que não há cache vivo, em vez de o
+    operador receber a resposta de outro formato."""
+    session.add(models.IrrCache(
+        source="registro", key="264289",
+        payload={"asns": [264289], "prefixos": []},
+        queried_at=datetime.now(UTC),
+        expires_at=None,  # vivo (critério simples E1-1)
+    ))
+    session.commit()
+    monkeypatch.setattr("gerenet.automation.irr.subprocess.run",
+        _fake_falha(subprocess.TimeoutExpired("whois -h whois.radb.net", 20)))
+
+    with pytest.raises(IrrError, match="não há cache vivo"):
+        identificar_asn(264289)
+
+
 def test_identificar_asn_dentro_do_ttl_nao_refaz_o_whois(session, monkeypatch):
     """O mock levanta em QUALQUER consulta depois da primeira: a segunda
     chamada só pode ter vindo do cache."""

@@ -162,6 +162,42 @@ def test_proposta_com_conflito_e_409(client, db_session, tmp_path) -> None:
     assert db_session.query(models.Circuit).count() == 0
 
 
+def test_chave_desconhecida_na_revisao_e_422(client, db_session, tmp_path) -> None:
+    """A chave digitada errado no `--json` do CLI não some calada.
+
+    O corpo da adoção vem de um arquivo escrito à mão: com o `extra="ignore"`
+    do Pydantic v2 o `documment` era descartado e a API respondia 201 — o
+    operador acreditava que o CNPJ entrou. O 422 chega na validação do corpo,
+    antes do serviço, então nada é gravado; e o mesmo payload com as chaves
+    certas segue, porque a recusa é da chave, não do corpo.
+    """
+    ambiente = _ambiente(db_session, tmp_path)
+    corpo = _payload(ambiente)
+
+    # Na raiz da revisão.
+    corpo["documment"] = "12.345.678/0001-99"
+    extra = client.post("/api/v1/discovery/adopt", json=corpo, headers=_auth())
+    assert extra.status_code == 422
+    assert "documment" in extra.text  # o 422 nomeia a chave que sobrou
+    del corpo["documment"]
+
+    # E nos dois filhos: o config é por modelo, e um payload torto de `sessoes`
+    # ou `autorizacoes` passaria calado se só o pai o tivesse.
+    corpo["sessoes"] = [{"afi": "ipv4", "perfil_import": 1}]
+    assert client.post("/api/v1/discovery/adopt", json=corpo,
+                       headers=_auth()).status_code == 422
+    corpo["sessoes"] = [{"afi": "ipv4"}, {"afi": "ipv6"}]
+
+    corpo["autorizacoes"] = [{"prefix": "138.121.28.0/22", "famly": "ipv4"}]
+    assert client.post("/api/v1/discovery/adopt", json=corpo,
+                       headers=_auth()).status_code == 422
+    corpo["autorizacoes"] = []
+
+    assert db_session.query(models.Circuit).count() == 0  # nenhuma recusa gravou
+    ok = client.post("/api/v1/discovery/adopt", json=corpo, headers=_auth())
+    assert ok.status_code == 201, ok.text
+
+
 def test_sem_ciente_onde_exige_e_422(client, db_session, tmp_path) -> None:
     """A proposta da fixture tem diferença de política, que muda o equipamento."""
     ambiente = _ambiente(db_session, tmp_path)
