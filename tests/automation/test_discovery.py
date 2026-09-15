@@ -1252,13 +1252,13 @@ def test_mtu_da_subinterface_tambem_sai_do_que_gateia(db_session, tmp_path) -> N
 def test_o_trunk_revisado_divergente_aparece_no_nome_da_interface(db_session, tmp_path) -> None:
     """O trunk da revisão é o que o render usa para NOMEAR a subinterface.
 
-    A comparação olhava só o conteúdo do bloco — o cabeçalho `interface <nome>`
-    saía dos dois lados como abre-contexto —, então um trunk digitado errado
-    comparava igual e a conferência saía fiel: a adoção gravava um `edge_trunk`
-    que o equipamento não tem, o render passava a intencionar uma subinterface
-    num trunk inexistente, e a conferência que existe para pegar isso dizia que
-    estava tudo certo. O nome entra na conta: o que o render emitiria contra o
-    nome real do bloco da configuração.
+    A conta antiga dispensava o cabeçalho do render só quando ele coincidia com o
+    nome lido, e a divergência aparecia de um lado só: a linha do render sobrava,
+    e o nome que o equipamento tem — o que diz qual campo corrigir — não aparecia
+    em lugar nenhum. Sem os dois nomes a conferência até pegava o trunk errado,
+    mas não dizia qual é o certo, e o `ciente` virava um aceite sobre um nome que
+    só existe do lado do render. O nome entra na conta dos dois lados: o que o
+    render emitiria contra o nome real do bloco da configuração.
     """
     dev = _ambiente(db_session)
     _com_config(db_session, dev, tmp_path)

@@ -294,3 +294,26 @@ de quem prefere resolver as pendências num arquivo a abrir a tela.
 - **O dual stack com VLAN separada** continua virando duas propostas, com a
   pendência que pergunta ao operador se são um circuito só. Se o caso aparecer, a
   ação de unificar é o próximo passo.
+- **Falta um `IntegrityError` de guarda global na API.** As guardas de unicidade
+  da adoção (VID, prefixo, código) conferem antes de escrever, e cada serviço
+  trata o `IntegrityError` do seu próprio `flush` — mas a corrida entre a
+  conferência e o `commit` final (duas adoções do mesmo par de valores ao mesmo
+  tempo, ou o evento de auditoria batendo no mesmo índice) chega ao banco sem
+  tradutor e vira **500 opaco, e não o 409 que nomeia o conflito**. É da API
+  inteira e pré-existente (não da adoção): o remédio é um handler no `main`,
+  ao lado do `RequestValidationError`, e ficou para uma frente própria porque
+  muda a resposta de todos os POSTs.
+- **O que ficou de fora dos menores da revisão final.** O fumo
+  `web/e2e/discovery.spec.ts` **não exercita o gate do aceite ponta a ponta** — a
+  fixture do seed só produz diferença do grupo que não gateia, e quem cobre o
+  aceite é o Vitest (está escrito no `web/e2e/README.md`) —, e a revisão mostra
+  **menos campos do que o desenho prometia**: "o operador vê o que será escrito"
+  vale para as reservas (VID, rede e ponta, agora listadas) e para o diff, mas os
+  dados da sessão (ASN, endereços, perfis) aparecem só nos candidatos e nos
+  campos, e não como o bloco que o render vai montar.
+- **A identidade da proposta não inclui o endereço remoto do peer.** A revisão é
+  conferida campo a campo contra a proposta por `(device, VRF, subinterface)`, e o
+  endereço remoto — que a proposta já carrega em `sessoes` — ficou de fora. Entrou
+  no desenho como identidade ampliada e ficou **parada**: essa identidade é a
+  mesma comparação na API, no `adopt` do CLI e no diálogo da página, e ampliá-la
+  muda a superfície das três de uma vez.

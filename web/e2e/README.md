@@ -148,7 +148,10 @@ reutiliza esses objetos) e um job órfão consumido depois pelo worker é no-op
   proposta fora da lista e o circuito na lista de Circuitos. A fixture de hoje
   não pede `ciente` (a única diferença é o `description` da subinterface, que é
   do grupo que a SoT não gerencia) — a marcação é defensiva, porque a caixa
-  só aparece quando há diferença que mudaria o equipamento.
+  só aparece quando há diferença que mudaria o equipamento. O que o fumo prova
+  é o **caminho de escrita**, e não a salvaguarda: sem diferença que gateie, o
+  aceite não é exercitado ponta a ponta — quem cobre o gate é o Vitest
+  (`Discovery.test.tsx`).
 
 Relatório: `playwright-report/` (html) e artefatos em `test-results/`
 (ambos ignorados pelo git).

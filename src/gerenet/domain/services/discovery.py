@@ -153,6 +153,22 @@ def _sessao_da_proposta(
     )
 
 
+def perfis_da_revisao(revisao: schemas.AdocaoIn) -> dict[str, dict[str, int | None]]:
+    """Os perfis que a revisão escolheu, por família (o mapa que o ensaio lê).
+
+    Quem mostra o diff tem de montar este mapa com os MESMOS valores: o corpo da
+    política de exportação que o ensaio emite sai daqui, e uma conferência
+    feita com outro mapa compara algo que a adoção não vai gravar — o
+    `adopt` do CLI imprime o diff antes de escrever, e imprime o que ele
+    próprio vai usar.
+    """
+    return {
+        s.afi: {"import_profile_id": s.import_profile_id,
+                "export_profile_id": s.export_profile_id}
+        for s in revisao.sessoes
+    }
+
+
 def adotar_proposta(session: Session, *, proposta, revisao: schemas.AdocaoIn, actor: str) -> int:
     """Grava a cadeia de uma proposta na SoT, numa transação (design §5).
 
@@ -219,11 +235,7 @@ def adotar_proposta(session: Session, *, proposta, revisao: schemas.AdocaoIn, ac
     # O que o operador escolheu entra na conferência: sem os perfis o ensaio não
     # renderiza o corpo da política de exportação, que é justamente o que ele
     # escolhe errado; sem o trunk, a comparação não vale para o que vai gravar.
-    perfis = {
-        s.afi: {"import_profile_id": s.import_profile_id,
-                "export_profile_id": s.export_profile_id}
-        for s in revisao.sessoes
-    }
+    perfis = perfis_da_revisao(revisao)
     difs = conferir_fidelidade(session, proposta, perfis=perfis, edge_trunk=revisao.edge_trunk)
     ensaio = [d for d in difs if d.contexto == "ensaio"]
     if ensaio:

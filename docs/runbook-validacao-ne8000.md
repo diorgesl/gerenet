@@ -289,8 +289,9 @@ Duas notas desta etapa:
 trunk. Num nome fora da convenção o campo do trunk nasce **em branco**, para ser digitado à
 mão, e o que a conferência acusa é o **nome da interface** divergir: o `<trunk>.<vid>` que o
 render monta com o trunk informado de um lado, e o nome do bloco lido do equipamento do outro.
-É diferença que exige `ciente`, e é a conta que denuncia um trunk informado errado — o corpo
-do bloco é o mesmo, e sem o nome a conferência sairia fiel. Não é erro da leitura — é o que a
+É diferença que exige `ciente`, e é esta conta que denuncia um trunk informado errado. Antes
+dos dois nomes a divergência aparecia de um lado só — a linha do render sobrava, e o nome do
+bloco lido, que é o que diz qual campo corrigir, ficava de fora. Não é erro da leitura — é o que a
 adoção assumiria —, e vale registrar quantos enlaces deste equipamento estão fora da
 convenção.
 

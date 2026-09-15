@@ -5,7 +5,7 @@ reservar_circuito entra na Task 9 — mesmo arquivo.
 """
 import ipaddress
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -391,10 +391,20 @@ def _confere_vlan_livre(session: Session, site_id: int, vid: int) -> None:
 
 
 def _confere_prefixo_livre(session: Session, site_id: int, texto: str) -> None:
-    """Idem para o prefixo: o índice parcial de `ip_prefixes` é (site, network, reservada)."""
+    """Idem para o prefixo: o índice parcial de `ip_prefixes` é (site, network, reservada).
+
+    A comparação é sem caixa, como a irmã da descoberta (`func.lower(network)
+    == rede.lower()`, no `_conflitos_de` do motor): o `/126` do IPv6 sai do
+    equipamento em maiúsculas (`194C`), o cadastro guarda a caixa que veio, e
+    dois textos que só divergem na caixa são o MESMO prefixo. O índice do banco
+    é sensível à caixa, então sem isto a pré-checagem ficava calada e a segunda
+    reserva passava em silêncio — ou, quando o texto do banco coincidia, quem
+    recusava era o `flush`, com a mensagem genérica e sem o prefixo nomeado.
+    """
     ocupado = session.scalars(
         select(models.IpPrefix.id).where(
-            models.IpPrefix.site_id == site_id, models.IpPrefix.network == texto,
+            models.IpPrefix.site_id == site_id,
+            func.lower(models.IpPrefix.network) == texto.lower(),
             models.IpPrefix.status == "reservada",
         ).limit(1)
     ).first()

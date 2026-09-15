@@ -424,8 +424,10 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   ensaio referencia (contexto `definicao`), recebe os perfis e o trunk da
   revisão — e o **nome da interface** entra na conta, dos dois lados (o
   `<trunk>.<vid>` que o render monta com o trunk informado contra o nome do bloco
-  lido: o cabeçalho era o abre-contexto da comparação, e sem ele um trunk errado
-  comparava igual, com o corpo do bloco sendo o mesmo) —, e `Diferenca` ganhou
+  lido: o `discard` antigo só dispensava o cabeçalho do render quando ele
+  coincidia com o nome lido, então um trunk errado sobrava de um lado só, e o
+  nome que o equipamento tem — o que diz qual campo corrigir — não aparecia) —, e
+  `Diferenca` ganhou
   `explicacao` (o `ensaio` parou de sobrecarregar
   `faltando`); o que a SoT **não gerencia** (`description` e MTU da subinterface)
   aparece num grupo próprio e **não gateia** — só o grupo que mudaria o

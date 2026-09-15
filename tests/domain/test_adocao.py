@@ -236,6 +236,21 @@ def test_revisao_sem_trunk_recusa(db_session, tmp_path) -> None:
     assert db_session.query(models.Circuit).count() == 0
 
 
+def test_trunk_so_de_espacos_recusa_como_o_vazio(db_session, tmp_path) -> None:
+    """Só espaços é vazio com outra roupa, e a guarda do serviço olha falsy: sem
+    o aparo o valor passa, é gravado como veio, e todo render seguinte monta
+    `interface <espaços>.<vid>` — um nome que o equipamento não tem."""
+    _site, dev = _ambiente(db_session, tmp_path)
+    revisao = _revisao(dev, edge_trunk="   ")
+    assert revisao.edge_trunk is None  # o aparo é do schema, no caminho todo
+
+    with pytest.raises(ValidationError) as exc:
+        adotar_proposta(db_session, proposta=_proposta(db_session, dev),
+                        revisao=revisao, actor="cli")
+    assert "Eth-Trunk127" in str(exc.value)
+    assert db_session.query(models.Circuit).count() == 0
+
+
 def test_a_conferencia_usa_o_trunk_da_revisao(db_session, tmp_path) -> None:
     """O ensaio monta o circuito com o trunk da revisão, e não com o derivado do
     nome: com outro trunk o circuito que nasceria tem outro bloco, e a diferença

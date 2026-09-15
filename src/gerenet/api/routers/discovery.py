@@ -133,9 +133,11 @@ def _busca_proposta(
             status_code=409,
             detail=(
                 f"A proposta é ambígua: {len(casam)} propostas deste equipamento casam "
-                f"com a identidade informada ({alvo}, VRF {vrf or 'default'}). A "
-                "identidade por subinterface não basta para dizer qual delas é; a lista "
-                "identifica cada uma também pelo endereço remoto do peer."
+                f"com a identidade informada ({alvo}, VRF {vrf or 'default'}). "
+                "(subinterface, VRF) é a única identidade que a listagem e a revisão "
+                "aceitam, e esta versão não tem controle de desambiguação: enquanto "
+                "houver mais de uma candidata, a adoção por esta identidade fica "
+                "barrada — a lista mostra todas, com os peers que as distinguem."
             ),
         )
     if not casam:

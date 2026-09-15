@@ -24,6 +24,7 @@ from gerenet.domain.services.discovery import (
     esquecer_ignorado,
     ignorar_candidato,
     listar_ignorados,
+    perfis_da_revisao,
 )
 from gerenet.domain.services.errors import GerenetError, NotFoundError
 from gerenet.domain.validators import endereco_canonico
@@ -235,7 +236,12 @@ def adotar(
         help="Assume as diferenças que mudariam o equipamento (o arquivo pode trazê-las).",
     ),
 ) -> None:
-    """Grava a cadeia da proposta na SoT. Nada é enviado ao equipamento."""
+    """Grava a cadeia da proposta na SoT. Nada é enviado ao equipamento.
+
+    A conferência de fidelidade sai na tela antes da escrita, com o mesmo trunk
+    e os mesmos perfis que a adoção vai gravar: é ela que o `--ciente` assume, e
+    assumir o que não foi mostrado é o que o diff impresso impede.
+    """
     with get_session() as session:
         encontrado = _resolve(session, device)
         # A comparação é pela forma canônica, como no `show`: o IPv6 sai do
@@ -268,6 +274,17 @@ def adotar(
                     # sustenta.
                     typer.echo("Peer não está entre os candidatos.", err=True)
                 raise typer.Exit(1)
+            # O diff sai ANTES da escrita, e com os mesmos parâmetros que a
+            # adoção usa: o `--ciente` (ou o `ciente` do arquivo) registra na
+            # auditoria que o operador assumiu estas linhas, e assumir o que o
+            # terminal não mostrou é o que esta impressão existe para impedir.
+            # O `show` imprime o mesmo bloco, mas nada obrigava a passar por
+            # ele — aqui a leitura e o aceite acontecem na mesma tela.
+            _imprime_fidelidade(conferir_fidelidade(
+                session, proposta,
+                perfis=perfis_da_revisao(revisao),
+                edge_trunk=revisao.edge_trunk,
+            ))
             circuit_id = adotar_proposta(session, proposta=proposta, revisao=revisao,
                                          actor="cli")
         except (GerenetError, SchemaValidationError) as exc:

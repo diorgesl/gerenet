@@ -60,6 +60,51 @@ const DUAS_FAMILIAS = {
   ],
 };
 
+// O enlace empilhado reserva uma S-VLAN (`vlan-type dot1q 0x88a8` no
+// equipamento), e o `kind` da reserva é o que diz isso: a coluna QinQ da lista
+// diz que há empilhamento, não qual dos dois VIDs é a S-VLAN.
+const EMPILHADO = {
+  ...DISCOVERY,
+  propostas: [{ ...PROPOSTA, vlans: [{ vid: 1001, kind: "s_vlan", family: null }] }],
+};
+
+// O dual stack com uma família fora da representação do IPAM: o peer existe no
+// equipamento (é candidato, e a revisão tem os campos dele), mas o endereço não
+// é nenhuma das duas pontas do par — `ponta_incoerente` no motor —, então não há
+// sessão a montar para ela. As duas listas que a tela recebe divergem aqui: os
+// candidatos são dois, a sessão é uma.
+const PONTA_INCOERENTE = {
+  ...DISCOVERY,
+  propostas: [
+    {
+      ...PROPOSTA,
+      candidatos: [CANDIDATO_V4, { ...CANDIDATO_V4, afi: "ipv6", remote_address: "2804:194c::9" }],
+      conflitos: [
+        {
+          tipo: "ponta_incoerente",
+          descricao: "O endereço 2804:194c::9 está na rede, mas não é uma das duas pontas do par.",
+        },
+      ],
+    },
+  ],
+};
+
+// Dois enlaces do MESMO equipamento na mesma VLAN: VRFs e portas diferentes
+// (`Eth-Trunk127` e `Eth-Trunk200`). O `vid` não distingue os dois — o nome da
+// subinterface, que é o que o equipamento tem, distingue.
+const MESMO_VID = {
+  ...DISCOVERY,
+  propostas: [
+    { ...PROPOSTA, vrf: "VPNA" },
+    {
+      ...PROPOSTA,
+      vrf: "VPNB",
+      subinterface: "Eth-Trunk200.1001",
+      circuit_code_sugerido: "ADOC-64511-1001",
+    },
+  ],
+};
+
 const SEM_COLETA = {
   device_id: 1,
   snapshot_id: null,
@@ -678,6 +723,42 @@ describe("Discovery", () => {
     );
   });
 
+  it("o que será gravado abre pelas reservas e nomeia a S-VLAN", async () => {
+    // As reservas são o que a adoção grava sem passar por campo nenhum da tela —
+    // não há o que revisar, e sem a lista o operador adota um VID que nunca leu
+    // (§6 do design). A S-VLAN é o caso que só existe aqui: a coluna QinQ diz
+    // que o enlace empilha, não qual dos VIDs é a S-VLAN.
+    mockFetch({ descoberta: EMPILHADO, diferencas: [DIFERENCA_SO_NAO_GERENCIADA] });
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+
+    const itens = within(dialog).getAllByRole("listitem");
+    expect(itens[0]).toHaveTextContent("S-VLAN 1001");
+    expect(itens[1]).toHaveTextContent("100.64.10.0/31 (ponta inferior)");
+    expect(itens[2]).toHaveTextContent("100.64.10.1 AS64512 (downstream)");
+  });
+
+  it("o corpo manda as sessões da proposta, e não uma por candidato", async () => {
+    // Quem casa a revisão com o que a leitura entregou é o `_sessao_da_proposta`
+    // do serviço, pela família: o payload tem de seguir a lista que essa guarda
+    // confere. Com a lista dos candidatos, a família sem sessão — a que o
+    // endereço não é nenhuma das duas pontas do par — viajaria como sessão, e o
+    // serviço a recusaria inteira ("a revisão não cobre").
+    mockFetch({ descoberta: PONTA_INCOERENTE, diferencas: [DIFERENCA_SO_NAO_GERENCIADA] });
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+    await preencheAcesso(dialog);
+    await userEvent.click(within(dialog).getByRole("button", { name: "Adotar" }));
+
+    await waitFor(() =>
+      expect(corpoDoPost().sessoes).toEqual([
+        { afi: "ipv4", import_profile_id: null, export_profile_id: null, password_ref: null },
+      ]),
+    );
+  });
+
   it("a organização desativada aparece com o rótulo, e não como se a tela criasse a nova", async () => {
     // A proposta aponta para uma organização desativada: sem a opção na lista, o
     // `<select>` exibiria a primeira ("Criar a nova") e o POST mandaria o id da
@@ -817,6 +898,41 @@ describe("Discovery", () => {
     );
     await waitFor(() =>
       expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeEnabled(),
+    );
+  });
+
+  it("trocar de proposta no mesmo vid não herda o formulário da anterior", async () => {
+    // A `key` do diálogo é a identidade da revisão, e o `vid` não identifica uma
+    // proposta: dois enlaces do mesmo equipamento podem estar na MESMA VLAN
+    // (outra VRF, outra porta). Com o vid na frente, o React reaproveita a
+    // instância no troco — o código, a porta digitada, o trunk e o aceite da
+    // primeira revisão chegariam inteiros sobre a segunda, que é outro enlace.
+    mockFetch({ descoberta: MESMO_VID, diferencas: [DIFERENCA_SO_NAO_GERENCIADA] });
+    renderDiscovery("/discovery?device_id=1");
+    const linhas = await screen.findAllByRole("button", { name: "Adotar" });
+    expect(linhas).toHaveLength(2);
+
+    await userEvent.click(linhas[0]);
+    const dialog = () => screen.getByRole("dialog");
+    expect(within(dialog()).getByRole("textbox", { name: /Código do circuito/ })).toHaveValue(
+      "ADOC-64512-1001",
+    );
+    await userEvent.type(
+      within(dialog()).getByRole("textbox", { name: /Porta de acesso/ }),
+      "GE0/0/9",
+    );
+
+    // A outra linha é a troca de revisão: o botão continua no DOM por baixo do
+    // diálogo, e é por ele que a página passa de uma proposta para a outra.
+    fireEvent.click(linhas[1]);
+
+    expect(within(dialog()).getByRole("textbox", { name: /Código do circuito/ })).toHaveValue(
+      "ADOC-64511-1001",
+    );
+    expect(within(dialog()).getByRole("textbox", { name: /Porta de acesso/ })).toHaveValue("");
+    // O trunk é derivado do nome da subinterface, e o nome é o da outra linha.
+    expect(within(dialog()).getByRole("textbox", { name: /Trunk do edge/ })).toHaveValue(
+      "Eth-Trunk200",
     );
   });
 

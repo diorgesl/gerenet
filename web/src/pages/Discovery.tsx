@@ -283,10 +283,14 @@ export default function Discovery() {
       </Modal>
 
       {/* A `key` por proposta é o que reabre o formulário do zero: sem ela o
-          estado da revisão anterior sobrevive à troca de linha. */}
+          estado da revisão anterior sobrevive à troca de linha. Quem identifica
+          é a subinterface (o nome que o equipamento tem): dois enlaces do mesmo
+          equipamento podem estar na MESMA VLAN — VRFs, stacks e portas
+          diferentes —, e aí o `vid` sozinho faria a segunda linha reusar o
+          formulário da primeira. */}
       {revisando && (
         <AdocaoDialog
-          key={revisando.vid ?? revisando.subinterface}
+          key={revisando.subinterface ?? revisando.vid}
           proposta={revisando}
           onFechar={() => setRevisando(null)}
           onAdotada={(circuitId) => setResultado(textoDeAdocao(circuitId))}

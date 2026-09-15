@@ -1110,6 +1110,23 @@ class AdocaoIn(BaseModel):
     sessoes: list[AdocaoSessaoIn] = Field(default_factory=list)
     ciente: bool = False
 
+    @field_validator("edge_trunk", mode="before")
+    @classmethod
+    def _apara_o_trunk(cls, v: str | None) -> str | None:
+        """Só espaços é vazio com outra roupa, e a guarda do serviço olha falsy.
+
+        Sem o aparo o valor passa, é gravado como veio, e todo render seguinte
+        monta `interface <espaços>.<vid>` — um nome de interface que o
+        equipamento não tem. O irmão `access_port` fecha o caso pela outra
+        ponta, o `pattern`; aqui a regra vem por strip porque o trunk é texto
+        livre (nome de Eth-Trunk, de Vlanif, do que o equipamento tiver). O
+        que sobra depois do aparo é o MESMO texto que a guarda mede, a
+        conferência compara e a escrita grava.
+        """
+        if not isinstance(v, str):
+            return v
+        return v.strip() or None
+
 
 class DiferencaOut(BaseModel):
     """Uma diferença da conferência, na forma do `Diferenca` do motor."""

@@ -104,6 +104,45 @@ def test_conflito_de_vlan_vira_conflict_error_nomeado(db_session) -> None:
     assert "627" in str(exc.value)
 
 
+def test_conflito_de_prefixo_vira_conflict_error_nomeado(db_session) -> None:
+    """A irmã da VLAN: a pré-checagem existe para NOMEAR o que está tomado (§4),
+    e o prefixo era o único caminho de recusa da adoção sem teste próprio — se
+    ela sumisse, quem recusava era o `flush`, com a mensagem genérica e sem
+    dizer qual prefixo é."""
+    circ = _circuito(db_session, code="CIRC-ADOC-PFX-A")
+    reservar_adocao(db_session, circ.id, vlans=[],
+                    prefixos=[{"network": "100.64.70.0/31", "ponta_local": "inferior"}],
+                    actor="cli")
+    outro = _circuito(db_session, code="CIRC-ADOC-PFX-B")
+    with pytest.raises(ConflictError) as exc:
+        reservar_adocao(db_session, outro.id, vlans=[],
+                        prefixos=[{"network": "100.64.70.0/31", "ponta_local": "inferior"}],
+                        actor="cli")
+    assert "100.64.70.0/31" in str(exc.value)
+
+
+def test_conflito_de_prefixo_acha_a_caixa_divergente(db_session) -> None:
+    """O `/126` do IPv6 sai do equipamento em maiúsculas (`194C`) e o cadastro
+    guarda a caixa que veio: dois textos que só divergem na caixa são o MESMO
+    prefixo. Comparando texto cru a pré-checagem ficava calada, e o índice do
+    banco — que é sensível à caixa — deixava a segunda reserva passar em
+    silêncio, com o mesmo prefixo reservado duas vezes."""
+    circ = _circuito(db_session, code="CIRC-ADOC-PFX-CAIXA-A")
+    reservar_adocao(
+        db_session, circ.id, vlans=[],
+        prefixos=[{"network": "2804:194C:1000::1100:0:0/126", "ponta_local": "inferior"}],
+        actor="cli",
+    )
+    outro = _circuito(db_session, code="CIRC-ADOC-PFX-CAIXA-B")
+    with pytest.raises(ConflictError) as exc:
+        reservar_adocao(
+            db_session, outro.id, vlans=[],
+            prefixos=[{"network": "2804:194c:1000::1100:0:0/126", "ponta_local": "inferior"}],
+            actor="cli",
+        )
+    assert "2804:194c:1000::1100:0:0/126" in str(exc.value)
+
+
 def test_valor_fora_de_faixa_e_validation_error(db_session) -> None:
     circ = _circuito(db_session, code="CIRC-ADOC-V")
     with pytest.raises(ValidationError):

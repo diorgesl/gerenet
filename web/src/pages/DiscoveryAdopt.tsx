@@ -204,12 +204,18 @@ export function AdocaoDialog({
         edge_trunk: trunk || null,
         organizacao_id: criarOrg ? null : orgId,
         organizacao_nova: organizacaoNova,
-        sessoes: proposta.candidatos.map((c) => ({
-          afi: c.afi,
-          import_profile_id: perfis[c.afi]?.import || null,
-          export_profile_id: perfis[c.afi]?.export || null,
+        // A lista sai das SESSÕES da proposta, e não dos candidatos: quem casa a
+        // revisão com o que a leitura entregou é o `_sessao_da_proposta` do
+        // serviço, pela família, e uma família sem sessão — o endereço que não é
+        // nenhuma das duas pontas do par, `ponta_incoerente` no motor — viajaria
+        // como uma sessão que não existe. É aí que as duas listas divergem, e o
+        // payload segue a que a guarda do serviço confere.
+        sessoes: proposta.sessoes.map((s) => ({
+          afi: s.afi,
+          import_profile_id: perfis[s.afi]?.import || null,
+          export_profile_id: perfis[s.afi]?.export || null,
           // Só o caminho: o valor do segredo nunca passa por esta tela.
-          password_ref: caminhos[c.afi]?.trim() || null,
+          password_ref: caminhos[s.afi]?.trim() || null,
         })),
         ciente,
       },
@@ -232,14 +238,23 @@ export function AdocaoDialog({
       <section>
         <h3>O que será gravado</h3>
         <ul>
-          {proposta.candidatos.map((c) => (
-            <li key={`${c.afi}-${c.remote_address}`}>
-              {c.remote_address} AS{c.asn_remote} ({c.classificacao})
+          {/* As reservas primeiro (§6 do design: VID, rede e ponta): a VLAN sai
+              com o `kind` porque o enlace empilhado reserva uma **S-VLAN**, e
+              isso não aparece em nenhum outro lugar da revisão — nem no título,
+              que diz só o número. */}
+          {proposta.vlans.map((v) => (
+            <li key={`vlan-${v.vid}`}>
+              {v.kind === "s_vlan" ? "S-VLAN" : "VLAN"} {v.vid}
             </li>
           ))}
           {proposta.prefixos.map((p) => (
             <li key={p.network}>
               {p.network} (ponta {p.ponta_local})
+            </li>
+          ))}
+          {proposta.candidatos.map((c) => (
+            <li key={`${c.afi}-${c.remote_address}`}>
+              {c.remote_address} AS{c.asn_remote} ({c.classificacao})
             </li>
           ))}
         </ul>

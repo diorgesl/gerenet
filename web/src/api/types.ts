@@ -605,7 +605,10 @@ export interface DiscoveryPropostaOut {
   circuit_code_sugerido: string | null;
   vlans: { vid: number; kind: string; family: string | null }[];
   prefixos: { network: string; ponta_local: string }[];
-  sessoes: Record<string, unknown>[];
+  // As sessões que a proposta leu do equipamento, uma por família: o resto do
+  // conteúdo é genérico (a tela não o lê), mas o `afi` é a chave com que a
+  // revisão casa os perfis e o caminho do segredo.
+  sessoes: ({ afi: string } & Record<string, unknown>)[];
   candidatos: DiscoveryCandidatoOut[];
   pendencias: DiscoveryPendenciaOut[];
   conflitos: DiscoveryConflitoOut[];

@@ -377,7 +377,13 @@ def test_adopt_recusa_revisao_de_outro_equipamento(db_session, tmp_path) -> None
 
 def test_adopt_com_ciente_na_linha_de_comando(db_session, tmp_path) -> None:
     """O `--ciente` do terminal marca o aceite sem editar o arquivo, que é o
-    caminho do runbook: o operador revisa e aceita na mesma sessão."""
+    caminho do runbook: o operador revisa e aceita na mesma sessão.
+
+    E o aceite assume LINHAS, que o terminal tem de mostrar: o diff sai antes da
+    escrita, com os mesmos perfis e trunk que a adoção grava. Sem ele a
+    auditoria registrava um "estou ciente" sobre um diff que a tela não mostrou
+    — vê-lo exigia um `show` à parte, que nada pedia.
+    """
     dev = _ambiente(db_session, tmp_path)
     json_revisao = tmp_path / "revisao.json"
     json_revisao.write_text(json.dumps({
@@ -393,11 +399,20 @@ def test_adopt_com_ciente_na_linha_de_comando(db_session, tmp_path) -> None:
     sem_flag = runner.invoke(cli_app, ["discovery", "adopt", dev.name, "100.64.10.1",
                                        "--json", str(json_revisao)])
     assert sem_flag.exit_code == 1, sem_flag.output
+    # A recusa é a mesma de antes (o aceite que falta), e agora vem precedida do
+    # que o operador tem de assumir.
+    assert "confirme o ciente" in sem_flag.output
+    assert "password [mascarado]" in sem_flag.output
 
     com_flag = runner.invoke(cli_app, ["discovery", "adopt", dev.name, "100.64.10.1",
                                        "--json", str(json_revisao), "--ciente"])
     assert com_flag.exit_code == 0, com_flag.output
     assert "ADOC-CLI-CIENTE-FLAG" in com_flag.output
+    # As linhas que o `ciente` assumiu, impressas ANTES da escrita (e antes do
+    # relato do circuito): é a leitura e o aceite na mesma tela.
+    assert "fidelidade peer:" in com_flag.output
+    assert "    falta no render: peer 100.64.10.1 password [mascarado]" in com_flag.output
+    assert com_flag.output.index("password [mascarado]") < com_flag.output.index("Circuito ")
 
 
 def test_adopt_com_arquivo_fora_de_utf8_nao_estoura(db_session, tmp_path) -> None:
