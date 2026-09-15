@@ -1212,6 +1212,7 @@ não está mais na lista, alguém adotou antes (a lista se cura sozinha).
 @router.get("/fidelidade", response_model=schemas.FidelidadeOut)
 def fidelidade(
     session: SessionDep, device_id: int, subinterface: str | None = None, vrf: str | None = None,
+    edge_trunk: str | None = None,
     import_ipv4: int | None = None, export_ipv4: int | None = None,
     import_ipv6: int | None = None, export_ipv6: int | None = None,
 ) -> schemas.FidelidadeOut:
@@ -1244,7 +1245,7 @@ def fidelidade(
                                  faltando=list(d.faltando),
                                  nao_gerenciado=list(d.nao_gerenciado),
                                  explicacao=d.explicacao, exige_ciente=d.exige_ciente)
-            for d in conferir_fidelidade(session, proposta, perfis=perfis)
+            for d in conferir_fidelidade(session, proposta, perfis=perfis, edge_trunk=edge_trunk)
         ],
     )
 
@@ -1464,13 +1465,15 @@ export const useFidelidade = (
   vrf: string | null,
   subinterface: string | null,
   perfis: Record<string, { import?: number; export?: number }> = {},
+  edgeTrunk: string | null = null,
 ) =>
   useQuery({
-    queryKey: ["fidelidade", deviceId, vrf, subinterface, perfis],
+    queryKey: ["fidelidade", deviceId, vrf, subinterface, perfis, edgeTrunk],
     queryFn: () => {
       const qs = new URLSearchParams({ device_id: String(deviceId) });
       if (vrf) qs.set("vrf", vrf);
       if (subinterface) qs.set("subinterface", subinterface);
+      if (edgeTrunk) qs.set("edge_trunk", edgeTrunk);
       for (const [afi, p] of Object.entries(perfis)) {
         if (p.import) qs.set(`import_${afi}`, String(p.import));
         if (p.export) qs.set(`export_${afi}`, String(p.export));
@@ -1568,7 +1571,7 @@ export function AdocaoDialog({
   // o corpo da política de exportação depende do produto escolhido.
   const [perfis, setPerfis] = useState<Record<string, { import?: number; export?: number }>>({});
   const { data: fidelidade } = useFidelidade(
-    proposta.device_id, proposta.vrf, proposta.subinterface, perfis,
+    proposta.device_id, proposta.vrf, proposta.subinterface, perfis, trunk || null,
   );
 
   const setPerfil = (afi: string, valores: { import?: number; export?: number }) =>
