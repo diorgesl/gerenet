@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ApiError } from "@/api/client";
 import {
   useAdotar,
@@ -12,6 +12,31 @@ import { Modal } from "@/components/Modal";
 import { help } from "@/help";
 import type { DiscoveryPropostaOut } from "@/api/types";
 
+/** O trunk do circuito, derivado do nome da subinterface.
+ *
+ * O render nomeia a subinterface como `<trunk>.<vid>` (`naming.subinterface`),
+ * e é a mesma regra do `_trunk_da_subinterface` do serviço. Derivado, o campo
+ * nasce preenchido: sem isso cada tecla do trunk entra na consulta — um render
+ * do equipamento inteiro no servidor por tecla, com o diff piscando a cada
+ * resposta. Nome que não é `<trunk>.<vid>` não tem trunk a derivar (a diferença
+ * é real: o render não reproduz esse nome) e o operador preenche à mão.
+ */
+function trunkDoNome(proposta: DiscoveryPropostaOut): string {
+  if (proposta.subinterface === null || proposta.vid === null) return "";
+  const sufixo = `.${proposta.vid}`;
+  return proposta.subinterface.endsWith(sufixo)
+    ? proposta.subinterface.slice(0, -sufixo.length)
+    : "";
+}
+
+/** A regra do `AdocaoIn.access_port` no backend, palavra por palavra: o campo
+ * vale o mesmo que o gate recusa. Sem ela, um espaço no fim ou um ponto saem no
+ * 422 do Pydantic — em inglês — numa tela em português. */
+const PORTA_VALIDA = /^[A-Za-z0-9/-]+$/;
+
+/** O trunk é digitado: a espera é o que segura a enxurrada de consultas. */
+const ESPERA_DO_TRUNK_MS = 300;
+
 /** A revisão de uma proposta (design §6). Montada pela página com `key` por
  * proposta, para o estado do formulário não vazar de uma para a outra.
  *
@@ -21,30 +46,52 @@ import type { DiscoveryPropostaOut } from "@/api/types";
 export function AdocaoDialog({
   proposta,
   onFechar,
+  onAdotada,
 }: {
   proposta: DiscoveryPropostaOut;
   onFechar: () => void;
+  /** O circuito que nasceu da proposta: o relato mora fora do diálogo, que
+   * fecha no sucesso (como o dos ignorados). */
+  onAdotada: (circuitId: number) => void;
 }) {
   const { data: devices } = useDevices();
-  const { data: organizacoes } = useOrganizations();
+  // As desativadas aparecem, com o rótulo: a proposta pode apontar para uma
+  // organização que não está mais ativa, e escondê-la deixaria o `<select>`
+  // exibindo a primeira opção ("Criar a nova") enquanto o POST manda o id da
+  // invisível — o operador leria "criar" e o circuito nasceria pendurado numa
+  // organização que a tela nunca mostrou.
+  const { data: organizacoes } = useOrganizations({ includeDisabled: true });
   const { data: policyProfiles } = usePolicyProfiles();
   const adotar = useAdotar();
   const [code, setCode] = useState(proposta.circuit_code_sugerido ?? "");
   const [acesso, setAcesso] = useState<number>(0);
   const [porta, setPorta] = useState("");
-  const [trunk, setTrunk] = useState("");
+  const [trunk, setTrunk] = useState(trunkDoNome(proposta));
+  const [trunkDaConferencia, setTrunkDaConferencia] = useState(trunkDoNome(proposta));
   const [orgId, setOrgId] = useState<number>(proposta.organizacao_id ?? 0);
   const [orgNome, setOrgNome] = useState(proposta.organizacao_sugerida ?? "");
   const [ciente, setCiente] = useState(false);
   // Os perfis vêm ANTES da conferência: ela é refeita quando eles mudam, porque
   // o corpo da política de exportação depende do produto escolhido.
   const [perfis, setPerfis] = useState<Record<string, { import?: number; export?: number }>>({});
+  // O caminho do segredo, por família. Fica FORA dos perfis de propósito: ele
+  // não entra na conferência — o ensaio não tem o valor da senha, e a SoT
+  // guarda o caminho no Vault, nunca o valor.
+  const [caminhos, setCaminhos] = useState<Record<string, string>>({});
   const { data: fidelidade, error: erroDaConferencia } = useFidelidade(
-    proposta.device_id, proposta.vrf, proposta.subinterface, perfis, trunk || null,
+    proposta.device_id, proposta.vrf, proposta.subinterface, perfis, trunkDaConferencia || null,
   );
+
+  // O trunk digitado só entra na consulta depois da última tecla.
+  useEffect(() => {
+    const timer = setTimeout(() => setTrunkDaConferencia(trunk), ESPERA_DO_TRUNK_MS);
+    return () => clearTimeout(timer);
+  }, [trunk]);
 
   const setPerfil = (afi: string, valores: { import?: number; export?: number }) =>
     setPerfis((atual) => ({ ...atual, [afi]: { ...atual[afi], ...valores } }));
+  const setCaminho = (afi: string, valor: string) =>
+    setCaminhos((atual) => ({ ...atual, [afi]: valor }));
 
   const diferencas = fidelidade?.diferencas ?? [];
   const mudam = diferencas.filter((d) => d.exige_ciente);
@@ -55,20 +102,89 @@ export function AdocaoDialog({
   // esconderia justamente quando há mudança no mesmo bloco.
   const naoGerenciadas = diferencas.flatMap((d) => d.nao_gerenciado);
   const ensaio = diferencas.filter((d) => d.contexto === "ensaio");
+  // O aceite é sobre ESTAS diferenças (§6): refeita a conferência — outro
+  // perfil de exportação, outro trunk —, o que está na tela já não é o que o
+  // operador leu, e a caixa marcada assumiria linhas que ninguém viu. Só o que
+  // gateia entra na assinatura: o que a SoT não gerencia não é assumido por
+  // ninguém, e sozinho não invalida o aceite.
+  const assinaturaDoAceite = mudam
+    .flatMap((d) => [d.contexto, ...d.sobrando, ...d.faltando])
+    .join("|");
+  useEffect(() => setCiente(false), [assinaturaDoAceite]);
+
   // O trunk é exigido quando a proposta tem subinterface: sem ele a SoT não
   // reproduz o bloco que a conferência acabou de validar, e a adoção recusa no
   // serviço com essa mesma razão — aqui é só para o botão não levar a um 422.
   const exigirTrunk = proposta.vid !== null && proposta.subinterface !== null;
-  const faltaPreencher =
-    code === "" || acesso === 0 || porta === "" || (exigirTrunk && trunk === "");
+  const criarOrg = orgId === 0;
+  // A proposta sem ASN remoto chega com conflito e o Adotar da lista fica
+  // barrado: aqui é defesa em profundidade, para o corpo não mandar um ASN
+  // sentinela que o serviço recusaria.
+  const asnRemoto = proposta.candidatos[0]?.asn_remote ?? null;
+  const portaInvalida =
+    porta !== "" && (porta.length > 64 || !PORTA_VALIDA.test(porta));
+  // O que o formulário exige antes do aceite: os campos que a configuração do
+  // edge não tem e que, vazios ou fora da forma do schema, voltariam como o 422
+  // do Pydantic em vez de uma frase desta tela.
+  const revisaoIncompleta =
+    code === "" ||
+    acesso === 0 ||
+    porta === "" ||
+    portaInvalida ||
+    (exigirTrunk && trunk === "") ||
+    (criarOrg && (orgNome.trim() === "" || asnRemoto === null));
   // Sem a conferência não há aceite que valha (§6): o ensaio recusado devolve a
   // comparação que não pôde ser feita, e é o mesmo caso da consulta que não
   // voltou. O servidor recusa os dois de qualquer forma; aqui é o que impede o
-  // operador de aceitar sobre uma comparação que nenhum dos lados viu, e o
+  // operador de aceitar sobre uma comparação que nenhum dos dois lados viu, e o
   // ciente não libera nenhum deles — não há diferença que valha assumir.
   const semConferencia = fidelidade === undefined || ensaio.length > 0;
   const podeAdotar =
-    !faltaPreencher && !semConferencia && (mudam.length === 0 || ciente) && !adotar.isPending;
+    !revisaoIncompleta && !semConferencia && (mudam.length === 0 || ciente) && !adotar.isPending;
+
+  const adotarProposta = () => {
+    let organizacaoNova: { name: string; kind: string; asn: number } | null = null;
+    if (criarOrg) {
+      // Inalcançável pela tela: a proposta sem ASN remoto é conflito e nem abre
+      // esta revisão. O early return é o gate explícito do ASN que o corpo
+      // precisa — sem ele o valor só existiria como 0, e o serviço o recusaria
+      // por conta própria ("A proposta não tem ASN remoto").
+      if (asnRemoto === null) return;
+      // O nome vai aparado: é ele que o gate mede quando diz que está
+      // preenchido, e um espaço invisível faz uma organização repetida passar
+      // por nova.
+      organizacaoNova = { name: orgNome.trim(), kind: "downstream", asn: asnRemoto };
+    }
+    adotar.mutate(
+      {
+        device_id: proposta.device_id, vrf: proposta.vrf,
+        subinterface: proposta.subinterface, circuit_code: code,
+        access_device_id: acesso, access_port: porta,
+        edge_trunk: trunk || null,
+        organizacao_id: criarOrg ? null : orgId,
+        organizacao_nova: organizacaoNova,
+        sessoes: proposta.candidatos.map((c) => ({
+          afi: c.afi,
+          import_profile_id: perfis[c.afi]?.import || null,
+          export_profile_id: perfis[c.afi]?.export || null,
+          // Só o caminho: o valor do segredo nunca passa por esta tela.
+          password_ref: caminhos[c.afi]?.trim() || null,
+        })),
+        ciente,
+      },
+      {
+        // A lista já refeita é o que mostra o desfecho: a proposta adotada sai
+        // dela, como a linha do peer ignorado sai da de ignorados. Sem fechar, o
+        // diálogo ficaria aberto sobre uma proposta que já não existe — e o
+        // segundo clique responderia 404. O relato do circuito que nasceu fica
+        // fora dele, com o dos ignorados.
+        onSuccess: (adocao) => {
+          onAdotada(adocao.circuit_id);
+          onFechar();
+        },
+      },
+    );
+  };
 
   return (
     <Modal aberto titulo={`Adotar VLAN ${proposta.vid ?? "—"}`} onFechar={onFechar}>
@@ -99,7 +215,10 @@ export function AdocaoDialog({
           ))}
         </select>
       </FormField>
-      <FormField label="Porta de acesso *">
+      <FormField
+        label="Porta de acesso *"
+        erro={portaInvalida ? "A porta aceita só letras, números, / e - (até 64 caracteres)." : undefined}
+      >
         <input value={porta} onChange={(e) => setPorta(e.target.value)} />
       </FormField>
       <FormField label={exigirTrunk ? "Trunk do edge *" : "Trunk do edge"} help={help("adocao.trunk")}>
@@ -109,12 +228,17 @@ export function AdocaoDialog({
         <select value={orgId} onChange={(e) => setOrgId(Number(e.target.value))}>
           <option value={0}>Criar a nova: {orgNome || "(informe o nome)"}</option>
           {(organizacoes ?? []).map((o) => (
-            <option key={o.id} value={o.id}>{o.name} (AS{o.asn ?? "—"})</option>
+            <option key={o.id} value={o.id}>
+              {o.name} (AS{o.asn ?? "—"}){o.admin_status ? "" : " (desativada)"}
+            </option>
           ))}
         </select>
       </FormField>
-      {orgId === 0 && (
-        <FormField label="Nome da organização nova">
+      {criarOrg && (
+        <FormField
+          label="Nome da organização nova *"
+          erro={orgNome.trim() === "" ? "Informe o nome da organização nova." : undefined}
+        >
           <input value={orgNome} onChange={(e) => setOrgNome(e.target.value)} />
         </FormField>
       )}
@@ -142,6 +266,12 @@ export function AdocaoDialog({
                 <option key={p.id} value={p.id}>{p.label}</option>
               ))}
             </select>
+          </FormField>
+          <FormField label={`Segredo no Vault (${c.afi})`} help={help("adocao.segredo")}>
+            <input
+              value={caminhos[c.afi] ?? ""}
+              onChange={(e) => setCaminho(c.afi, e.target.value)}
+            />
           </FormField>
         </div>
       ))}
@@ -199,36 +329,7 @@ export function AdocaoDialog({
       )}
       <div className="dialog-actions">
         <button type="button" onClick={onFechar}>Cancelar</button>
-        <button
-          type="button"
-          disabled={!podeAdotar}
-          onClick={() =>
-            adotar.mutate(
-              {
-                device_id: proposta.device_id, vrf: proposta.vrf,
-                subinterface: proposta.subinterface, circuit_code: code,
-                access_device_id: acesso, access_port: porta,
-                edge_trunk: trunk || null,
-                organizacao_id: orgId > 0 ? orgId : null,
-                organizacao_nova: orgId > 0 ? null : {
-                  name: orgNome, kind: "downstream",
-                  asn: proposta.candidatos[0]?.asn_remote ?? 0,
-                },
-                sessoes: proposta.candidatos.map((c) => ({
-                  afi: c.afi,
-                  import_profile_id: perfis[c.afi]?.import || null,
-                  export_profile_id: perfis[c.afi]?.export || null,
-                })),
-                ciente,
-              },
-              // A lista já refeita é o que mostra o desfecho: a proposta adotada
-              // sai dela, como a linha do peer ignorado sai da de ignorados. Sem
-              // fechar, o diálogo ficaria aberto sobre uma proposta que já não
-              // existe — e o segundo clique responderia 404.
-              { onSuccess: () => onFechar() },
-            )
-          }
-        >
+        <button type="button" disabled={!podeAdotar} onClick={adotarProposta}>
           Adotar
         </button>
       </div>

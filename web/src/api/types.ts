@@ -661,6 +661,12 @@ export interface DiscoveryAdocaoIn {
   edge_trunk: string | null;
   organizacao_id: number | null;
   organizacao_nova: { name: string; kind?: string; asn: number } | null;
-  sessoes: { afi: string; import_profile_id: number | null; export_profile_id: number | null }[];
+  sessoes: {
+    afi: string;
+    import_profile_id: number | null;
+    export_profile_id: number | null;
+    /** Caminho do segredo no Vault — nunca o valor (§19). */
+    password_ref: string | null;
+  }[];
   ciente: boolean;
 }

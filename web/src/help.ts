@@ -149,6 +149,7 @@ export const HELP = {
   "adocao.organizacao": "A organização é casada pelo ASN do par; criar uma nova exige o nome.",
   "adocao.trunk": "O trunk do edge onde as subinterfaces do circuito moram. Sem ele a SoT não reproduz o bloco da subinterface do equipamento.",
   "adocao.ciente": "As diferenças listadas fariam o render mudar o equipamento. Marcar aqui registra que você assumiu, e a decisão fica na auditoria.",
+  "adocao.segredo": "Caminho do segredo do peer no Vault (ex.: gerenet/bgp/100.64.10.1) — só o caminho: o valor nunca passa por esta tela. Em branco, a sessão nasce sem a senha conhecida pela SoT.",
 } as const;
 
 export type HelpKey = keyof typeof HELP;

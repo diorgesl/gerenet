@@ -41,6 +41,13 @@ function textoDeIgnorados(quantidade: number): string {
     : `${quantidade} peers foram para a lista de ignorados.`;
 }
 
+/** O circuito que a adoção gravou. O diálogo fecha e a linha sai da lista: sem
+ * o relato, o operador que acabou de escrever na SoT não vê confirmação nenhuma
+ * — e ele gravou um circuito, não uma linha de lista. */
+function textoDeAdocao(circuitId: number): string {
+  return `Proposta adotada: o circuito ${circuitId} foi gravado na SoT.`;
+}
+
 export default function Discovery() {
   const [params, setParams] = useSearchParams();
   const { data: devices } = useDevices();
@@ -174,7 +181,12 @@ export default function Discovery() {
                     ? "A proposta não é adotável: veja os conflitos em Detalhes."
                     : undefined
                 }
-                onClick={() => setRevisando(p)}
+                onClick={() => {
+                  setRevisando(p);
+                  // Como no ignorar: o relato é do que acabou de ser gravado, e
+                  // abrir outra revisão o deixaria contando outra história.
+                  setResultado(null);
+                }}
               >
                 Adotar
               </button>
@@ -277,6 +289,7 @@ export default function Discovery() {
           key={revisando.vid ?? revisando.subinterface}
           proposta={revisando}
           onFechar={() => setRevisando(null)}
+          onAdotada={(circuitId) => setResultado(textoDeAdocao(circuitId))}
         />
       )}
 
