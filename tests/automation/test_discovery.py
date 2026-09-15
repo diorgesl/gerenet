@@ -1249,6 +1249,31 @@ def test_mtu_da_subinterface_tambem_sai_do_que_gateia(db_session, tmp_path) -> N
     assert sub.exige_ciente is False
 
 
+def test_o_trunk_revisado_divergente_aparece_no_nome_da_interface(db_session, tmp_path) -> None:
+    """O trunk da revisão é o que o render usa para NOMEAR a subinterface.
+
+    A comparação olhava só o conteúdo do bloco — o cabeçalho `interface <nome>`
+    saía dos dois lados como abre-contexto —, então um trunk digitado errado
+    comparava igual e a conferência saía fiel: a adoção gravava um `edge_trunk`
+    que o equipamento não tem, o render passava a intencionar uma subinterface
+    num trunk inexistente, e a conferência que existe para pegar isso dizia que
+    estava tudo certo. O nome entra na conta: o que o render emitiria contra o
+    nome real do bloco da configuração.
+    """
+    dev = _ambiente(db_session)
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+
+    sub = next(
+        d for d in conferir_fidelidade(db_session, alfa, edge_trunk="Eth-Trunk9")
+        if d.contexto == "subinterface"
+    )
+
+    assert "interface Eth-Trunk9.1001" in sub.sobrando
+    assert "interface Eth-Trunk127.1001" in sub.faltando
+    assert sub.exige_ciente is True
+
+
 def _com_prefixos_autorizados(db_session):
     """Cliente ALFA com os prefixos das duas famílias autorizados.
 

@@ -820,9 +820,10 @@ def _equivalencia_vrp(texto: str) -> str:
 def _contexto_interface(texto: str, nome: str) -> set[str]:
     """Linhas da configuração dentro do bloco `interface <nome>`.
 
-    O cabeçalho fica de fora: ele abre o contexto, não é linha dele — e o lado
-    do render o descarta pelo mesmo motivo (`conferir_fidelidade`), para a
-    comparação não começar com o cabeçalho presente de um lado só.
+    O cabeçalho fica de fora daqui: ele abre o contexto, não é linha dele. Quem
+    compara o nome é a conferência, e por fora — ela põe `interface <nome>` nos
+    dois lados (`conferir_fidelidade`), porque o `<trunk>.<vid>` do render
+    contra o nome do bloco lido é a única linha que denuncia um trunk errado.
 
     Comentário (`#`, com ou sem texto) também fica de fora, e antes da regra de
     contexto: o `_normaliza_linhas` já descarta os dois do lado do render, e um
@@ -1150,7 +1151,9 @@ def conferir_fidelidade(
     `edge_trunk` é o trunk que a revisão informou, e entra pelo mesmo motivo: o
     ensaio tem de ter a forma do que a adoção VAI gravar. Com o trunk vazio na
     revisão e derivado aqui, a comparação sairia fiel por um circuito que a
-    escrita cria sem bloco de subinterface.
+    escrita cria sem bloco de subinterface. É ele que o render usa para nomear a
+    subinterface, e o nome entra na comparação contra o do bloco lido: um trunk
+    divergente vira diferença nos dois lados, e exige `ciente`.
 
     O ensaio roda o render de verdade, e não uma reimplementação da montagem
     dos comandos: é o mesmo código que a adoção usaria, então a conferência não
@@ -1244,8 +1247,19 @@ def conferir_fidelidade(
             ))
         if proposta.subinterface is not None:
             esperado = _normaliza_linhas(comandos_sub)
-            esperado.discard(f"interface {proposta.subinterface}")
             encontrado = _contexto_interface(texto, proposta.subinterface)
+            # O NOME da interface entra na conta, dos dois lados: o `<trunk>.<vid>`
+            # que o render monta (com o trunk da revisão, que a adoção grava) e o
+            # nome do bloco lido da configuração. O `discard` que estava aqui só
+            # dispensava o cabeçalho quando ele COINCIDIA com o nome lido, então a
+            # divergência de trunk aparecia de um lado só — a linha do render
+            # sobrava, e o nome que o equipamento tem, que é o que o operador
+            # precisa ver para corrigir o campo, não aparecia em lugar nenhum. Com
+            # os dois nomes, um trunk digitado errado na revisão vira diferença nos
+            # dois lados e exige `ciente`: sem ele a adoção gravava um `edge_trunk`
+            # que o equipamento não tem, e o render passava a intencionar uma
+            # subinterface num trunk inexistente.
+            encontrado.add(f"interface {proposta.subinterface}")
             gerenciadas, nao_gerenciadas = _particiona_subinterface(
                 tuple(sorted(encontrado - esperado))
             )

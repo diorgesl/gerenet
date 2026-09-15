@@ -103,7 +103,7 @@ gerencia (veja abaixo) também aparece sem bloquear: ele é leitura, não gate.
 | Onde | O que faz |
 |---|---|
 | Página **Migrar** | Lista as propostas (VLAN, subinterface, stack, QinQ, peers, código sugerido, veredito), abre o detalhe com reservas, pendências e conflitos, mantém a lista de ignorados do equipamento e adota pela revisão. |
-| Revisão **Adotar** (na linha da lista) | Os campos que só o operador sabe e o diff da conferência, com o aceite. É a única superfície onde o `ciente` aparece. |
+| Revisão **Adotar** (na linha da lista) | Os campos que só o operador sabe e o diff da conferência, com o aceite. É a única superfície **da página** onde o `ciente` aparece. |
 | `gerenet discovery list <equipamento>` | A mesma lista no terminal, mais os peers **internos (iBGP)**, que saem numa seção separada com a sugestão de ignorar — a página não os mostra. |
 | `gerenet discovery show <equipamento> <peer>` | Uma proposta, com a conferência de fidelidade. |
 | `gerenet discovery adopt <equipamento> <peer> --json <arquivo> [--ciente]` | Adota a proposta a partir de um arquivo de revisão (`AdocaoIn`), sem passar pela tela; o `--ciente` é o mesmo aceite da caixa. |
@@ -133,11 +133,11 @@ ele não aceitar.
 | Caminho do segredo no Vault | Por família, quando o peer tem senha — o valor do segredo nunca passa pela tela. |
 
 O que a revisão mostra e não se edita: as reservas que serão gravadas (VID, rede
-e ponta), os endereços e ASNs das sessões, a classificação do peer com o motivo,
-e as pendências e conflitos que a leitura levantou. Cada pendência aponta o campo
-que a resolve, e o aceite fica **desabilitado** enquanto um obrigatório estiver
-vazio, fora da forma ou acima do tamanho do schema — com o motivo escrito ao
-lado do campo.
+e ponta) e os endereços e ASNs das sessões. A classificação do peer **com o
+motivo**, as pendências e os conflitos que a leitura levantou são do **Detalhes**
+da linha — outra janela, não a revisão. O aceite fica **desabilitado** enquanto um
+obrigatório estiver vazio, fora da forma ou acima do tamanho do schema — com o
+motivo escrito ao lado do campo.
 
 O aceite vale para o diff que está na tela: mexer num campo que entra na
 comparação (o perfil, o trunk) refaz a conferência e desmarca a caixa sozinho.

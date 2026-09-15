@@ -253,12 +253,15 @@ lugares: na SoT (a adoção) e, se o rollback for executado, no equipamento. Por
 feita num equipamento e num enlace **não críticos** — um circuito de teste/homologação, ou o
 enlace menos sensível da borda —, nunca num cliente em produção.
 
-**Prepare o rollback antes de adotar.** É uma CR de remoção do circuito que vai nascer: como
-o enlace existe no equipamento (foi isso que a descoberta acabou de ler), tirar o circuito da
-SoT não desfaz nada lá — quem desfaz é a remoção, com o `undo peer` e o `undo interface` que
-o plano dela mostra. Aprove a CR **antes** da adoção (a regra de sempre: rollback aprovado
-antes da mudança) e deixe-a parada. Só a execute se a decisão for desfazer: ela é a única
-etapa deste runbook que manda comando ao equipamento.
+**O rollback, logo depois de adotar.** O enlace existe no equipamento (foi isso que a
+descoberta acabou de ler), então tirar o circuito da SoT não desfaz nada lá — quem desfaz é a
+CR de remoção, com o `undo peer` e o `undo interface` que o plano dela mostra. Como ela é do
+circuito que a adoção **acabou de criar**, a ordem é: **adotar → abrir a CR de remoção do
+circuito adotado → aprová-la → deixá-la parada**. Antes da adoção ela não tem como existir
+(sem circuito na SoT não há o que remover, nem plano a aprovar); o que a regra de sempre pede
+— rollback aprovado antes da mudança — vale aqui como "antes de executar qualquer coisa", e
+só a execute se a decisão for desfazer: ela é a única etapa deste runbook que manda comando ao
+equipamento.
 
 **Adote pela revisão.** Na página **Migrar**, abra a proposta do enlace e confira antes de
 aceitar:
@@ -284,9 +287,12 @@ Duas notas desta etapa:
 **O nome da subinterface.** O projeto assume que ele **termina no VID** (`Eth-Trunk127.1001`)
 — é assim que o render o monta (`<trunk>.<vid>`), e é desse sufixo que a revisão deriva o
 trunk. Num nome fora da convenção o campo do trunk nasce **em branco**, para ser digitado à
-mão, e o diff mostra a linha `interface <trunk>.<vid>` que o render emitiria e o equipamento
-não tem: diferença que exige `ciente`. Não é erro da leitura — é o que a adoção assumiria —,
-e vale registrar quantos enlaces deste equipamento estão fora da convenção.
+mão, e o que a conferência acusa é o **nome da interface** divergir: o `<trunk>.<vid>` que o
+render monta com o trunk informado de um lado, e o nome do bloco lido do equipamento do outro.
+É diferença que exige `ciente`, e é a conta que denuncia um trunk informado errado — o corpo
+do bloco é o mesmo, e sem o nome a conferência sairia fiel. Não é erro da leitura — é o que a
+adoção assumiria —, e vale registrar quantos enlaces deste equipamento estão fora da
+convenção.
 
 **O VID.** Os IDs de VLAN da SoT vão de **2 a 4094**. Um número maior que apareça na
 configuração (o TPID em decimal — `34984`, assunção 14 do checklist —, ou um ID de serviço
@@ -357,7 +363,8 @@ deste checklist precisa de ajuste.
       ASN, políticas) — divergências registradas com a linha da captura
 - [ ] Conferência de fidelidade rodada em pelo menos uma proposta (`discovery show`)
 - [ ] Um enlace **adotado** num equipamento não crítico, com o rollback (a CR de remoção do
-      circuito) aprovado antes da adoção
+      circuito adotado) aberto e aprovado logo depois da adoção, e executado só se a decisão
+      for desfazer
 - [ ] O circuito adotado confere com a configuração lida: VLAN e par p2p nos valores reais
       do equipamento, sessão com o ASN remoto lido, e a proposta fora da lista depois
 - [ ] Auditoria do `discovery.adopt` com o snapshot de origem, o `ciente` e o diff inteiro

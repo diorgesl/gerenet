@@ -145,8 +145,8 @@ reutiliza esses objetos) e um job órfão consumido depois pelo worker é no-op
   proposta do seed está lá com o "Adotar" habilitado, abre a revisão, confere
   o código sugerido, o trunk derivado e o nome da organização nova, preenche
   o acesso, marca o `ciente` se a página pedir, adota e confere o relato, a
-  proposta fora da lista e o circuito na lista de Circuitos. A fixture não
-  pede `ciente` (a única diferença é o `description` da subinterface, que é
+  proposta fora da lista e o circuito na lista de Circuitos. A fixture de hoje
+  não pede `ciente` (a única diferença é o `description` da subinterface, que é
   do grupo que a SoT não gerencia) — a marcação é defensiva, porque a caixa
   só aparece quando há diferença que mudaria o equipamento.
 

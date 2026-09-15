@@ -422,7 +422,11 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   `origem_snapshot_id`), e não o que o alocador first-fit daria. A conferência de
   fidelidade passou a comparar também o **corpo das definições** que a sessão do
   ensaio referencia (contexto `definicao`), recebe os perfis e o trunk da
-  revisão, e `Diferenca` ganhou `explicacao` (o `ensaio` parou de sobrecarregar
+  revisão — e o **nome da interface** entra na conta, dos dois lados (o
+  `<trunk>.<vid>` que o render monta com o trunk informado contra o nome do bloco
+  lido: o cabeçalho era o abre-contexto da comparação, e sem ele um trunk errado
+  comparava igual, com o corpo do bloco sendo o mesmo) —, e `Diferenca` ganhou
+  `explicacao` (o `ensaio` parou de sobrecarregar
   `faltando`); o que a SoT **não gerencia** (`description` e MTU da subinterface)
   aparece num grupo próprio e **não gateia** — só o grupo que mudaria o
   equipamento exige o `ciente`, e o aceite caduca quando a conferência é
