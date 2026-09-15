@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from gerenet.automation.discovery import (
     Candidato,
+    Diferenca,
     conferir_fidelidade,
     listar_propostas,
 )
@@ -119,6 +120,31 @@ def _idade_da_coleta(segundos: float) -> str:
     return f"{segundos / 86400:.1f} d"
 
 
+def _imprime_fidelidade(diferencas: list[Diferenca]) -> None:
+    """O diff da conferência, com o que a SoT não gerencia num bloco próprio.
+
+    O `ensaio` guarda o motivo fora de `sobrando`/`faltando` (§6 do design), e o
+    `nao_gerenciado` é informação, não diferença: cada um tem a sua linha aqui.
+    Contexto que ficou sem nada não imprime cabeçalho — um cabeçalho sozinho é
+    onde o operador não lê por que a adoção está barrada.
+    """
+    for diferenca in diferencas:
+        if not (diferenca.sobrando or diferenca.faltando
+                or diferenca.nao_gerenciado or diferenca.explicacao):
+            continue
+        typer.echo(f"  fidelidade {diferenca.contexto}:")
+        if diferenca.explicacao:
+            typer.echo(f"    {diferenca.explicacao}")
+        for linha in diferenca.sobrando:
+            typer.echo(f"    sobra no render: {linha}")
+        for linha in diferenca.faltando:
+            typer.echo(f"    falta no render: {linha}")
+        if diferenca.nao_gerenciado:
+            typer.echo("    o que a SoT não gerencia (não exige ciente):")
+            for linha in diferenca.nao_gerenciado:
+                typer.echo(f"      {linha}")
+
+
 @app.command("list")
 def listar(device: str = typer.Argument(..., help="ID ou nome do equipamento.")) -> None:
     """Mostra as propostas de adoção do equipamento."""
@@ -189,12 +215,7 @@ def mostrar(
                 typer.echo("Peer não está entre os candidatos.", err=True)
             raise typer.Exit(1)
         _imprime_propostas([proposta])
-        for diferenca in conferir_fidelidade(session, proposta):
-            typer.echo(f"  fidelidade {diferenca.contexto}:")
-            for linha in diferenca.sobrando:
-                typer.echo(f"    sobra no render: {linha}")
-            for linha in diferenca.faltando:
-                typer.echo(f"    falta no render: {linha}")
+        _imprime_fidelidade(conferir_fidelidade(session, proposta))
 
 
 @app.command("ignore")

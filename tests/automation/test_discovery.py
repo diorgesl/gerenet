@@ -810,7 +810,7 @@ def test_sessao_do_mesmo_equipamento_e_conflito(db_session, tmp_path) -> None:
     assert "ativa" not in conflito.descricao
 
 
-from gerenet.automation.discovery import conferir_fidelidade
+from gerenet.automation.discovery import Proposta, conferir_fidelidade
 
 
 def test_fidelidade_aponta_a_politica_que_o_render_nao_reproduz(db_session, tmp_path) -> None:
@@ -931,6 +931,7 @@ def test_fidelidade_de_proposta_com_conflito_explica_em_vez_de_estourar(
     # ensaio), e não uma causa que ela não pode conhecer: qualquer colisão de
     # unicidade do ensaio cai na mesma captura, e o `prefixo_tomado` na mesma
     # grafia é só a mais provável.
+    assert diferencas[0].explicacao is not None
     assert "restrição de unicidade" in diferencas[0].explicacao
     # O ensaio que morreu no meio (organização e circuito já tinham ido para a
     # transação) também é desfeito: sobra só o circuito tomado, com a VLAN dele.
@@ -1184,3 +1185,65 @@ def test_o_ensaio_nao_usa_faltando_para_explicar(db_session, tmp_path) -> None:
     assert diferenca.explicacao is not None
     assert diferenca.sobrando == ()
     assert diferenca.faltando == ()
+
+
+def test_conferencia_de_proposta_sem_site_explica(db_session, tmp_path) -> None:
+    """Sem site o circuito do ensaio nem nasce (a coluna é NOT NULL) e não há
+    render a comparar. A conferência diz isso — sem o `explicacao`, o `return []`
+    que a parte 1 devolvia leria como "está tudo fiel"."""
+    dev = create_device(db_session, DeviceCreate(name="ne8000-sem-site-fid",
+                                                 management_address="10.0.0.9", asn=65001),
+                        actor="cli")
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+
+    (diferenca,) = conferir_fidelidade(db_session, alfa)
+
+    assert diferenca.contexto == "ensaio"
+    assert diferenca.sobrando == ()
+    assert diferenca.faltando == ()
+    assert diferenca.explicacao is not None
+    assert "site" in diferenca.explicacao
+
+
+def test_conferencia_de_proposta_sem_candidato_explica(db_session) -> None:
+    """Proposta sem candidato não tem endereço de peer nem coleta a ler. Hoje
+    `listar_propostas` sempre põe um candidato em cada proposta, então o caminho
+    só é alcançável por quem monta a `Proposta` à mão — e é o que a adoção (que
+    confere antes de checar o candidato) faria."""
+    proposta = Proposta(device_id=1, vrf=None, subinterface=None, vid=None,
+                        stack="ipv4", vlan_mode="unica", p2p_v4_len=None)
+
+    (diferenca,) = conferir_fidelidade(db_session, proposta)
+
+    assert diferenca.contexto == "ensaio"
+    assert diferenca.sobrando == ()
+    assert diferenca.faltando == ()
+    assert diferenca.explicacao is not None
+    assert "candidato" in diferenca.explicacao
+
+
+def test_mtu_da_subinterface_tambem_sai_do_que_gateia(db_session, tmp_path) -> None:
+    """A fixture tem `description` e não tem `mtu`: sem este caso, o braço do
+    `"mtu "` da tupla não é exercitado por teste nenhum e uma entrada apagada
+    passaria na suíte inteira. Numa borda real o `mtu` está em toda subinterface,
+    e no `faltando` ele faria toda proposta voltar a exigir ciente."""
+    dev = _ambiente(db_session)
+    _com_texto(db_session, dev, tmp_path,
+               "interface Eth-Trunk127.6001\n"
+               " vlan-type dot1q 6001\n"
+               " ip address 100.64.10.0 255.255.255.254\n"
+               " mtu 9000\n"
+               "#\n"
+               "bgp 65001\n"
+               " peer 100.64.10.1 as-number 64512\n"
+               " ipv4-family unicast\n"
+               "  peer 100.64.10.1 enable\n")
+    (prop,) = listar_propostas(db_session, dev.id).propostas
+
+    sub = next(d for d in conferir_fidelidade(db_session, prop) if d.contexto == "subinterface")
+
+    assert sub.nao_gerenciado == ("mtu 9000",)
+    assert sub.faltando == ()
+    assert sub.sobrando == ()
+    assert sub.exige_ciente is False

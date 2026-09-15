@@ -46,6 +46,25 @@ def test_show_detalha_pendencias_e_conflitos(db_session, tmp_path) -> None:
     assert r.exit_code == 0, r.output
     assert "organizacao_ausente" in r.output
     assert "senha_nao_legivel" in r.output
+    # A descrição da subinterface saiu do `faltando` para o `nao_gerenciado`:
+    # ela continua na tela, no bloco que diz que não exige ciente.
+    assert "o que a SoT não gerencia (não exige ciente):" in r.output
+    assert "      description CLIENTE-ALFA" in r.output
+
+
+def test_show_imprime_a_explicacao_do_ensaio(db_session, tmp_path) -> None:
+    """O que o operador vem buscar no `show` é por que a adoção está barrada: a
+    explicação do `ensaio` mora fora de `sobrando`/`faltando` (§6 do design) e
+    tem de sair na tela — sem ela sobrava o cabeçalho do contexto e nada mais.
+
+    A asserção é pela frase que só a explicação tem: o conflito
+    `vrf_nao_renderizavel` da proposta cita a mesma VRF e a mesma instância, e
+    uma asserção por "VPNA" passaria sem o bloco da fidelidade."""
+    dev = _ambiente(db_session, tmp_path)
+    r = runner.invoke(cli_app, ["discovery", "show", dev.name, "10.99.0.1"])
+    assert r.exit_code == 0, r.output
+    assert "fidelidade ensaio:" in r.output
+    assert "a comparação não é confiável para uma sessão em VRF" in r.output
 
 
 def test_ignore_e_unignore(db_session, tmp_path) -> None:
