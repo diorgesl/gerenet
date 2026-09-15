@@ -375,8 +375,8 @@ def test_leitura_parcial_ainda_propoe(db_session, tmp_path) -> None:
     dev = _ambiente(db_session)
     arquivo = tmp_path / "current.txt"
     arquivo.write_text(
-        "interface Eth-Trunk127.6001\n"
-        " vlan-type dot1q 6001\n"
+        "interface Eth-Trunk127.2601\n"
+        " vlan-type dot1q 2601\n"
         " ip address 100.64.10.0 255.255.255.254\n"
         "#\n"
         "bgp 65001\n"
@@ -412,12 +412,12 @@ def test_mesmo_asn_em_enlaces_diferentes_vira_pendencia(db_session, tmp_path) ->
     dev = _ambiente(db_session)
     arquivo = tmp_path / "current.txt"
     arquivo.write_text(
-        "interface Eth-Trunk127.5001\n"
-        " vlan-type dot1q 5001\n"
+        "interface Eth-Trunk127.2501\n"
+        " vlan-type dot1q 2501\n"
         " ip address 100.64.10.0 255.255.255.254\n"
         "#\n"
-        "interface Eth-Trunk127.5002\n"
-        " vlan-type dot1q 5002\n"
+        "interface Eth-Trunk127.2502\n"
+        " vlan-type dot1q 2502\n"
         " ipv6 address 2804:194C:1000::1100:73:1 126\n"
         "#\n"
         "bgp 65001\n"
@@ -429,8 +429,8 @@ def test_mesmo_asn_em_enlaces_diferentes_vira_pendencia(db_session, tmp_path) ->
                                         raw_files={"config_backup": [str(arquivo)]}))
     db_session.commit()
     por_vid = _propostas(db_session, dev)
-    assert "mesmo_asn_em_outro_enlace" in {p.tipo for p in por_vid[5001].pendencias}
-    assert "mesmo_asn_em_outro_enlace" in {p.tipo for p in por_vid[5002].pendencias}
+    assert "mesmo_asn_em_outro_enlace" in {p.tipo for p in por_vid[2501].pendencias}
+    assert "mesmo_asn_em_outro_enlace" in {p.tipo for p in por_vid[2502].pendencias}
 
 
 def _com_config_e_interfaces(db_session, dev, tmp_path: Path, *, vpn: str | None = None):
@@ -614,8 +614,8 @@ def test_equipamento_sem_site_e_conflito(db_session, tmp_path) -> None:
 
 
 _SEM_ASN = (
-    "interface Eth-Trunk127.8001\n"
-    " vlan-type dot1q 8001\n"
+    "interface Eth-Trunk127.2801\n"
+    " vlan-type dot1q 2801\n"
     " ip address 100.64.10.0 255.255.255.254\n"
     "#\n"
     "bgp 65001\n"
@@ -626,12 +626,12 @@ _SEM_ASN = (
 
 def test_peer_sem_as_number_nao_sugere_codigo(db_session, tmp_path) -> None:
     """Sem `as-number` lido não há ASN para o código — e o `codigo_em_uso` só
-    confere o código que existe: `ADOC-None-8001` seria um código mostrado ao
+    confere o código que existe: `ADOC-None-2801` seria um código mostrado ao
     operador e nunca conferido contra a SoT."""
     dev = _ambiente(db_session)
     _com_texto(db_session, dev, tmp_path, _SEM_ASN)
     (prop,) = listar_propostas(db_session, dev.id).propostas
-    assert prop.vid == 8001  # o enlace tem VLAN: o `None` vem do ASN que falta
+    assert prop.vid == 2801  # o enlace tem VLAN: o `None` vem do ASN que falta
     assert prop.circuit_code_sugerido is None
 
 
@@ -719,21 +719,21 @@ def test_duas_subinterfaces_com_o_mesmo_vid_sao_dois_enlaces(db_session, tmp_pat
 
 
 def test_enlace_qinq_propoe_s_vlan(db_session, tmp_path) -> None:
-    """`vlan-type dot1q 0x88a8 vid 7001` é empilhado: a reserva nasce como
+    """`vlan-type dot1q 0x88a8 vid 2701` é empilhado: a reserva nasce como
     S-VLAN (o IPAM criaria `kind='s_vlan'`) e o render só emite a linha
     empilhada com `Circuit.qinq` ligado. `vlan_mode` segue "unica": a mesma
     VLAN carrega as duas famílias — isso é outro eixo."""
     dev = _ambiente(db_session)
     _com_texto(db_session, dev, tmp_path,
-               "interface Eth-Trunk127.7001\n"
-               " vlan-type dot1q 0x88a8 vid 7001\n"
+               "interface Eth-Trunk127.2701\n"
+               " vlan-type dot1q 0x88a8 vid 2701\n"
                " ip address 100.64.10.0 255.255.255.254\n"
                "#\n"
                "bgp 65001\n"
                " peer 100.64.10.1 as-number 64512\n")
     (prop,) = listar_propostas(db_session, dev.id).propostas
     assert prop.qinq is True
-    assert prop.vlans == [{"vid": 7001, "kind": "s_vlan", "family": None}]
+    assert prop.vlans == [{"vid": 2701, "kind": "s_vlan", "family": None}]
     assert prop.vlan_mode == "unica"
 
 
@@ -833,8 +833,8 @@ def test_fidelidade_ignora_comentario_dentro_da_interface(db_session, tmp_path) 
     sobra nelas."""
     dev = _ambiente(db_session)
     _com_texto(db_session, dev, tmp_path,
-               "interface Eth-Trunk127.6001\n"
-               " vlan-type dot1q 6001\n"
+               "interface Eth-Trunk127.2601\n"
+               " vlan-type dot1q 2601\n"
                "# second-dot1q: encapsulamento interno duplo\n"
                " ip address 100.64.10.0 255.255.255.254\n"
                "#\n"
@@ -852,8 +852,8 @@ def test_fidelidade_do_peer_que_casa_com_o_render(db_session, tmp_path) -> None:
     dev = _ambiente(db_session)
     arquivo = tmp_path / "current.txt"
     arquivo.write_text(
-        "interface Eth-Trunk127.6001\n"
-        " vlan-type dot1q 6001\n"
+        "interface Eth-Trunk127.2601\n"
+        " vlan-type dot1q 2601\n"
         " ip address 100.64.10.0 255.255.255.254\n"
         "#\n"
         "bgp 65001\n"
@@ -975,7 +975,7 @@ def test_fidelidade_de_peer_em_vrf_avisa_que_a_comparacao_nao_vale(
 
 
 def test_fidelidade_nao_acusa_as_duas_formas_da_mesma_linha(db_session, tmp_path) -> None:
-    """`vlan-type dot1q 6001` e `vlan-type dot1q vid 6001` são a mesma linha, e
+    """`vlan-type dot1q 2601` e `vlan-type dot1q vid 2601` são a mesma linha, e
     o mesmo vale para `ipv6 address <endereço> 126` e `<endereço>/126`: o
     equipamento escreve a primeira forma, o render a segunda. Sem a
     equivalência, toda proposta com VLAN e IPv6 nasceria com dois falsos
@@ -983,8 +983,8 @@ def test_fidelidade_nao_acusa_as_duas_formas_da_mesma_linha(db_session, tmp_path
     mudança de estado da interface tem de aparecer — ficaria sempre sujo."""
     dev = _ambiente(db_session)
     _com_texto(db_session, dev, tmp_path,
-               "interface Eth-Trunk127.6001\n"
-               " vlan-type dot1q 6001\n"
+               "interface Eth-Trunk127.2601\n"
+               " vlan-type dot1q 2601\n"
                " ip address 100.64.10.0 255.255.255.254\n"
                " ipv6 enable\n"
                " ipv6 address 2804:194C:1000::1100:73:1 126\n"
@@ -1066,8 +1066,8 @@ def test_endereco_fora_das_pontas_do_par_e_conflito(db_session, tmp_path) -> Non
     `ponta_local: superior` e uma sessão de endereço local igual ao do par."""
     dev = _ambiente(db_session)
     _com_texto(db_session, dev, tmp_path,
-               "interface Eth-Trunk127.9001\n"
-               " vlan-type dot1q 9001\n"
+               "interface Eth-Trunk127.2903\n"
+               " vlan-type dot1q 2903\n"
                " ip address 100.64.10.3 255.255.255.252\n"
                "#\n"
                "bgp 65001\n"
@@ -1086,8 +1086,8 @@ def test_endereco_v6_fora_das_pontas_do_par_e_conflito(db_session, tmp_path) -> 
     """O irmão v6: `...:3` está no /126 `...::0/126`, cujas pontas são `:1` e `:2`."""
     dev = _ambiente(db_session)
     _com_texto(db_session, dev, tmp_path,
-               "interface Eth-Trunk127.9002\n"
-               " vlan-type dot1q 9002\n"
+               "interface Eth-Trunk127.2904\n"
+               " vlan-type dot1q 2904\n"
                " ipv6 address 2804:194C:1000::1100:73:3 126\n"
                "#\n"
                "bgp 65001\n"
@@ -1109,12 +1109,12 @@ def test_peer_sem_enable_em_nenhuma_familia_vira_pendencia(db_session, tmp_path)
     `ipv4-family unicast` não recebe nada."""
     dev = _ambiente(db_session)
     _com_texto(db_session, dev, tmp_path,
-               "interface Eth-Trunk127.9101\n"
-               " vlan-type dot1q 9101\n"
+               "interface Eth-Trunk127.2901\n"
+               " vlan-type dot1q 2901\n"
                " ip address 100.64.10.0 255.255.255.254\n"
                "#\n"
-               "interface Eth-Trunk127.9102\n"
-               " vlan-type dot1q 9102\n"
+               "interface Eth-Trunk127.2902\n"
+               " vlan-type dot1q 2902\n"
                " ip address 100.64.20.0 255.255.255.254\n"
                "#\n"
                "bgp 65001\n"
@@ -1124,10 +1124,10 @@ def test_peer_sem_enable_em_nenhuma_familia_vira_pendencia(db_session, tmp_path)
                " ipv4-family unicast\n"
                "  peer 100.64.20.1 enable\n")
     por_vid = _propostas(db_session, dev)
-    pendencia = next(p for p in por_vid[9101].pendencias if p.tipo == "peer_nao_habilitado")
+    pendencia = next(p for p in por_vid[2901].pendencias if p.tipo == "peer_nao_habilitado")
     assert "não o habilita em nenhuma família" in pendencia.descricao
-    assert por_vid[9101].veredito == "adotavel_com_pendencias"
-    assert "peer_nao_habilitado" not in {p.tipo for p in por_vid[9102].pendencias}
+    assert por_vid[2901].veredito == "adotavel_com_pendencias"
+    assert "peer_nao_habilitado" not in {p.tipo for p in por_vid[2902].pendencias}
 
 
 def test_veredito_adotavel_do_upstream_com_organizacao(db_session, tmp_path) -> None:
@@ -1230,8 +1230,8 @@ def test_mtu_da_subinterface_tambem_sai_do_que_gateia(db_session, tmp_path) -> N
     e no `faltando` ele faria toda proposta voltar a exigir ciente."""
     dev = _ambiente(db_session)
     _com_texto(db_session, dev, tmp_path,
-               "interface Eth-Trunk127.6001\n"
-               " vlan-type dot1q 6001\n"
+               "interface Eth-Trunk127.2601\n"
+               " vlan-type dot1q 2601\n"
                " ip address 100.64.10.0 255.255.255.254\n"
                " mtu 9000\n"
                "#\n"

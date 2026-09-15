@@ -164,8 +164,8 @@ def test_leitura_parcial_ainda_lista_propostas(db_session, tmp_path) -> None:
     link_device(db_session, site.id, dev.id, actor="cli")
     arquivo = tmp_path / "parcial.txt"
     arquivo.write_text(
-        "interface Eth-Trunk127.6001\n"
-        " vlan-type dot1q 6001\n"
+        "interface Eth-Trunk127.2601\n"
+        " vlan-type dot1q 2601\n"
         " ip address 100.64.10.0 255.255.255.254\n"
         "#\n"
         "bgp 65001\n"
@@ -229,8 +229,8 @@ def test_show_com_leitura_parcial_nao_conclui(db_session, tmp_path) -> None:
     link_device(db_session, site.id, dev.id, actor="cli")
     arquivo = tmp_path / "parcial.txt"
     arquivo.write_text(
-        "interface Eth-Trunk127.6001\n"
-        " vlan-type dot1q 6001\n"
+        "interface Eth-Trunk127.2601\n"
+        " vlan-type dot1q 2601\n"
         " ip address 100.64.10.0 255.255.255.254\n"
         "#\n"
         "bgp 65001\n"
