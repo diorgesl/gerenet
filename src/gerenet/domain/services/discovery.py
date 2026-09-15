@@ -8,9 +8,13 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from gerenet.domain import models
+from gerenet.domain import models, schemas
 from gerenet.domain.audit import registrar
-from gerenet.domain.services.errors import ConflictError
+from gerenet.domain.services.bgp_sessions import create_session
+from gerenet.domain.services.circuits import create_circuit
+from gerenet.domain.services.errors import ConflictError, ValidationError
+from gerenet.domain.services.ipam import reservar_adocao
+from gerenet.domain.services.organizations import create_organization
 from gerenet.domain.validators import endereco_canonico
 
 
@@ -108,3 +112,147 @@ def esquecer_ignorado(
               objeto="discovery_ignored_peer", objeto_id=objeto_id, antes=antes, depois=None)
     session.commit()
     return True
+
+
+# Campos que o operador decide na revisão: saem do que a proposta leu, porque
+# quem manda neles é a revisão (o `**base` repetiria o argumento e estouraria o
+# construtor). `circuit_id` e `device_id` são do circuito que nasce na adoção.
+_DO_OPERADOR = (
+    "circuit_id", "device_id", "import_profile_id", "export_profile_id", "password_ref",
+)
+
+
+def _sessao_da_proposta(
+    proposta, overrides: schemas.AdocaoSessaoIn, *, circuit_id: int, device_id: int
+) -> schemas.BgpSessionCreate:
+    """Junta o que a proposta leu da configuração com o que o operador decidiu.
+
+    O dict da proposta usa nomes de coluna de `bgp_sessions`; só os campos que o
+    schema de criação declara passam, para um nome a mais não estourar o
+    construtor. Os dois ids entram por parâmetro porque são obrigatórios no
+    `BgpSessionCreate` e a `Proposta` não os tem: o circuito só existe depois
+    que a adoção o cria.
+    """
+    dados = next(s for s in proposta.sessoes if s["afi"] == overrides.afi)
+    campos = set(schemas.BgpSessionCreate.model_fields)
+    base = {k: v for k, v in dados.items() if k in campos and k not in _DO_OPERADOR}
+    return schemas.BgpSessionCreate(
+        **base,
+        circuit_id=circuit_id,
+        device_id=device_id,
+        import_profile_id=overrides.import_profile_id,
+        export_profile_id=overrides.export_profile_id,
+        password_ref=overrides.password_ref,
+    )
+
+
+def adotar_proposta(session: Session, *, proposta, revisao: schemas.AdocaoIn, actor: str) -> int:
+    """Grava a cadeia de uma proposta na SoT, numa transação (design §5).
+
+    Uma transação só, e é por isso que os serviços de cadastro são chamados com
+    `commit=False`: se qualquer passo recusar, nada fica gravado. Nenhum comando
+    vai ao equipamento; mudar o roteador continua exigindo change request.
+    """
+    # Import tardio: `automation.discovery` importa este módulo (a lista de
+    # ignorados), e no topo o ciclo derruba quem importa este módulo primeiro.
+    from gerenet.automation.discovery import conferir_fidelidade
+
+    if proposta.veredito == "nao_adotavel":
+        raise ConflictError(
+            "A proposta tem conflito: resolva antes de adotar ("
+            + "; ".join(c.tipo for c in proposta.conflitos) + ")."
+        )
+    if proposta.vrf is not None:
+        raise ConflictError(
+            "Sessão em VRF não é reproduzível por esta versão do render: a adoção "
+            "gravaria uma sessão que o equipamento não tem nessa instância."
+        )
+    # Os perfis revisados entram na conferência: sem eles o ensaio não renderiza
+    # o corpo da política de exportação, que é justamente o que o operador
+    # escolhe errado. A conferência compara o que a adoção VAI gravar.
+    perfis = {
+        s.afi: {"import_profile_id": s.import_profile_id,
+                "export_profile_id": s.export_profile_id}
+        for s in revisao.sessoes
+    }
+    difs = conferir_fidelidade(session, proposta, perfis=perfis)
+    if any(d.contexto == "ensaio" for d in difs):
+        raise ConflictError("A conferência não pôde ser feita para esta proposta.")
+    if any(d.exige_ciente for d in difs) and not revisao.ciente:
+        raise ValidationError(
+            "Há diferenças que mudariam o equipamento: confirme o ciente para adotar."
+        )
+    if not proposta.candidatos:
+        raise ValidationError("A proposta não tem candidato: nada a adotar.")
+    if proposta.site_id is None:
+        raise ValidationError("O equipamento não está vinculado a um site.")
+    asn_remoto = proposta.candidatos[0].asn_remote
+    if asn_remoto is None:
+        raise ValidationError("A proposta não tem ASN remoto: não há sessão a criar.")
+
+    organizacao_id = revisao.organizacao_id
+    if organizacao_id is None and revisao.organizacao_nova is None:
+        raise ValidationError(
+            "Informe a organização: escolha uma existente ou crie a nova com o ASN "
+            f"{asn_remoto}."
+        )
+
+    try:
+        if organizacao_id is None:
+            org = create_organization(
+                session, revisao.organizacao_nova, actor=actor, commit=False
+            )
+            organizacao_id = org.id
+
+        circuito = create_circuit(
+            session,
+            schemas.CircuitCreate(
+                code=revisao.circuit_code, organization_id=organizacao_id,
+                site_id=proposta.site_id,
+                access_device_id=revisao.access_device_id, access_port=revisao.access_port,
+                edge_device_id=proposta.device_id, edge_trunk=revisao.edge_trunk,
+                stack=proposta.stack, vlan_mode=proposta.vlan_mode, qinq=proposta.qinq,
+                p2p_v4_len=proposta.p2p_v4_len or 31, vrf=proposta.vrf,
+            ),
+            actor=actor, commit=False,
+        )
+        reservar_adocao(
+            session, circuito.id, vlans=proposta.vlans, prefixos=proposta.prefixos,
+            actor=actor, origem_snapshot_id=proposta.candidatos[0].snapshot_id, commit=False,
+        )
+        for overrides in revisao.sessoes:
+            create_session(
+                session,
+                _sessao_da_proposta(proposta, overrides, circuit_id=circuito.id,
+                                    device_id=proposta.device_id),
+                actor=actor, commit=False,
+            )
+        registrar(
+            session, tipo="discovery.adopt", ator=actor, objeto="circuit", objeto_id=circuito.id,
+            antes=None,
+            depois={
+                "device_id": proposta.device_id, "vrf": proposta.vrf,
+                "subinterface": proposta.subinterface,
+                "snapshot_id": proposta.candidatos[0].snapshot_id,
+                "ciente": revisao.ciente,
+                "perfis": perfis,
+                "diferencas": [
+                    {"contexto": d.contexto, "sobrando": list(d.sobrando),
+                     "faltando": list(d.faltando),
+                     "nao_gerenciado": list(d.nao_gerenciado),
+                     "explicacao": d.explicacao}
+                    for d in difs if d.exige_ciente
+                ],
+            },
+        )
+        session.commit()
+    except Exception:
+        # Qualquer recusa no meio desfaz o que já foi gravado: sem isto, a
+        # organização e o circuito ficariam pendentes na transação de quem
+        # chamou — adoção parcial, o oposto do que a §5 promete. Os serviços de
+        # cadastro só desfazem sozinhos quando é o banco que recusa (unicidade);
+        # a guarda deles, como a do VRF ou a do ASN, sai antes de qualquer
+        # `rollback`.
+        session.rollback()
+        raise
+    return circuito.id

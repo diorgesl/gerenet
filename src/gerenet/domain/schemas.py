@@ -220,6 +220,10 @@ class BgpSessionCreate(BaseModel):
     graceful_restart: bool = False
     shutdown: bool = False
     allow_default_route: bool = False
+    # O caminho do segredo no Vault, nunca o valor (`models.BgpSession.password_ref`).
+    # A revisão da adoção escolhe o caminho e o `create_session` o grava pelo
+    # `model_dump`; a senha em si continua entrando só pelo `set_password`.
+    password_ref: str | None = Field(default=None, max_length=255)
 
 
 class BgpSessionUpdate(BaseModel):
@@ -1067,3 +1071,34 @@ class IgnoradoOut(BaseModel):
     remote_address: str
     motivo: str | None
     autor: str
+
+
+class AdocaoSessaoIn(BaseModel):
+    """O que o operador decide por sessão; o resto vem da proposta."""
+
+    afi: Literal["ipv4", "ipv6"]
+    import_profile_id: int | None = None
+    export_profile_id: int | None = None
+    password_ref: str | None = Field(default=None, max_length=255)
+
+
+class AdocaoIn(BaseModel):
+    """A revisão de uma proposta (design §6).
+
+    A organização vem por id (existente) ou por `organizacao_nova`; o resto é o
+    que o operador corrige do que a proposta leu: o código sugerido, o acesso e
+    o trunk do lado do cliente, os perfis de cada família e o caminho do segredo
+    no Vault quando o equipamento tem senha.
+    """
+
+    device_id: int
+    vrf: str | None = None
+    subinterface: str | None = None
+    circuit_code: str = Field(min_length=1, max_length=64)
+    access_device_id: int
+    access_port: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9/\-]+$")
+    edge_trunk: str | None = Field(default=None, max_length=64)
+    organizacao_id: int | None = None
+    organizacao_nova: OrganizationCreate | None = None
+    sessoes: list[AdocaoSessaoIn] = Field(default_factory=list)
+    ciente: bool = False
