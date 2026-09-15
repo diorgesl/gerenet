@@ -1,13 +1,20 @@
 """run_change (spec §6/§5.3): execução de CR aprovada com fake de coleta/aplicação."""
 import ipaddress
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from redis import Redis
 from sqlalchemy.orm import Session
 
 from gerenet.automation import render
-from gerenet.automation.runner import _estado_do_bloco, _mascarar_texto, run_change
+from gerenet.automation.runner import (
+    _estado_do_bloco,
+    _mascarar_texto,
+    _re_diff,
+    _verifica_aplicados,
+    run_change,
+)
 from gerenet.config import Settings
 from gerenet.domain import models
 from gerenet.domain.models import CredentialGroup
@@ -190,6 +197,26 @@ def _recursos_aplicados(db_session: Session, dev) -> dict:
     }
 
 
+def _backup_do_render(db_session: Session, dev, tmp_path: Path) -> str:
+    """`display current-configuration` do desejado (o render aplicado), em arquivo.
+
+    Devolve o CAMINHO do arquivo — o que o snapshot guarda em `raw_files`. A
+    forma é a do equipamento: cabeçalho na coluna 0 e sub-comandos indentados,
+    que é o que `linhas_da_interface` lê. Sem este texto a subinterface presente
+    por nome e endereços não tem `description` para conferir e o estado é
+    `atualizar` (§6) — o par com `_recursos_aplicados` é que dá o "já
+    aplicado" completo que estes testes medem.
+    """
+    r = render.render_desejado(db_session, dev.id)
+    arquivo = tmp_path / "cfg-runner.txt"
+    corpo = "\n#\n".join(
+        "\n".join([b.comandos[0], *(f" {c}" for c in b.comandos[1:])])
+        for b in r.blocos
+    )
+    arquivo.write_text(corpo + "\n", encoding="utf-8")
+    return str(arquivo)
+
+
 def _estado_subif_presenca(db_session: Session, dev) -> dict:
     """Encontrado com a subinterface do plano (nome real do render) presente,
     SEM o endereço esperado (§5.3 literal) e sem mais nada.
@@ -214,19 +241,32 @@ def _estado_subif_presenca(db_session: Session, dev) -> dict:
 def _fakes_de_mudanca(
     monkeypatch: pytest.MonkeyPatch, db_session: Session, dev,
     colas: list[dict], aplicacoes: list[list[str]] | None = None,
+    backups: list[str] | None = None,
 ):
     """Orquestra as fakes: cola retorna uma coleção por chamada (pré → pós).
 
     `aplicacoes` (opcional) recebe os comandos de cada bloco aplicado
     (para os testes do caminho remove contarem as aplicações).
+
+    `backups` (opcional) é o caminho do arquivo de `display
+    current-configuration` de cada coleta, uma por chamada (pré → pós), e a
+    última vale para as seguintes — como as `colas`. Sem ele a coleta sai sem
+    backup, e a subinterface presente por nome e endereços não tem a
+    `description` para conferir: vira `atualizar` (§6), o caso que a maior
+    parte destes testes não quer medir.
     """
     monkeypatch.setattr("gerenet.automation.runner.VaultSecretStore", VaultFake)
     ultimo: list[dict | None] = [None]
+    ultimo_backup: list[str | None] = [None]
+    pendentes = list(backups) if backups is not None else []
 
     def _coleta(session, device, cred, settings, base):
         recursos = colas.pop(0) if colas else ultimo[0]
         ultimo[0] = recursos
-        return dict(recursos), {}, {}
+        if pendentes:
+            ultimo_backup[0] = pendentes.pop(0)
+        arquivos = {"config_backup": [ultimo_backup[0]]} if ultimo_backup[0] else {}
+        return dict(recursos), {}, arquivos
 
     monkeypatch.setattr("gerenet.automation.runner._coleta_recursos", _coleta)
     monkeypatch.setattr(
@@ -289,10 +329,14 @@ def test_run_change_erro_vrp_no_meio_marca_cr_erro(db_session: Session, tmp_path
 
 
 def test_run_change_bloco_ja_presente_marca_step_pulado(db_session: Session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tudo já aplicado ⇒ nada a fazer (§3.2). O backup acompanha o encontrado:
+    sem ele a `description` do bloco não se confirma e a subinterface viraria
+    `atualizar` (§6), que é outro caminho."""
     amb = _ambiente(db_session)
     circ = _circuito(db_session, amb)
     cr = _cr_aprovada(db_session, circ, amb["dev"])
-    _fakes_de_mudanca(monkeypatch, db_session, amb["dev"], [_recursos_aplicados(db_session, amb["dev"])])
+    _fakes_de_mudanca(monkeypatch, db_session, amb["dev"], [_recursos_aplicados(db_session, amb["dev"])],
+                      backups=[_backup_do_render(db_session, amb["dev"], tmp_path)])
 
     resultado = run_change(cr.id, settings=Settings(_env_file=None, backups_dir=tmp_path), session_override=db_session)
     assert resultado["status"] == "aplicado"
@@ -477,14 +521,20 @@ def test_estado_as_path_filter_consta_por_conteudo() -> None:
 
 def test_run_change_create_misto_consta_ausente_aborta(db_session: Session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """F1 — subinterface consta (com endereço certo), peer ausente: só parte do
-    plano existe ⇒ aborta (§12.2) sem aplicar (regra do create misto)."""
+    plano existe ⇒ aborta (§12.2) sem aplicar (regra do create misto).
+
+    O backup acompanha o encontrado: para a subinterface constar ela precisa da
+    `description` confirmada no texto (§6), e é o contraste com o peer ausente
+    que faz este teste medir o abort.
+    """
     amb = _ambiente(db_session)
     circ = _circuito(db_session, amb)
     cr = _cr_aprovada(db_session, circ, amb["dev"])
     encontrado = _recursos_aplicados(db_session, amb["dev"])
     encontrado["bgp_peers"] = []
     encontrado["bgp_peers_verbose"] = []
-    _fakes_de_mudanca(monkeypatch, db_session, amb["dev"], [encontrado])
+    _fakes_de_mudanca(monkeypatch, db_session, amb["dev"], [encontrado],
+                      backups=[_backup_do_render(db_session, amb["dev"], tmp_path)])
 
     resultado = run_change(cr.id, settings=Settings(_env_file=None, backups_dir=tmp_path), session_override=db_session)
     assert resultado["status"] == "erro"
@@ -668,3 +718,122 @@ def test_run_change_remocao_ja_ausente_vira_pulado(db_session: Session, tmp_path
     assert aplicacoes == []
     db_session.refresh(cr)
     assert cr.steps[0].status == "pulado"
+
+
+# ---------------------------------------------------------------------------
+# O estado `atualizar` (design §6): nome e endereços no lugar, conteúdo não
+# ---------------------------------------------------------------------------
+
+_SUB_COM_DESCRICAO = {
+    "tipo": "subinterface", "objeto": "circuit", "objeto_id": 1, "acao": "create",
+    "comandos": ["interface GE1/0/0.2", "description CIRC-2 ACME [1G]",
+                 "vlan-type dot1q vid 2", "ip address 10.0.0.0 255.255.255.254",
+                 "statistic enable", "qos car cir 1024000 inbound",
+                 "qos car cir 1024000 outbound"],
+}
+
+# O que o VRP grava depois de aplicar a forma curta (§2).
+_BACKUP_CONFORME = (
+    "#\n"
+    "interface GE1/0/0.2\n"
+    " description CIRC-2 ACME [1G]\n"
+    " vlan-type dot1q 2\n"
+    " ip address 10.0.0.0 255.255.255.254\n"
+    " statistic enable\n"
+    " qos car cir 1024000 cbs 18700000 green pass red discard inbound\n"
+    " qos car cir 1024000 cbs 18700000 green pass red discard outbound\n"
+    "#\n"
+)
+
+
+def _recursos_com_subif(*enderecos_v4: str) -> dict:
+    """Recursos no formato da coleta, com a subinterface do bloco presente.
+
+    O nome sai do próprio bloco (`interface GE1/0/0.2` → `GE1/0/0.2`), como
+    `_estado_subif_presenca` faz — os dois helpers ficam lado a lado no mesmo
+    formato de dicionário.
+    """
+    nome = _SUB_COM_DESCRICAO["comandos"][0].split(None, 1)[1]
+    return {
+        "interfaces": [{
+            "nome": nome, "phy": "up", "protocolo": "up",
+            "enderecos_v4": list(enderecos_v4), "enderecos_v6": [], "vpn": None,
+        }],
+    }
+
+
+# Endereço do bloco no formato do merge (`addr/prefixlen`, o que
+# `_enderecos_do_bloco` devolve e compara) — e não a forma crua da CLI
+# (`ip address 10.0.0.0 255.255.255.254`), que é a do texto do backup.
+_ENDERECO_DO_BLOCO = "10.0.0.0/31"
+
+
+def test_estado_subinterface_com_descricao_e_qos_consta() -> None:
+    estado = _estado_do_bloco(
+        _SUB_COM_DESCRICAO, _recursos_com_subif(_ENDERECO_DO_BLOCO), _BACKUP_CONFORME
+    )
+    assert estado == "consta"
+
+
+def test_estado_subinterface_sem_a_descricao_e_atualizar() -> None:
+    """Nome e endereços batem e falta a descrição: é o caso do parque que já
+    existe, que sem isto sairia "nada a aplicar" e nunca convergiria (§6)."""
+    backup = _BACKUP_CONFORME.replace(" description CIRC-2 ACME [1G]\n", "")
+    estado = _estado_do_bloco(_SUB_COM_DESCRICAO, _recursos_com_subif(_ENDERECO_DO_BLOCO), backup)
+    assert estado == "atualizar"
+
+
+def test_estado_subinterface_sem_o_qos_e_atualizar() -> None:
+    backup = _BACKUP_CONFORME.replace(
+        " qos car cir 1024000 cbs 18700000 green pass red discard outbound\n", ""
+    )
+    estado = _estado_do_bloco(_SUB_COM_DESCRICAO, _recursos_com_subif(_ENDERECO_DO_BLOCO), backup)
+    assert estado == "atualizar"
+
+
+def test_estado_subinterface_com_outra_taxa_e_atualizar() -> None:
+    """Taxa diferente não é "já presente": o plano pede 1 Gbps e o equipamento
+    tem 500 Mbps."""
+    backup = _BACKUP_CONFORME.replace("1024000", "500000")
+    estado = _estado_do_bloco(_SUB_COM_DESCRICAO, _recursos_com_subif(_ENDERECO_DO_BLOCO), backup)
+    assert estado == "atualizar"
+
+
+def test_re_diff_aplica_o_atualizar_e_nao_aborta_com_um_completo() -> None:
+    """O abort de "apenas parte do plano consta" olha só os creates que constam.
+    Um plano com um bloco completo e outro a atualizar abortaria em falso se o
+    `atualizar` caísse no `a_pular` (§6)."""
+    completo = dict(_SUB_COM_DESCRICAO)
+    a_atualizar = {
+        **_SUB_COM_DESCRICAO, "objeto_id": 2,
+        "comandos": [*_SUB_COM_DESCRICAO["comandos"]],
+    }
+    a_atualizar["comandos"][1] = "description CIRC-3 OUTRA [1G]"
+    a_aplicar, a_pular, erro = _re_diff(
+        [completo, a_atualizar], _recursos_com_subif(_ENDERECO_DO_BLOCO), _BACKUP_CONFORME
+    )
+    assert erro is None
+    assert a_pular == [completo]
+    assert a_aplicar == [a_atualizar]
+
+
+def test_pos_check_marca_atualizar_como_atencao_e_nao_como_critica(tmp_path: Path) -> None:
+    """O pós-check confere presença por identidade; o conteúdo que não chegou
+    inteiro é atenção (§6) — o bloco está lá, e é isso que o pós-check sabe
+    medir.
+
+    O backup vai sem a descrição: é o estado que o `atualizar` deixa quando o
+    VRP recusa a linha, e é ele que o pós-check lê de verdade
+    (`removal.texto_backup`) em vez de um `raw_files` vazio.
+    """
+    arquivo = tmp_path / "cfg.txt"
+    arquivo.write_text(_BACKUP_CONFORME.replace(" description CIRC-2 ACME [1G]\n", ""),
+                       encoding="utf-8")
+    step = SimpleNamespace(plano_json=[_SUB_COM_DESCRICAO])
+    snap = SimpleNamespace(
+        resources=_recursos_com_subif(_ENDERECO_DO_BLOCO),
+        raw_files={"config_backup": [str(arquivo)]},
+    )
+    items = _verifica_aplicados(step, snap)
+    assert [i["severidade"] for i in items] == ["atencao"]
+    assert items[0]["tipo"] == "subinterface.conteudo"
