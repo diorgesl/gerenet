@@ -372,7 +372,9 @@ Expected: PASS.
 
 - [ ] **Step 5: Aplicar e conferir a migração (manual, sem harness)**
 
-O repositório não tem harness de migração: `tests/conftest.py` cria o schema pelo metadata do SQLAlchemy, e o banco de teste não tem `alembic_version`. A conferência é manual, num banco descartável — **nunca** no `gerenet_test` (as tabelas já existem lá e o `upgrade` estouraria).
+O repositório não tem harness de migração, então a conferência é manual, num banco descartável.
+
+> **Ruling do pré-voo, 3.** Esta linha dizia que `tests/conftest.py` cria o schema pelo metadata e que o banco de teste não tem `alembic_version`, e por isso mandava **nunca** migrar o `gerenet_test`. As duas metades estão erradas, e a execução da Task 2 provou: o `conftest.py` só faz `TRUNCATE` (linha 41) e o `gerenet_test` **tem** `alembic_version` — estava em `c4a8e1f0b7d3`, o head anterior, sem a coluna nova. Migrar o banco de teste não estoura: é exatamente o que a frente precisa, e é a convenção já registrada do projeto (o protocolo de rebase do B2 manda migrar o `gerenet_test` depois de mexer no `down_revision`). **Custo se estiver errado:** sem o `alembic upgrade head` no `gerenet_test`, toda tarefa seguinte roda contra um schema sem a coluna e a suíte fica vermelha por um motivo que não é código. O banco de teste foi migrado para `f2b7d4a91c3e` durante a execução.
 
 ```bash
 createdb gerenet_mig_velocidade
@@ -2388,7 +2390,7 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 
 **Desvios registrados.**
 1. **CLI sem `update`** (Task 2): a spec §8 pede `--velocidade-mbps` "e o mesmo no `update`", e o grupo `circuits` do CLI não tem comando `update`. O campo entra no `add`; o `update` fica como dívida. A API PATCH e a web já cobrem a edição.
-2. **Migração sem teste automatizado** (Task 2 Step 5): a spec §9 pede "upgrade e downgrade", e o repositório não tem harness de migração (`tests/conftest.py` cria o schema pelo metadata). A verificação é manual, num banco descartável. O harness entra como dívida.
+2. **Migração sem teste automatizado** (Task 2 Step 5): a spec §9 pede "upgrade e downgrade", e o repositório não tem harness de migração — o `conftest.py` só faz `TRUNCATE`, e o schema do banco de teste vem do Alembic (Ruling do pré-voo, 3, na Task 2). A verificação é manual, num banco descartável, **mais** o `alembic upgrade head` no `gerenet_test`, sem o qual a suíte roda contra um schema velho. O harness entra como dívida.
 
 **Consistência de tipos.** `descricao_subinterface(code, nome_organizacao, velocidade_mbps) -> str | None` (T1) é chamada em `_bloco_sub` (T3) com `circuito.code`, `circuito.organization.name`, `circuito.velocidade_mbps` — os mesmos três que `_ensaio` (T7) alimenta com a identidade da revisão. `naming.LIMITE_DESCRICAO` (T1) é o mesmo número do orçamento citado no runbook (T10). `subinterface.conteudo_conforme(comandos, linhas)` e `subinterface.linhas_da_interface(texto, nome)` (T4) são chamadas com a mesma assinatura em `changes._ja_existe` (T4) e em `runner._estado_do_bloco` (T5). `cir_kbps` é o nome da chave do template (T3) e sai de `velocidade_mbps * 1000` (T2). `Proposta.velocidade_mbps` (T6) é o que `PropostaOut.velocidade_mbps` expõe, e `_velocidade_do_qos` é a única conta `cir → Mbps` no backend. Os quatro parâmetros da identidade (T7: `circuit_code`, `organizacao_id`, `organizacao_nome`, `velocidade_mbps`) são exatamente os quatro query params que `useFidelidade` envia (T9).
 
