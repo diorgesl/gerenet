@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiError } from "@/api/client";
 import {
   useAdotar,
@@ -33,6 +33,16 @@ function trunkDoNome(proposta: DiscoveryPropostaOut): string {
  * vale o mesmo que o gate recusa. Sem ela, um espaço no fim ou um ponto saem no
  * 422 do Pydantic — em inglês — numa tela em português. */
 const PORTA_VALIDA = /^[A-Za-z0-9/-]+$/;
+
+/** Os tetos do schema, espelhados campo a campo (`AdocaoIn.circuit_code`,
+ * `AdocaoIn.access_port`, `AdocaoIn.edge_trunk`, `OrganizationCreate.name`,
+ * `AdocaoSessaoIn.password_ref`). Acima deles o serviço devolve o mesmo 422 do
+ * Pydantic, e o número mora aqui para a frase do campo não divergir do gate. */
+const LIMITE_DA_PORTA = 64;
+const LIMITE_DO_CODE = 64;
+const LIMITE_DO_TRUNK = 64;
+const LIMITE_DO_NOME = 128;
+const LIMITE_DO_CAMINHO = 255;
 
 /** O trunk é digitado: a espera é o que segura a enxurrada de consultas. */
 const ESPERA_DO_TRUNK_MS = 300;
@@ -107,14 +117,28 @@ export function AdocaoDialog({
   // operador leu, e a caixa marcada assumiria linhas que ninguém viu. Só o que
   // gateia entra na assinatura: o que a SoT não gerencia não é assumido por
   // ninguém, e sozinho não invalida o aceite.
-  const assinaturaDoAceite = mudam
-    .flatMap((d) => [d.contexto, ...d.sobrando, ...d.faltando])
-    .join("|");
-  useEffect(() => setCiente(false), [assinaturaDoAceite]);
+  //
+  // `null` é a consulta em voo, e não um diff vazio: a conferência antiga sai da
+  // tela enquanto a nova não chega (sem `placeholderData`), e ler esse intervalo
+  // como "as diferenças mudaram" zeraria o aceite a cada tecla do trunk, mesmo
+  // quando o diff que volta é o mesmo. O que zera é a assinatura DIFERENTE da
+  // última que a tela mostrou.
+  const assinaturaDoAceite =
+    fidelidade === undefined
+      ? null
+      : mudam.flatMap((d) => [d.contexto, ...d.sobrando, ...d.faltando]).join("|");
+  const ultimaAssinatura = useRef<string | null>(null);
+  useEffect(() => {
+    if (assinaturaDoAceite === null || assinaturaDoAceite === ultimaAssinatura.current) return;
+    ultimaAssinatura.current = assinaturaDoAceite;
+    setCiente(false);
+  }, [assinaturaDoAceite]);
 
-  // O trunk é exigido quando a proposta tem subinterface: sem ele a SoT não
-  // reproduz o bloco que a conferência acabou de validar, e a adoção recusa no
-  // serviço com essa mesma razão — aqui é só para o botão não levar a um 422.
+  // O trunk é exigido sempre que a proposta tem vid e subinterface. O serviço só
+  // o exige quando o nome deriva um (`_trunk_da_subinterface`), então num nome
+  // de subinterface fora da convenção a tela pede um valor que ele não pediria.
+  // Nunca é beco sem saída (qualquer valor serve, e nome livre é legítimo), e o
+  // desencontro fica registrado no relatório, para o runbook.
   const exigirTrunk = proposta.vid !== null && proposta.subinterface !== null;
   const criarOrg = orgId === 0;
   // A proposta sem ASN remoto chega com conflito e o Adotar da lista fica
@@ -122,17 +146,30 @@ export function AdocaoDialog({
   // sentinela que o serviço recusaria.
   const asnRemoto = proposta.candidatos[0]?.asn_remote ?? null;
   const portaInvalida =
-    porta !== "" && (porta.length > 64 || !PORTA_VALIDA.test(porta));
+    porta !== "" && (porta.length > LIMITE_DA_PORTA || !PORTA_VALIDA.test(porta));
+  const nomeLongo = orgNome.trim().length > LIMITE_DO_NOME;
+  const caminhoLongo = (afi: string) =>
+    (caminhos[afi] ?? "").trim().length > LIMITE_DO_CAMINHO;
+  // O trunk digitado e o da conferência têm de ser o mesmo. Entre a tecla e a
+  // consulta nova vai a espera inteira, e nela o diff na tela ainda é o do valor
+  // anterior; o `ciente` é um booleano sem vínculo com o diff que assumiu, então
+  // um aceite marcado contra o diff velho viajaria idêntico com o trunk novo. O
+  // servidor recalcula o diff e recusa o que ninguém assumiu, mas não tem como
+  // saber contra qual deles o aceite foi dado.
+  const trunkConferido = trunk === trunkDaConferencia;
   // O que o formulário exige antes do aceite: os campos que a configuração do
-  // edge não tem e que, vazios ou fora da forma do schema, voltariam como o 422
-  // do Pydantic em vez de uma frase desta tela.
+  // edge não tem e que, vazios, fora da forma ou acima do tamanho do schema,
+  // voltariam como o 422 do Pydantic em vez de uma frase desta tela.
   const revisaoIncompleta =
     code === "" ||
+    code.length > LIMITE_DO_CODE ||
     acesso === 0 ||
     porta === "" ||
     portaInvalida ||
     (exigirTrunk && trunk === "") ||
-    (criarOrg && (orgNome.trim() === "" || asnRemoto === null));
+    trunk.length > LIMITE_DO_TRUNK ||
+    (criarOrg && (orgNome.trim() === "" || nomeLongo || asnRemoto === null)) ||
+    proposta.candidatos.some((c) => caminhoLongo(c.afi));
   // Sem a conferência não há aceite que valha (§6): o ensaio recusado devolve a
   // comparação que não pôde ser feita, e é o mesmo caso da consulta que não
   // voltou. O servidor recusa os dois de qualquer forma; aqui é o que impede o
@@ -140,7 +177,11 @@ export function AdocaoDialog({
   // ciente não libera nenhum deles — não há diferença que valha assumir.
   const semConferencia = fidelidade === undefined || ensaio.length > 0;
   const podeAdotar =
-    !revisaoIncompleta && !semConferencia && (mudam.length === 0 || ciente) && !adotar.isPending;
+    !revisaoIncompleta &&
+    !semConferencia &&
+    trunkConferido &&
+    (mudam.length === 0 || ciente) &&
+    !adotar.isPending;
 
   const adotarProposta = () => {
     let organizacaoNova: { name: string; kind: string; asn: number } | null = null;
@@ -204,7 +245,10 @@ export function AdocaoDialog({
         </ul>
       </section>
 
-      <FormField label="Código do circuito *">
+      <FormField
+        label="Código do circuito *"
+        erro={code.length > LIMITE_DO_CODE ? `O código do circuito aceita até ${LIMITE_DO_CODE} caracteres.` : undefined}
+      >
         <input value={code} onChange={(e) => setCode(e.target.value)} />
       </FormField>
       <FormField label="Equipamento de acesso *" help={help("adocao.acesso")}>
@@ -217,11 +261,15 @@ export function AdocaoDialog({
       </FormField>
       <FormField
         label="Porta de acesso *"
-        erro={portaInvalida ? "A porta aceita só letras, números, / e - (até 64 caracteres)." : undefined}
+        erro={portaInvalida ? `A porta aceita só letras, números, / e - (até ${LIMITE_DA_PORTA} caracteres).` : undefined}
       >
         <input value={porta} onChange={(e) => setPorta(e.target.value)} />
       </FormField>
-      <FormField label={exigirTrunk ? "Trunk do edge *" : "Trunk do edge"} help={help("adocao.trunk")}>
+      <FormField
+        label={exigirTrunk ? "Trunk do edge *" : "Trunk do edge"}
+        help={help("adocao.trunk")}
+        erro={trunk.length > LIMITE_DO_TRUNK ? `O trunk do edge aceita até ${LIMITE_DO_TRUNK} caracteres.` : undefined}
+      >
         <input value={trunk} onChange={(e) => setTrunk(e.target.value)} />
       </FormField>
       <FormField label="Organização" help={help("adocao.organizacao")}>
@@ -237,7 +285,13 @@ export function AdocaoDialog({
       {criarOrg && (
         <FormField
           label="Nome da organização nova *"
-          erro={orgNome.trim() === "" ? "Informe o nome da organização nova." : undefined}
+          erro={
+            orgNome.trim() === ""
+              ? "Informe o nome da organização nova."
+              : nomeLongo
+                ? `O nome da organização aceita até ${LIMITE_DO_NOME} caracteres.`
+                : undefined
+          }
         >
           <input value={orgNome} onChange={(e) => setOrgNome(e.target.value)} />
         </FormField>
@@ -267,7 +321,14 @@ export function AdocaoDialog({
               ))}
             </select>
           </FormField>
-          <FormField label={`Segredo no Vault (${c.afi})`} help={help("adocao.segredo")}>
+          {/* O rótulo diz "caminho" antes do hover: um campo chamado "segredo"
+              convida a colar a senha, e ela iria parar no render da
+              configuração desejada, que é o que este campo existe para evitar. */}
+          <FormField
+            label={`Caminho do segredo no Vault (${c.afi})`}
+            help={help("adocao.segredo")}
+            erro={caminhoLongo(c.afi) ? `O caminho do segredo aceita até ${LIMITE_DO_CAMINHO} caracteres.` : undefined}
+          >
             <input
               value={caminhos[c.afi] ?? ""}
               onChange={(e) => setCaminho(c.afi, e.target.value)}

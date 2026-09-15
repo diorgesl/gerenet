@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -209,7 +209,14 @@ function mockFetch(
       const json = (corpo: unknown, status = 200) =>
         new Response(JSON.stringify(corpo), { status, headers: { "Content-Type": "application/json" } });
       if (url === "/api/v1/devices") return json(DEVICES);
-      if (url.startsWith("/api/v1/organizations")) return json(ORGANIZACOES);
+      if (url.startsWith("/api/v1/organizations")) {
+        // O mock responde conforme o pedido, como o serviço: sem a flag, a lista
+        // é a das vivas. Um mock que devolvesse sempre as duas deixaria a
+        // asserção do rótulo passar mesmo sem o `include_disabled` na URL.
+        const comDesativadas =
+          new URL(url, "http://local").searchParams.get("include_disabled") === "true";
+        return json(comDesativadas ? ORGANIZACOES : ORGANIZACOES.filter((o) => o.admin_status));
+      }
       if (url === "/api/v1/policy-profiles") return json(POLICY_PROFILES);
       if (url.startsWith("/api/v1/discovery/fidelidade")) {
         conferencias += 1;
@@ -560,6 +567,38 @@ describe("Discovery", () => {
     expect(conferencias().length - antes).toBeLessThan(5);
   });
 
+  it("o aceite não atravessa a espera do trunk: o botão exige a conferência do valor digitado", async () => {
+    // A espera do trunk abre a janela que este teste fecha: a tela mostra o diff
+    // do valor anterior e o campo já tem o novo. O `ciente` é um booleano sem
+    // vínculo com o diff que assumiu, então ele valeria contra o diff velho e o
+    // corpo levaria o trunk novo — o servidor recalcula o diff, mas não sabe
+    // contra qual deles o aceite foi dado.
+    mockFetchComFidelidade({ exigeCiente: true });
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+    await preencheAcesso(dialog);
+    await userEvent.click(await within(dialog).findByLabelText(/ciente/i));
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeEnabled(),
+    );
+
+    // A tecla é do operador e a consulta ainda não saiu: o diff na tela é o do
+    // trunk anterior, e é só ele que o aceite cobre.
+    await userEvent.type(within(dialog).getByRole("textbox", { name: /Trunk do edge/ }), "9");
+    expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeDisabled();
+
+    // Chegada a conferência do valor novo, com o mesmo diff, o caminho reabre
+    // sem tocar no aceite: a espera não é um diff diferente, e o que o operador
+    // marcou continua valendo — zerá-lo aqui pediria a marca de novo a cada
+    // tecla do trunk, mesmo quando nada mudou na comparação.
+    await waitFor(
+      () => expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeEnabled(),
+      { timeout: 2000 },
+    );
+    expect(within(dialog).getByLabelText(/ciente/i)).toBeChecked();
+  });
+
   it("trocar o perfil de exportação zera o aceite: o diff é outro", async () => {
     mockFetchComFidelidade({ exigeCiente: true, depois: [DIFERENCA_MUDA_COM_OUTRO_PERFIL] });
     renderDiscovery("/discovery?device_id=1");
@@ -593,7 +632,7 @@ describe("Discovery", () => {
     const dialog = screen.getByRole("dialog");
     await preencheAcesso(dialog);
     await userEvent.type(
-      within(dialog).getByRole("textbox", { name: /Segredo no Vault \(ipv4\)/ }),
+      within(dialog).getByRole("textbox", { name: /Caminho do segredo no Vault \(ipv4\)/ }),
       "gerenet/bgp/100.64.10.1",
     );
     await userEvent.click(within(dialog).getByLabelText(/ciente/i));
@@ -656,7 +695,9 @@ describe("Discovery", () => {
     expect(
       within(dialog).getByRole("option", { name: "CLIENTE-ANTIGO (AS64500) (desativada)" }),
     ).toBeInTheDocument();
-    // Quem traz a opção é o pedido das desativadas.
+    // Quem traz a opção é o pedido das desativadas. O mock responde conforme o
+    // pedido, então as duas metades da verificação (a URL e o rótulo) caem
+    // juntas se a flag sair do hook.
     expect(
       chamadas().some(([url]) => String(url) === "/api/v1/organizations?include_disabled=true"),
     ).toBe(true);
@@ -693,6 +734,60 @@ describe("Discovery", () => {
     await waitFor(() =>
       expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeDisabled(),
     );
+  });
+
+  it("o valor acima do teto do schema barra o aceite e diz qual é o teto", async () => {
+    // Os tetos são os do schema do serviço. Um campo que os passa devolve o 422
+    // do Pydantic, em inglês: é o mesmo caso do nome vazio e do ponto na porta,
+    // por outra porta de entrada.
+    mockFetch({
+      descoberta: { ...DISCOVERY, propostas: [{ ...PROPOSTA, organizacao_sugerida: null }] },
+      diferencas: [DIFERENCA_SO_NAO_GERENCIADA],
+    });
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+    await preencheAcesso(dialog);
+    const botao = () => within(dialog).getByRole("button", { name: "Adotar" });
+    // A colagem é como um valor comprido chega de verdade (o operador copia da
+    // documentação), e uma tecla por vez custaria 129 eventos só no nome.
+    const colar = (nome: RegExp, valor: string) =>
+      fireEvent.change(within(dialog).getByRole("textbox", { name: nome }), {
+        target: { value: valor },
+      });
+
+    colar(/Nome da organização nova/, "A".repeat(129));
+    expect(
+      within(dialog).getByText("O nome da organização aceita até 128 caracteres."),
+    ).toBeInTheDocument();
+    expect(botao()).toBeDisabled();
+    colar(/Nome da organização nova/, "CLIENTE-BETA");
+    await waitFor(() => expect(botao()).toBeEnabled());
+
+    colar(/Código do circuito/, "C".repeat(65));
+    expect(
+      within(dialog).getByText("O código do circuito aceita até 64 caracteres."),
+    ).toBeInTheDocument();
+    expect(botao()).toBeDisabled();
+    colar(/Código do circuito/, "CIRC-1");
+
+    colar(/Caminho do segredo no Vault \(ipv4\)/, "v".repeat(256));
+    expect(
+      within(dialog).getByText("O caminho do segredo aceita até 255 caracteres."),
+    ).toBeInTheDocument();
+    expect(botao()).toBeDisabled();
+    colar(/Caminho do segredo no Vault \(ipv4\)/, "");
+    await waitFor(() => expect(botao()).toBeEnabled());
+
+    // O trunk fecha a lista, e a volta ao valor derivado pode ter de esperar a
+    // conferência dele: o `waitFor` cobre a espera do campo.
+    colar(/Trunk do edge/, "T".repeat(65));
+    expect(
+      within(dialog).getByText("O trunk do edge aceita até 64 caracteres."),
+    ).toBeInTheDocument();
+    expect(botao()).toBeDisabled();
+    colar(/Trunk do edge/, "Eth-Trunk127");
+    await waitFor(() => expect(botao()).toBeEnabled(), { timeout: 2000 });
   });
 
   it("a proposta sem ASN remoto não manda ASN sentinela no corpo", async () => {
