@@ -28,10 +28,11 @@ def _org(db_session: Session, nome: str, asn: int | None = None) -> int:
 
 
 def _auth(
-    db_session: Session, org_id: int, prefix: str, *, origin: str | None = None
+    db_session: Session, org_id: int, prefix: str, *,
+    origin: str | None = None, family: str = "ipv4",
 ) -> models.BgpPrefixAuthorization:
     """Cria com `origin` quando informado; sem ele vale o default do schema."""
-    dados: dict = {"organization_id": org_id, "family": "ipv4", "prefix": prefix}
+    dados: dict = {"organization_id": org_id, "family": family, "prefix": prefix}
     if origin is not None:
         dados["origin"] = origin
     return create_authorization(
@@ -251,3 +252,70 @@ def test_revalida_rpki_indice_carregado_uma_vez_por_lote(
     assert por_prefixo["200.160.0.0/22"].validacao == "ok"
     assert por_prefixo["200.161.0.0/22"].validacao == "desconhecida"
     assert por_prefixo["200.163.0.0/23"].validacao == "diverge"  # ASN 64514 ≠ ROA 64513
+
+
+# ---- origem `registro` (design da organização por ASN) ----
+
+def test_create_origin_registro_deixa_a_validacao_nula(db_session: Session) -> None:
+    """O bloco do registro não é anunciado: não há contra o que validar, e
+    inventar uma comparação contra o próprio `inetnum` seria validar a fonte
+    contra ela mesma (design §12)."""
+    org = _org(db_session, "Cliente Registro", 264289)
+    auth = _auth(db_session, org, "138.121.28.0/22", origin="registro")
+
+    assert auth.origin == "registro"
+    assert auth.validacao is None
+
+
+def test_revalidar_nao_toca_a_origem_registro(db_session: Session, monkeypatch) -> None:
+    """`revalidar_autorizacoes` filtra `origin.in_(("irr","rpki"))`, então o
+    valor novo fica de fora sem nenhuma linha de código a mais. Este teste
+    existe para que ninguém "conserte" isso depois: se o filtro passar a
+    incluir `registro`, a revalidação consulta `-i origin` no RADB, não acha
+    rota nenhuma e marca o bloco `diverge` para sempre."""
+    org = _org(db_session, "Cliente Registro", 264289)
+    _auth(db_session, org, "138.121.28.0/22", origin="registro")
+    _auth(db_session, org, "200.160.0.0/22", origin="irr")
+    payload = {"asns": [264289], "prefixos": ["200.160.0.0/22"]}
+    monkeypatch.setattr(
+        "gerenet.domain.services.prefix_authorizations.consultar",
+        lambda *a, **kw: payload,
+    )
+
+    assert revalidar_autorizacoes(db_session) == 1  # só a de origem irr
+
+    por_prefixo = _por_prefixo(db_session)
+    assert por_prefixo["200.160.0.0/22"].validacao == "ok"
+    assert por_prefixo["138.121.28.0/22"].validacao is None
+
+
+# ---- §3.2: reexecutar não duplica ----
+
+def test_autorizacao_repetida_devolve_a_existente(db_session: Session) -> None:
+    """O `_organizacao_conflitante` ignora a própria organização, então sem
+    esta guarda a duplicata passaria calada."""
+    org = _org(db_session, "Cliente Idempotente", 64512)
+    primeira = _auth(db_session, org, "200.160.0.0/22", origin="registro")
+    segunda = _auth(db_session, org, "200.160.0.0/22", origin="registro")
+
+    assert segunda.id == primeira.id
+    assert len(_por_prefixo(db_session)) == 1
+    tipos = [e.type for e in db_session.scalars(select(models.AuditEvent))]
+    assert tipos.count("authorization.create") == 1
+
+
+def test_autorizacao_sem_commit_nao_persiste_sozinha(db_session: Session) -> None:
+    """`commit=False` é o que deixa a adoção encadear tudo numa transação."""
+    org = _org(db_session, "Cliente Encadeado", 64512)
+    create_authorization(
+        db_session,
+        PrefixAuthorizationCreate(
+            organization_id=org, family="ipv4", prefix="200.160.0.0/22",
+            origin="registro",
+        ),
+        actor="cli",
+        commit=False,
+    )
+    db_session.rollback()
+
+    assert _por_prefixo(db_session) == {}

@@ -1,9 +1,11 @@
-"""Autorizações de prefixo de downstreams (§6.4) — origem manual, IRR ou RPKI.
+"""Autorizações de prefixo de downstreams (§6.4) — origem manual, IRR, RPKI ou registro.
 
-A origem (`manual`|`irr`|`rpki`) indica como o prefixo foi autorizado; nas
-origens IRR/RPKI a validação é consultiva (§10.4): nasce `nao_verificada` e é
+A origem (`manual`|`irr`|`rpki`|`registro`) indica como o prefixo foi autorizado;
+nas origens IRR/RPKI a validação é consultiva (§10.4): nasce `nao_verificada` e é
 recalculada por `revalidar_autorizacoes` (ao final do sync de ROAs do
-rpki-client e por CLI), sem nunca bloquear a autorização.
+rpki-client e por CLI), sem nunca bloquear a autorização. A origem `registro` é o
+bloco alocado lido do registro (design da organização por ASN) e fica sem
+validação: o bloco não é anúncio, então não há contra o que validar.
 """
 import logging
 
@@ -46,8 +48,9 @@ def _organizacao_conflitante(
 
 
 def create_authorization(
-    session: Session, data: PrefixAuthorizationCreate, *, actor: str
+    session: Session, data: PrefixAuthorizationCreate, *, actor: str, commit: bool = True
 ) -> models.BgpPrefixAuthorization:
+    """Cria a autorização; `commit=False` é para a adoção encadear a dela."""
     org = get_organization(session, data.organization_id)
     if org.admin_status is False:
         raise ConflictError(f"Organização {org.name} desativada não recebe autorizações.")
@@ -60,15 +63,35 @@ def create_authorization(
             "Organização do tipo operadora não recebe autorizações de prefixo de cliente."
         )
     cidr_valido(data.prefix, data.family)  # CIDR alinhado da família certa (mensagens PT)
+    # §3.2: reexecutar a mesma operação não duplica. O `_organizacao_conflitante`
+    # abaixo ignora a própria organização, então sem esta guarda o prefixo
+    # repetido passaria calado — e é a lista da adoção que pode trazer o mesmo
+    # bloco duas vezes.
+    existente = session.scalars(
+        select(models.BgpPrefixAuthorization).where(
+            models.BgpPrefixAuthorization.organization_id == data.organization_id,
+            models.BgpPrefixAuthorization.family == data.family,
+            models.BgpPrefixAuthorization.prefix == data.prefix,
+            models.BgpPrefixAuthorization.admin_status.is_(True),
+        )
+    ).first()
+    if existente is not None:
+        return existente
     outra = _organizacao_conflitante(
         session, organization_id=data.organization_id, family=data.family, prefix=data.prefix
     )
     if outra is not None:
-        raise ConflictError(f"Prefixo {data.prefix} sobrepõe autorização de {outra.name}.")
+        # As duas organizações no texto: quem lê o 409 precisa saber de quem é o
+        # bloco e quem o pediu (design §7).
+        raise ConflictError(
+            f"Prefixo {data.prefix} sobrepõe autorização de {outra.name}: "
+            f"{org.name} não pode receber este bloco."
+        )
     dump = data.model_dump()
     auth = models.BgpPrefixAuthorization(**dump)
     # Origem IRR/RPKI: validação consultiva (§10.4) — nasce não verificada e é
-    # recalculada por revalidar_autorizacoes; origem manual fica sem validação.
+    # recalculada por revalidar_autorizacoes; origem manual e `registro` ficam
+    # sem validação (o bloco alocado não é anúncio, não há o que validar).
     if data.origin in ("irr", "rpki"):
         auth.validacao = "nao_verificada"
     session.add(auth)
@@ -78,13 +101,15 @@ def create_authorization(
             session, tipo="authorization.create", ator=actor, objeto="authorization",
             objeto_id=auth.id, antes=None, depois=dump,
         )
-        session.commit()
+        if commit:
+            session.commit()
     except IntegrityError as exc:
         session.rollback()
         raise ConflictError(
             "Não foi possível criar a autorização de prefixo: conflito de integridade."
         ) from exc
-    session.refresh(auth)
+    if commit:
+        session.refresh(auth)
     return auth
 
 
