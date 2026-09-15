@@ -933,7 +933,15 @@ def adotar_proposta(session: Session, *, proposta, revisao: schemas.AdocaoIn, ac
             "Sessão em VRF não é reproduzível por esta versão do render: a adoção "
             "gravaria uma sessão que o equipamento não tem nessa instância."
         )
-    difs = conferir_fidelidade(session, proposta)
+    # Os perfis revisados entram na conferência: sem eles o ensaio não renderiza
+    # o corpo da política de exportação, que é justamente o que o operador
+    # escolhe errado. A conferência compara o que a adoção VAI gravar.
+    perfis = {
+        s.afi: {"import_profile_id": s.import_profile_id,
+                "export_profile_id": s.export_profile_id}
+        for s in revisao.sessoes
+    }
+    difs = conferir_fidelidade(session, proposta, perfis=perfis)
     if any(d.contexto == "ensaio" for d in difs):
         raise ConflictError("A conferência não pôde ser feita para esta proposta.")
     if any(d.exige_ciente for d in difs) and not revisao.ciente:
@@ -989,9 +997,12 @@ def adotar_proposta(session: Session, *, proposta, revisao: schemas.AdocaoIn, ac
             "subinterface": proposta.subinterface,
             "snapshot_id": proposta.candidatos[0].snapshot_id,
             "ciente": revisao.ciente,
+            "perfis": perfis,
             "diferencas": [
                 {"contexto": d.contexto, "sobrando": list(d.sobrando),
-                 "faltando": list(d.faltando)}
+                 "faltando": list(d.faltando),
+                 "nao_gerenciado": list(d.nao_gerenciado),
+                 "explicacao": d.explicacao}
                 for d in difs if d.exige_ciente
             ],
         },
@@ -1201,9 +1212,16 @@ não está mais na lista, alguém adotou antes (a lista se cura sozinha).
 @router.get("/fidelidade", response_model=schemas.FidelidadeOut)
 def fidelidade(
     session: SessionDep, device_id: int, subinterface: str | None = None, vrf: str | None = None,
+    import_ipv4: int | None = None, export_ipv4: int | None = None,
+    import_ipv6: int | None = None, export_ipv6: int | None = None,
 ) -> schemas.FidelidadeOut:
     """O diff de UMA proposta, sob demanda: cada conferência roda o render do
-    equipamento inteiro num ensaio, então ela não vai embutida na lista (design §7)."""
+    equipamento inteiro num ensaio, então ela não vai embutida na lista (design §7).
+
+    Os quatro parâmetros de perfil são os que o operador escolheu na revisão: sem
+    eles o ensaio não renderiza o corpo da política de exportação, e a conferência
+    estaria comparando algo diferente do que a adoção vai gravar.
+    """
     try:
         resultado = listar_propostas(session, device_id)
     except NotFoundError as exc:
@@ -1215,6 +1233,10 @@ def fidelidade(
     )
     if proposta is None:
         raise HTTPException(status_code=404, detail="Proposta não encontrada.")
+    perfis = {
+        "ipv4": {"import_profile_id": import_ipv4, "export_profile_id": export_ipv4},
+        "ipv6": {"import_profile_id": import_ipv6, "export_profile_id": export_ipv6},
+    }
     return schemas.FidelidadeOut(
         device_id=device_id, subinterface=subinterface,
         diferencas=[
@@ -1222,7 +1244,7 @@ def fidelidade(
                                  faltando=list(d.faltando),
                                  nao_gerenciado=list(d.nao_gerenciado),
                                  explicacao=d.explicacao, exige_ciente=d.exige_ciente)
-            for d in conferir_fidelidade(session, proposta)
+            for d in conferir_fidelidade(session, proposta, perfis=perfis)
         ],
     )
 
@@ -1435,13 +1457,24 @@ export interface DiscoveryAdocaoIn {
 Em `web/src/api/hooks.ts`:
 
 ```ts
-export const useFidelidade = (deviceId: number, vrf: string | null, subinterface: string | null) =>
+/** Os perfis entram na chave de propósito: trocar um `select` de perfil refaz a
+ * conferência, porque o corpo da política de exportação muda com ele. */
+export const useFidelidade = (
+  deviceId: number,
+  vrf: string | null,
+  subinterface: string | null,
+  perfis: Record<string, { import?: number; export?: number }> = {},
+) =>
   useQuery({
-    queryKey: ["fidelidade", deviceId, vrf, subinterface],
+    queryKey: ["fidelidade", deviceId, vrf, subinterface, perfis],
     queryFn: () => {
       const qs = new URLSearchParams({ device_id: String(deviceId) });
       if (vrf) qs.set("vrf", vrf);
       if (subinterface) qs.set("subinterface", subinterface);
+      for (const [afi, p] of Object.entries(perfis)) {
+        if (p.import) qs.set(`import_${afi}`, String(p.import));
+        if (p.export) qs.set(`export_${afi}`, String(p.export));
+      }
       return apiFetch<DiscoveryFidelidadeOut>(`/api/v1/discovery/fidelidade?${qs.toString()}`);
     },
     enabled: deviceId > 0 && subinterface !== null,
@@ -1523,9 +1556,6 @@ export function AdocaoDialog({
   const { data: devices } = useDevices();
   const { data: organizacoes } = useOrganizations();
   const { data: policyProfiles } = usePolicyProfiles();
-  const { data: fidelidade } = useFidelidade(
-    proposta.device_id, proposta.vrf, proposta.subinterface,
-  );
   const adotar = useAdotar();
   const [code, setCode] = useState(proposta.circuit_code_sugerido ?? "");
   const [acesso, setAcesso] = useState<number>(0);
@@ -1534,7 +1564,12 @@ export function AdocaoDialog({
   const [orgId, setOrgId] = useState<number>(proposta.organizacao_id ?? 0);
   const [orgNome, setOrgNome] = useState(proposta.organizacao_sugerida ?? "");
   const [ciente, setCiente] = useState(false);
+  // Os perfis vêm ANTES da conferência: ela é refeita quando eles mudam, porque
+  // o corpo da política de exportação depende do produto escolhido.
   const [perfis, setPerfis] = useState<Record<string, { import?: number; export?: number }>>({});
+  const { data: fidelidade } = useFidelidade(
+    proposta.device_id, proposta.vrf, proposta.subinterface, perfis,
+  );
 
   const setPerfil = (afi: string, valores: { import?: number; export?: number }) =>
     setPerfis((atual) => ({ ...atual, [afi]: { ...atual[afi], ...valores } }));
