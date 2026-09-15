@@ -5,6 +5,7 @@ sem padding. Ex.: rp_import(64500, "ipv4") -> "RP-64500-IMPORT-V4".
 Prefix-list por produto (IP-PFX-DEFAULT-V4 etc.) usada em T4/T5.
 """
 import re
+import unicodedata
 
 from gerenet.domain.services.errors import ValidationError
 
@@ -88,3 +89,49 @@ def vsi_nome(name_logico: str, vsi_id: int) -> str:
 def subinterface(trunk: str, vid: int) -> str:
     """Nome de subinterface dot1q: <trunk>.<vid>."""
     return f"{trunk}.{vid}"
+
+
+# Orçamento da `description` da subinterface (§4). O limite real desta versão do
+# VRP entra no checklist do runbook; se ele for menor que 80, o número desce
+# aqui e a função continua correta, porque o corte é derivado dele.
+LIMITE_DESCRICAO = 80
+
+
+def _dobra_ascii(texto: str) -> str:
+    """Maiúsculas e sem acento, com os espaços preservados (§4).
+
+    A convenção observada no equipamento é ASCII (§2): um acento que chegasse
+    torto viraria divergência permanente contra a coleta, porque a SoT
+    intencionaria uma linha que o VRP nunca escreve igual.
+    """
+    return unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode("ascii").upper()
+
+
+def _velocidade_legivel(velocidade_mbps: int) -> str:
+    """Múltiplo de 1024 em `G`, o resto em `M` (§4)."""
+    if velocidade_mbps % 1024 == 0:
+        return f"{velocidade_mbps // 1024}G"
+    return f"{velocidade_mbps}M"
+
+
+def descricao_subinterface(
+    code: str, nome_organizacao: str | None, velocidade_mbps: int | None
+) -> str | None:
+    """A `description` da subinterface: `<CÓDIGO> <NOME DA ORG> [<VELOCIDADE>]` (§4).
+
+    Devolve o texto SEM a palavra-chave `description` — quem a escreve é o
+    template. `None` quando não há nome de organização: a linha não é emitida,
+    e não emitida é diferente de emitida com o campo vazio.
+
+    Quem cede no orçamento é o nome da organização, cortado seco. Sobrando menos
+    de um caractere para ele, a linha sai como `<CÓDIGO> [<VELOCIDADE>]`, sem
+    espaço dobrado.
+    """
+    nome = _dobra_ascii(nome_organizacao or "").strip()
+    if not nome:
+        return None
+    sufixo = f" [{_velocidade_legivel(velocidade_mbps)}]" if velocidade_mbps is not None else ""
+    espaco = LIMITE_DESCRICAO - len(code) - len(sufixo) - 1
+    if espaco < 1:
+        return f"{code}{sufixo}"
+    return f"{code} {nome[:espaco]}{sufixo}"
