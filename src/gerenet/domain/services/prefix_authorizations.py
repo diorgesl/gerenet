@@ -182,7 +182,11 @@ def revalidar_autorizacoes(session: Session) -> int:
       O payload é memoizado por ASN no lote (uma consulta por organização).
 
     Organização sem ASN ⇒ `log.warning` e `validacao` mantida (não conta).
-    Autorizações desativadas e de origem `manual` são ignoradas.
+    Entram no lote só as autorizações ATIVAS de origem `irr` ou `rpki` — o
+    filtro é `origin.in_(("irr", "rpki"))`. Ficam de fora as desativadas, as
+    de origem `manual` e as de origem `registro`: é o que mantém o bloco
+    alocado lido do registro longe da revalidação, que o marcaria `diverge`
+    para sempre.
 
     Um único commit ao final (o lote é uma transação; em exceção, rollback e a
     exceção sobe). Retorna quantas autorizações tiveram a `validacao` atualizada.

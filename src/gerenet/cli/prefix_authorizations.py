@@ -6,7 +6,7 @@ from gerenet.domain.schemas import PrefixAuthorizationCreate
 from gerenet.domain.services import prefix_authorizations as svc
 from gerenet.domain.services.errors import GerenetError
 
-app = typer.Typer(help="Prefixos autorizados por organização (origem manual, IRR ou RPKI).")
+app = typer.Typer(help="Prefixos autorizados por organização (origem manual, IRR, RPKI ou registro).")
 
 
 @app.command("add")
@@ -15,7 +15,7 @@ def add(
     family: str = typer.Option(..., help="ipv4 ou ipv6."),
     prefix: str = typer.Option(..., help="CIDR alinhado (ex.: 203.0.113.0/24)."),
     origin: str = typer.Option(
-        "manual", "--origin", help="Origem da autorização: manual, irr ou rpki."
+        "manual", "--origin", help="Origem da autorização: manual, irr, rpki ou registro."
     ),
     notes: str | None = typer.Option(None, help="Observações."),
 ) -> None:
@@ -62,9 +62,12 @@ def listar(
             typer.echo(f"Erro: {exc}", err=True)
             raise typer.Exit(1) from exc
         for auth in autorizacoes:
+            # A coluna da origem é dimensionada pelo maior valor do enum
+            # (`registro`, 8) — com 6 a linha de uma autorização do registro
+            # desalinhava as seguintes.
             typer.echo(
                 f"{auth.id:>4}  {auth.family:<4} {auth.prefix:<20} "
-                f"{auth.origin:<6} {auth.validacao or '-'!s:<16} "
+                f"{auth.origin:<8} {auth.validacao or '-'!s:<16} "
                 f"org {auth.organization_id}"
             )
 
