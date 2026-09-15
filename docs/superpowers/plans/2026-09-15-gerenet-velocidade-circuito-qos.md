@@ -907,7 +907,22 @@ def _recursos_com_subif(*enderecos_v4: str) -> dict:
     }
 
 
-_ENDERECO_DO_BLOCO = "10.0.0.0 255.255.255.254"
+_ENDERECO_DO_BLOCO = "10.0.0.0/31"
+
+> **Ruling do pré-voo, 5.** Esta linha trazia `"10.0.0.0 255.255.255.254"`, a
+> forma como o comando aparece no bloco do render. Mas o valor alimenta o lado
+> **encontrado** (`_recursos_com_subif`), que é o formato do merge:
+> `_enderecos_do_bloco` normaliza para `addr/prefixlen`
+> (`runner.py:402` — `f"{endereco}/{prefixlen}"`), e é contra ele que a
+> identidade do bloco é conferida. Com o literal antigo a conferência compara
+> `"10.0.0.0/31"` contra `["10.0.0.0 255.255.255.254"]`, não acha, e devolve
+> `conflito` — cinco dos seis testes novos não teriam como passar, e o próprio
+> Step 2 desta tarefa dizia que o RED esperado era os vizinhos devolverem
+> `consta`. O Step 2 estava certo e o Step 1 estava errado. O valor correto é o
+> mesmo formato de `test_runner.py:348`. — **Custo se errado:** a tarefa não
+> fecha; o implementer ou para em `BLOCKED` ou gasta uma rodada descobrindo que
+> o defeito é do dado de teste, não do código. Levantado pela execução da
+> Task 5, e emendado no commit seguinte.
 
 
 def test_estado_subinterface_com_descricao_e_qos_consta() -> None:
@@ -2409,12 +2424,30 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 | `test_adocao.py::test_ensaio_fiel_aceita_sem_ciente` | a conferência direta ia sem identidade e passa a acusar descrição | Task 7 Step 1c |
 | `test_adocao.py::test_a_auditoria_leva_todas_as_diferencas` | prende a descrição no `nao_gerenciado` | Task 7 Step 1d |
 | `test_runner_change.py::_SUB_BLOCO` (os três F1) | **não** quebram: o bloco não tem `description` nem `qos car`, e `conteudo_conforme` devolve `True` | — |
+| `test_runner_change.py::test_run_change_bloco_ja_presente_marca_step_pulado` | o `_fakes_de_mudanca` devolvia `arquivos = {}`: sem texto de backup a `description` nova não se confirma e o bloco vira `atualizar` em vez de `consta` | Task 5 (helper `_backup_do_render` e o parâmetro `backups`) |
+| `test_runner_change.py::test_run_change_create_misto_consta_ausente_aborta` | idem — o mesmo fixture, e o abort de plano velho depende de o bloco constar | Task 5 |
 | `test_discovery.py::test_fidelidade_ignora_comentario_dentro_da_interface` | o ensaio passa a emitir `description`, que o texto da fixture não tem | Task 6 |
 | `test_discovery.py::test_fidelidade_nao_acusa_as_duas_formas_da_mesma_linha` | idem: a linha nova sobra de um lado só | Task 6 |
 | `test_adocao.py::test_a_conferencia_usa_o_trunk_da_revisao` | idem, e aqui **não basta** o conserto da fonte: o teste chama `conferir_fidelidade` sem identidade, então o ensaio continua com o `ENSAIO-…` falso. O teste passa a mandar a identidade da revisão | Task 7 |
 | `tests/api/test_discovery_adopt_api.py::test_fidelidade_sob_demanda` | idem, pelo endpoint | Task 7 (arquivo que **entra** nos Files da Task 7) |
 
 > **Ruling do pré-voo, 4.** Quatro dos dez testes que a Task 3 quebra não estavam nesta tabela — as quatro linhas acima. Elas foram levantadas pela execução da Task 3, não pela leitura do plano, e a diferença é a de sempre: ler o código acha a maioria, rodar acha o resto. Três são variações do mesmo mecanismo já previsto (a descrição que o ensaio passa a emitir), mas uma delas não se conserta só no código: `test_a_conferencia_usa_o_trunk_da_revisao` chama `conferir_fidelidade` **sem** identidade, e mesmo depois da Task 7 esse caminho continua caindo no `ENSAIO-…` de placeholder — o teste precisa passar a identidade, senão segue vermelho depois do conserto da fonte. A quarta mora em `tests/api/test_discovery_adopt_api.py`, um arquivo que nenhum `Files` de tarefa listava: a Task 7 passa a listá-lo, porque é ela que mexe nos quatro query params que o endpoint expõe. — **Custo se errado:** se as quatro não forem consertadas nas tarefas indicadas, a suíte fecha a frente vermelha em dez testes, e a causa (uma descrição que o ensaio inventa) não é óbvia para quem só vê o nome do teste.
+
+> **Ruling do pré-voo, 6 — a tabela estava incompleta de novo, e desta vez mais
+> fundo.** Duas linhas foram acrescentadas acima, e elas têm uma diferença que
+> as quatro do Ruling 4 não têm: **quebram na Task 5, não nas tarefas 1–3**. O
+> motivo é que as tarefas 1–3 mudaram o *render* e a Task 4 mudou o *plano*;
+> só a Task 5 mexeu na *execução*, que é o que o `run_change` destes dois
+> testes exercita de ponta a ponta. A tabela foi escrita prevendo a quebra pelo
+> lado do render e não previu a quebra pelo lado do executor — o mesmo
+> conteúdo, mas chegando por outro caminho e com um commit de atraso. E elas
+> ficam na Task 5 porque é a **única** tarefa do plano com
+> `test_runner_change.py` no `Files:` (`grep` no plano: linha 848, e mais
+> nenhuma); uma linha apontando para outra tarefa mandaria o implementer
+> procurar um conserto que ninguém faria. — **Custo se errado:** os dois testes
+> ficariam vermelhos sem dono, e como eles exercitam o pular-e-o-abort do plano,
+> a frente fecharia com o caminho de execução quebrado e a suíte apontando para
+> o lado errado (o render) em vez do certo (o fixture sem backup).
 
 **Ordem de execução.** As tarefas 1 e 2 são independentes entre si e podem sair em qualquer ordem. A 3 depende das duas. A 4 depende da 3 (é o conteúdo dela que a `conteudo_conforme` confere). A 5 depende da 4. A 6 depende da 3. A 7 depende da 2 e da 6. As tarefas 8 e 9 dependem da 2 e da 7, e a 10 e a 11 fecham.
 
