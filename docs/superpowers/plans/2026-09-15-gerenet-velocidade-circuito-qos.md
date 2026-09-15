@@ -1169,6 +1169,17 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 - Modify: `src/gerenet/domain/schemas.py` (`PropostaOut`)
 - Modify: `tests/fixtures/huawei_vrp/ne8000_display_current_configuration.txt`
 - Test: `tests/automation/test_config_vrp.py`, `tests/automation/test_discovery.py`
+- Test: `tests/cli/test_discovery_cli.py` (a asserção que pinava a `description` no grupo "não gerenciado" — Ruling do pré-voo, 7)
+
+> **Ruling do pré-voo, 7 — o `Files:` desta tarefa estava curto de um arquivo.**
+> `tests/cli/test_discovery_cli.py` pina a `description` no bloco do grupo que
+> **não** gateia, e é exatamente o que esta tarefa muda: a `description` sai de
+> `_NAO_GERENCIADAS_SUBINTERFACE` e passa a exigir ciente. O arquivo quebra, e
+> nenhuma outra tarefa do plano o lista. A asserção passa a apontar para o bloco
+> das que exigem ciente.
+> **Custo se errado:** a frente fecharia com um teste de CLI vermelho, fora do
+> conjunto conhecido de descoberta/adoção — e o vermelho seria lido como
+> regressão da Task 6 em vez de lacuna da lista de arquivos.
 
 **Interfaces:**
 - Consumes: nada das tarefas anteriores (é leitura pura).
@@ -1215,6 +1226,18 @@ def test_qos_car_com_valor_torto_vira_aviso() -> None:
 
 E acrescentar ao fim de `tests/automation/test_discovery.py`:
 
+> **Ruling do pré-voo, 8 — o literal de um destes testes era impossível.** A
+> versão anterior do `test_cir_nao_multiplo_de_mil_nao_sugere_velocidade` trazia
+> `cir 1500000` no texto e no docstring, mas `1500000 % 1000 == 0` e
+> `1500000 // 1000 == 1500`: a `_velocidade_do_qos` do próprio plano devolve
+> `1500`, e o `assert ... is None` não tem como passar. O docstring dizia o
+> motivo em voz alta — "são 1,5 Gbps" — e 1,5 Gbps em kbps é um número inteiro
+> de Mbps; o guard é `% 1000` (Mbps exato), não "Gbps redondo". O literal passa
+> a `1536500` (1536,5 Mbps), que é o caso que o nome do teste descreve.
+> **Custo se errado:** um teste que nunca passa não é cobertura do caminho de
+> recusa — ele fica vermelho, alguém troca o `assert` por `== 1500` para
+> "consertar" e a guarda do divisor inexato perde o único teste que tinha.
+
 ```python
 def test_a_velocidade_vem_do_qos_do_equipamento(db_session, tmp_path) -> None:
     """Num enlace que já tem QoS ninguém digita a taxa à mão (§7)."""
@@ -1236,14 +1259,14 @@ def test_a_velocidade_vem_do_qos_do_equipamento(db_session, tmp_path) -> None:
 
 
 def test_cir_nao_multiplo_de_mil_nao_sugere_velocidade(db_session, tmp_path) -> None:
-    """O divisor é inteiro: `cir 1500000` são 1,5 Gbps, e arredondar aqui vira
+    """O divisor é inteiro: `cir 1536500` são 1536,5 Mbps, e arredondar aqui vira
     QoS errado no equipamento mais adiante (§7). A sugestão fica vazia."""
     dev = _ambiente(db_session)
     _com_texto(db_session, dev, tmp_path,
                "interface Eth-Trunk127.2702\n"
                " vlan-type dot1q 2702\n"
                " ip address 100.64.10.0 255.255.255.254\n"
-               " qos car cir 1500000 inbound\n"
+               " qos car cir 1536500 inbound\n"
                "#\n"
                "bgp 65001\n"
                " peer 100.64.10.1 as-number 64512\n"
