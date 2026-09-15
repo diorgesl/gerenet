@@ -1147,10 +1147,12 @@ class AdocaoIn(BaseModel):
     o trunk do lado do cliente, os perfis de cada família e o caminho do segredo
     no Vault quando o equipamento tem senha.
 
-    `extra="forbid"` (e nos três modelos, este e os dois filhos): o corpo vem de
-    um `--json` escrito à mão e a API responde 201 calada a uma chave digitada
-    errado — `document` → `documment` e o operador acredita que o CNPJ entrou.
-    O 422 diz qual campo sobrou, em vez de a adoção seguir sem ele.
+    `extra="forbid"` (nos três modelos, este e os dois filhos): o corpo vem de um
+    `--json` escrito à mão e a API responde 201 calada a uma chave digitada
+    errado — `sessoes` → `sesssoes` e a adoção segue sem a sessão que o operador
+    quis cadastrar. O 422 diz qual campo sobrou, em vez de seguir sem ele. O
+    `OrganizationCreate` aninhado fica de fora de propósito: é contrato de outros
+    clientes, e lá a chave a mais continua sendo ignorada.
     """
 
     model_config = ConfigDict(extra="forbid")
