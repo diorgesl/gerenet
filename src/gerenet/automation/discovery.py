@@ -6,6 +6,7 @@ peer desconhecido com o palpite de classificação e o motivo que o sustenta.
 """
 import ipaddress
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -63,11 +64,15 @@ class ResultadoDescoberta:
     internos: list[Candidato] = field(default_factory=list)
 
 
-def _snapshot_com_config(session: Session, device_id: int) -> models.DeviceSnapshot | None:
-    """Snapshot mais recente que ainda tenha a configuração em disco.
+def _snapshot_com_config(
+    session: Session, device_id: int,
+) -> tuple[models.DeviceSnapshot | None, str]:
+    """Snapshot mais recente que ainda tenha a configuração, e o texto dele.
 
     Uma coleta anterior a esta frente pode não trazer o recurso, então olhar só
-    o último snapshot daria "sem configuração" com a configuração existindo.
+    o último snapshot daria "sem configuração" com a configuração existindo. O
+    texto vem junto porque quem chama precisa dele para parsear, e ler o
+    arquivo de novo seria uma segunda leitura do mesmo disco.
     """
     snaps = session.scalars(
         select(models.DeviceSnapshot)
@@ -76,9 +81,10 @@ def _snapshot_com_config(session: Session, device_id: int) -> models.DeviceSnaps
         .limit(5)
     ).all()
     for snap in snaps:
-        if texto_backup(snap).strip():
-            return snap
-    return None
+        texto = texto_backup(snap)
+        if texto.strip():
+            return snap, texto
+    return None, ""
 
 
 def _conhecidos(session: Session, device_id: int) -> set[tuple[str | None, str, str]]:
@@ -147,11 +153,11 @@ def _classificar(
 def listar_candidatos(session: Session, device_id: int) -> ResultadoDescoberta:
     """Peers da configuração que a SoT não conhece (spec §4)."""
     device = get_device(session, device_id)
-    snap = _snapshot_com_config(session, device.id)
+    snap, texto = _snapshot_com_config(session, device.id)
     if snap is None:
         return ResultadoDescoberta(device_id=device.id, snapshot_id=None, aviso=AVISO_SEM_CONFIG)
 
-    config = parse_config_vrp(texto_backup(snap))
+    config = parse_config_vrp(texto)
     conhecidos = _conhecidos(session, device.id)
     ignorados = {
         (i.vrf, i.afi, endereco_canonico(i.remote_address))
@@ -232,6 +238,13 @@ class ResultadoPropostas:
     snapshot_id: int | None
     aviso: str | None = None
     propostas: list[Proposta] = field(default_factory=list)
+    # Os iBGP vêm de `listar_candidatos` e não têm proposta: sem eles aqui, quem
+    # mostra a lista teria de ler e parsear a configuração de novo.
+    internos: list[Candidato] = field(default_factory=list)
+    # A idade do texto usado: o motor recua para um snapshot mais antigo quando
+    # os recentes não têm a configuração, e uma resposta de dez minutos atrás e
+    # uma de três dias atrás não valem o mesmo (§8 do design).
+    snapshot_age_seconds: float | None = None
 
 
 def _enlace(subs, afi: str, endereco_remoto: str):
@@ -642,7 +655,7 @@ def listar_propostas(session: Session, device_id: int) -> ResultadoPropostas:
     descoberta = listar_candidatos(session, device_id)
     resultado = ResultadoPropostas(
         device_id=descoberta.device_id, snapshot_id=descoberta.snapshot_id,
-        aviso=descoberta.aviso,
+        aviso=descoberta.aviso, internos=descoberta.internos,
     )
     # Quem manda parar é a AUSÊNCIA de coleta, não a presença de aviso: `aviso`
     # carrega dois estados (sem coleta e leitura parcial), e abortar por leitura
@@ -654,6 +667,7 @@ def listar_propostas(session: Session, device_id: int) -> ResultadoPropostas:
 
     device = get_device(session, descoberta.device_id)
     snap = session.get(models.DeviceSnapshot, descoberta.snapshot_id)
+    resultado.snapshot_age_seconds = (datetime.now(UTC) - snap.started_at).total_seconds()
     config = parse_config_vrp(texto_backup(snap))
 
     por_enlace: dict[tuple[str | None, str], Proposta] = {}
@@ -773,8 +787,15 @@ def listar_propostas(session: Session, device_id: int) -> ResultadoPropostas:
 @dataclass(frozen=True)
 class Diferenca:
     contexto: str                  # "peer" | "subinterface" | "ensaio"
-    sobrando: tuple[str, ...]      # o render produz e a configuração não tem
-    faltando: tuple[str, ...]      # a configuração tem e o render não produz
+    sobrando: tuple[str, ...] = ()      # o render produz e a configuração não tem
+    faltando: tuple[str, ...] = ()      # a configuração tem e o render não produz
+    nao_gerenciado: tuple[str, ...] = ()   # a SoT não emite isto, e não é divergência
+    explicacao: str | None = None          # quando a comparação não pôde ser feita
+
+    @property
+    def exige_ciente(self) -> bool:
+        """Só o que a SoT VAI MUDAR no equipamento gateia o aceite (design §6)."""
+        return bool(self.sobrando or self.faltando)
 
 
 def _equivalencia_vrp(texto: str) -> str:
@@ -933,6 +954,26 @@ def _ensaio(session: Session, proposta: Proposta) -> dict:
     return {"circuito": circ, "sessoes": sessoes}
 
 
+# Linhas de subinterface que o render não emite: o slot `description` do
+# template existe e nada o preenche, e não há `mtu` de subinterface.
+_NAO_GERENCIADAS_SUBINTERFACE = ("description ", "mtu ")
+
+
+def _particiona_subinterface(linhas: tuple[str, ...]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Separa o que a SoT gerencia do que ela só não emite (design §17.1).
+
+    O render não tem `description` de subinterface (o slot existe no template e
+    nada o preenche) nem `mtu`, e numa borda real os dois estão em toda
+    subinterface. Deixá-los no `faltando` faria "diferença exige ciente"
+    degenerar em "marque sempre".
+    """
+    gerenciadas, nao_gerenciadas = [], []
+    for linha in linhas:
+        alvo = nao_gerenciadas if linha.startswith(_NAO_GERENCIADAS_SUBINTERFACE) else gerenciadas
+        alvo.append(linha)
+    return tuple(sorted(gerenciadas)), tuple(sorted(nao_gerenciadas))
+
+
 def conferir_fidelidade(session: Session, proposta: Proposta) -> list[Diferenca]:
     """O que a SoT reproduziria × o que a configuração tem (spec §9).
 
@@ -953,10 +994,32 @@ def conferir_fidelidade(session: Session, proposta: Proposta) -> list[Diferenca]
     em VRF, que o render não reproduz), devolve a diferença de contexto
     `ensaio` dizendo isso, em vez de estourar: uma exceção aqui chegaria a quem
     chamou esperando uma lista de diferenças, e uma lista vazia leria como
-    "está tudo fiel".
+    "está tudo fiel". O que a diferença diz vai em `explicacao`, com `sobrando`
+    e `faltando` vazios: eles são o que a SoT mudaria no equipamento, e uma
+    linha dentro deles faria um `ensaio` gatear o aceite de uma comparação que
+    não aconteceu (design §6).
     """
-    if not proposta.candidatos or proposta.site_id is None:
-        return []
+    if not proposta.candidatos:
+        # Sem candidato não há endereço de peer nem snapshot a ler: a comparação
+        # não tem por onde começar, e a lista vazia leria como fidelidade.
+        return [Diferenca(
+            contexto="ensaio",
+            explicacao=(
+                "a proposta não tem candidato: sem o peer lido na configuração não "
+                "há endereço nem coleta com que comparar."
+            ),
+        )]
+    if proposta.site_id is None:
+        # O circuito do ensaio precisa do site (a coluna é NOT NULL) e é dele
+        # que sai o render a comparar: sem site, a reserva não acontece.
+        return [Diferenca(
+            contexto="ensaio",
+            explicacao=(
+                "o equipamento não está vinculado a um site, e o IPAM reserva por "
+                "site: sem a reserva o ensaio não tem como acontecer, e sem ele não "
+                "há comparação com a configuração."
+            ),
+        )]
     if proposta.vrf is not None:
         # Defesa em profundidade: a proposta já carrega o conflito
         # `vrf_nao_renderizavel`, mas a conferência é chamada para qualquer
@@ -967,7 +1030,7 @@ def conferir_fidelidade(session: Session, proposta: Proposta) -> list[Diferenca]
             "sessões na instância pública: a comparação não é confiável para uma "
             "sessão em VRF."
         )
-        return [Diferenca(contexto="ensaio", sobrando=(), faltando=(mensagem,))]
+        return [Diferenca(contexto="ensaio", explicacao=mensagem)]
     snap = session.get(models.DeviceSnapshot, proposta.candidatos[0].snapshot_id)
     texto = texto_backup(snap)
     resultado: list[Diferenca] = []
@@ -979,9 +1042,7 @@ def conferir_fidelidade(session: Session, proposta: Proposta) -> list[Diferenca]
             # Uma restrição de unicidade recusou o ensaio (a reserva que a
             # proposta pede já existe, na mesma grafia, é o caso comum): sem
             # ensaio não há comparação a fazer, e é isso que a diferença diz.
-            return [Diferenca(
-                contexto="ensaio", sobrando=(), faltando=(AVISO_SEM_ENSAIO,),
-            )]
+            return [Diferenca(contexto="ensaio", explicacao=AVISO_SEM_ENSAIO)]
         render = render_desejado(session, proposta.device_id)
         id_circuito = criados["circuito"].id
         ids_sessoes = {s.id for s in criados["sessoes"]}
@@ -1010,10 +1071,14 @@ def conferir_fidelidade(session: Session, proposta: Proposta) -> list[Diferenca]
             esperado = _normaliza_linhas(comandos_sub)
             esperado.discard(f"interface {proposta.subinterface}")
             encontrado = _contexto_interface(texto, proposta.subinterface)
+            gerenciadas, nao_gerenciadas = _particiona_subinterface(
+                tuple(sorted(encontrado - esperado))
+            )
             resultado.append(Diferenca(
                 contexto="subinterface",
                 sobrando=tuple(sorted(esperado - encontrado)),
-                faltando=tuple(sorted(encontrado - esperado)),
+                faltando=gerenciadas,
+                nao_gerenciado=nao_gerenciadas,
             ))
     finally:
         # Desfaz só o ensaio (o SAVEPOINT), pela razão da docstring: o

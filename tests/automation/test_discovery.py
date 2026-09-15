@@ -926,11 +926,12 @@ def test_fidelidade_de_proposta_com_conflito_explica_em_vez_de_estourar(
 
     assert [d.contexto for d in diferencas] == ["ensaio"]
     assert diferencas[0].sobrando == ()
+    assert diferencas[0].faltando == ()
     # A mensagem diz o que a função sabe (uma restrição de unicidade recusou o
     # ensaio), e não uma causa que ela não pode conhecer: qualquer colisão de
     # unicidade do ensaio cai na mesma captura, e o `prefixo_tomado` na mesma
     # grafia é só a mais provável.
-    assert "restrição de unicidade" in diferencas[0].faltando[0]
+    assert "restrição de unicidade" in diferencas[0].explicacao
     # O ensaio que morreu no meio (organização e circuito já tinham ido para a
     # transação) também é desfeito: sobra só o circuito tomado, com a VLAN dele.
     assert db_session.query(models.Circuit).count() == 1
@@ -964,8 +965,12 @@ def test_fidelidade_de_peer_em_vrf_avisa_que_a_comparacao_nao_vale(
 
     assert [d.contexto for d in diferencas] == ["ensaio"]
     assert diferencas[0].sobrando == ()
-    assert "VPNA" in diferencas[0].faltando[0]
-    assert "instância pública" in diferencas[0].faltando[0]
+    # A explicação sai do `faltando`: linha lá dentro faria a diferença de
+    # `ensaio` exigir ciente de uma comparação que não aconteceu.
+    assert diferencas[0].faltando == ()
+    assert diferencas[0].explicacao is not None
+    assert "VPNA" in diferencas[0].explicacao
+    assert "instância pública" in diferencas[0].explicacao
 
 
 def test_fidelidade_nao_acusa_as_duas_formas_da_mesma_linha(db_session, tmp_path) -> None:
@@ -1137,3 +1142,45 @@ def test_veredito_adotavel_do_upstream_com_organizacao(db_session, tmp_path) -> 
     assert gama.pendencias == []
     assert gama.conflitos == []
     assert gama.veredito == "adotavel"
+
+
+def test_o_resultado_traz_os_internos_e_a_idade_da_coleta(db_session, tmp_path) -> None:
+    """O `list` do CLI parava de parsear a config duas vezes só por causa disto."""
+    dev = _ambiente(db_session)
+    _com_config(db_session, dev, tmp_path)
+    resultado = listar_propostas(db_session, dev.id)
+    assert [c.remote_address for c in resultado.internos] == ["10.0.0.9"]
+    assert resultado.snapshot_age_seconds is not None
+    assert resultado.snapshot_age_seconds >= 0
+
+
+def test_diferenca_separa_o_que_a_sot_nao_gerencia(db_session, tmp_path) -> None:
+    """Descrição e MTU da subinterface saem do que exige ciente (design §6)."""
+    dev = _ambiente(db_session)
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+    diferencas = conferir_fidelidade(db_session, alfa)
+    sub = next(d for d in diferencas if d.contexto == "subinterface")
+    assert any("description" in linha for linha in sub.nao_gerenciado)
+    assert not any("description" in linha for linha in sub.faltando + sub.sobrando)
+
+
+def test_exige_ciente_so_quando_o_render_mudaria_o_equipamento(db_session, tmp_path) -> None:
+    dev = _ambiente(db_session)
+    _com_config(db_session, dev, tmp_path)
+    alfa = _propostas(db_session, dev)[1001]
+    sub = next(d for d in conferir_fidelidade(db_session, alfa) if d.contexto == "subinterface")
+    assert sub.exige_ciente is False  # só descrição sobra, que não é gerenciada
+
+
+def test_o_ensaio_nao_usa_faltando_para_explicar(db_session, tmp_path) -> None:
+    """A explicação do ensaio vai no campo dela: `sobrando` e `faltando` vazios
+    num contexto `ensaio` leriam como fidelidade."""
+    dev = _ambiente(db_session)
+    _com_config(db_session, dev, tmp_path)
+    vpn = next(p for p in listar_propostas(db_session, dev.id).propostas if p.vrf == "VPNA")
+    (diferenca,) = conferir_fidelidade(db_session, vpn)
+    assert diferenca.contexto == "ensaio"
+    assert diferenca.explicacao is not None
+    assert diferenca.sobrando == ()
+    assert diferenca.faltando == ()

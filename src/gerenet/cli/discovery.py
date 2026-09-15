@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 from gerenet.automation.discovery import (
     Candidato,
     conferir_fidelidade,
-    listar_candidatos,
     listar_propostas,
 )
 from gerenet.db import get_session
@@ -104,6 +103,22 @@ def _imprime_internos(device: str, internos: list[Candidato]) -> None:
         typer.echo(f"    sugerido ignorar: {_comando_ignore(device, candidato)}")
 
 
+def _idade_da_coleta(segundos: float) -> str:
+    """Idade da coleta em texto curto (mesma escala da tela do dashboard).
+
+    A descoberta recua para um snapshot mais antigo quando os recentes não têm a
+    configuração, e é a idade que diz se o operador está lendo dez minutos ou
+    três dias: em segundos crus os dois números se parecem.
+    """
+    if segundos < 60:
+        return f"{segundos:.0f} s"
+    if segundos < 3600:
+        return f"{segundos / 60:.0f} min"
+    if segundos < 3 * 86400:
+        return f"{segundos / 3600:.1f} h"
+    return f"{segundos / 86400:.1f} d"
+
+
 @app.command("list")
 def listar(device: str = typer.Argument(..., help="ID ou nome do equipamento.")) -> None:
     """Mostra as propostas de adoção do equipamento."""
@@ -111,24 +126,21 @@ def listar(device: str = typer.Argument(..., help="ID ou nome do equipamento."))
         encontrado = _resolve(session, device)
         try:
             resultado = listar_propostas(session, encontrado.id)
-            # `listar_propostas` monta a proposta dos adotáveis e deixa os
-            # internos fora do resultado, onde só `listar_candidatos` os
-            # alcança. A leitura é repetida porque esta parte não mexe no
-            # motor; ela é pura e lê a configuração já gravada.
-            internos = listar_candidatos(session, encontrado.id).internos
         except GerenetError as exc:
             typer.echo(f"Erro: {exc}", err=True)
             raise typer.Exit(1) from exc
         if resultado.aviso:
             typer.echo(f"Aviso: {resultado.aviso}")
+        if resultado.snapshot_age_seconds is not None:
+            typer.echo(f"Coleta usada: há {_idade_da_coleta(resultado.snapshot_age_seconds)}.")
         _imprime_propostas(resultado.propostas)
-        if resultado.aviso is None and not resultado.propostas and not internos:
+        if resultado.aviso is None and not resultado.propostas and not resultado.internos:
             # Sem coleta a lista vazia não sustenta conclusão nenhuma: quem diz
             # que não há peer é a leitura, e ela não aconteceu. E com internos a
             # frase seria falsa: eles estão fora da SoT por definição, e o bloco
             # logo abaixo os mostra.
             typer.echo("Nenhum peer fora da SoT.")
-        _imprime_internos(encontrado.name, internos)
+        _imprime_internos(encontrado.name, resultado.internos)
         ignorados = listar_ignorados(session, encontrado.id)
     if ignorados:
         # Só a contagem: a linha com os endereços devolveria à tela o peer que
