@@ -26,11 +26,15 @@ FIXTURE = Path("tests/fixtures/huawei_vrp/ne8000_display_current_configuration.t
 # O peer v4 do enlace do CLIENTE-ALFA tem `password cipher` na fixture; o valor
 # mora no Vault e o que a SoT guarda é o caminho.
 CAMINHO_SENHA = "gerenet/bgp-sessions/adoc-1001/password"
-# Um enlace que o render reproduz linha a linha: sem senha de peer, sem
-# descrição e sem política, a conferência não tem diferença no grupo que muda.
+# Um enlace que o render reproduz linha a linha: sem senha de peer, sem QoS e
+# sem política, a conferência não tem diferença no grupo que muda. A
+# `description` FAZ parte do texto porque o render passou a emiti-la (§4) e a
+# SoT a gerencia (§7): é a identidade da revisão que a reproduz, e é isso que
+# estes testes medem.
 _CONFIG_FIEL = (
     "interface Eth-Trunk127.601\n"
     " vlan-type dot1q 601\n"
+    " description ADOC-64512-601 CLIENTE ALFA\n"
     " ip address 100.64.10.0 255.255.255.254\n"
     " statistic enable\n"
     "#\n"
@@ -60,7 +64,7 @@ def _proposta(db_session, dev, *, vid=1001):
 
 
 def _revisao(dev, *, vid=1001, ciente=True, edge_trunk="Eth-Trunk127", sessoes=None,
-             autorizacoes=None):
+             autorizacoes=None, velocidade_mbps=None):
     """A revisão do enlace do CLIENTE-ALFA (o vid 1001 da fixture).
 
     O `ciente` nasce ligado porque este enlace TEM diferença no grupo que muda:
@@ -69,11 +73,15 @@ def _revisao(dev, *, vid=1001, ciente=True, edge_trunk="Eth-Trunk127", sessoes=N
     aceite explícito, a adoção recusa, e é o que o teste do `ciente` prende. O
     `edge_trunk` é o que o ensaio derivaria do nome da subinterface, e a adoção
     recusa a revisão que não o traga.
+
+    `velocidade_mbps` é o campo que a frente da velocidade acrescentou (§7): o
+    que a adoção grava e o que a `description` e o `qos car` do ensaio derivam.
     """
     return AdocaoIn(
         device_id=dev.id, vrf=None, subinterface=f"Eth-Trunk127.{vid}",
         circuit_code=f"ADOC-64512-{vid}", access_device_id=dev.id, access_port="GE0/0/1",
         edge_trunk=edge_trunk,
+        velocidade_mbps=velocidade_mbps,
         organizacao_nova={"name": "Cliente Alfa", "kind": "downstream", "asn": 64512},
         # Só o peer v4 do enlace tem senha no equipamento: o operador informa o
         # caminho do segredo no Vault para essa sessão, e não para a outra.
@@ -178,7 +186,13 @@ def test_ensaio_fiel_aceita_sem_ciente(db_session, tmp_path) -> None:
     _site, dev = _ambiente(db_session, tmp_path, texto=_CONFIG_FIEL)
     prop = _proposta(db_session, dev, vid=601)
 
-    assert not any(d.exige_ciente for d in conferir_fidelidade(db_session, prop))
+    assert not any(
+        d.exige_ciente
+        for d in conferir_fidelidade(
+            db_session, prop, circuit_code="ADOC-64512-601",
+            organizacao_nome="Cliente Alfa",
+        )
+    )
 
     circ_id = adotar_proposta(
         db_session, proposta=prop, actor="cli",
@@ -192,9 +206,11 @@ def test_ensaio_fiel_aceita_sem_ciente(db_session, tmp_path) -> None:
 
 
 def test_a_auditoria_leva_todas_as_diferencas(db_session, tmp_path) -> None:
-    """O payload é trilha, não decisão: leva também o grupo que a SoT não
-    gerencia (a descrição da subinterface), que o operador viu e não precisou
-    assumir (design §17.1)."""
+    """O payload é trilha, não decisão: leva os quatro grupos de todo contexto,
+    inclusive os vazios (design §17.1). A descrição da subinterface deixou de
+    ser "não gerenciada" na frente da velocidade (§7): o equipamento tem a do
+    CLIENTE-ALFA e a adoção grava a do código novo, então ela aparece dos dois
+    lados — e é por isso que `_revisao` nasce com o `ciente` ligado."""
     _site, dev = _ambiente(db_session, tmp_path)
     adotar_proposta(db_session, proposta=_proposta(db_session, dev), revisao=_revisao(dev),
                     actor="cli")
@@ -206,11 +222,12 @@ def test_a_auditoria_leva_todas_as_diferencas(db_session, tmp_path) -> None:
     assert all(set(d) == campos for d in payload["diferencas"])
     assert payload["edge_trunk"] == "Eth-Trunk127"
     sub = next(d for d in payload["diferencas"] if d["contexto"] == "subinterface")
-    assert sub["sobrando"] == [] and sub["faltando"] == []
-    assert any("description CLIENTE-ALFA" in linha for linha in sub["nao_gerenciado"])
-    # A diferença que não gateia é justamente a que faltava no payload antigo.
-    assert not any(d["sobrando"] or d["faltando"] for d in payload["diferencas"]
-                   if d["contexto"] == "subinterface")
+    # O `sobrando` é o que o RENDER produz e a configuração não tem, e o
+    # `faltando` é o contrário: a descrição do equipamento é `CLIENTE-ALFA` e a
+    # que a adoção grava é `ADOC-64512-1001 CLIENTE ALFA`.
+    assert any("CLIENTE-ALFA" in linha for linha in sub["faltando"])
+    assert any("ADOC-64512-1001 CLIENTE ALFA" in linha for linha in sub["sobrando"])
+    assert sub["nao_gerenciado"] == []
 
 
 def test_revisao_de_outro_enlace_recusa(db_session, tmp_path) -> None:
@@ -267,13 +284,19 @@ def test_trunk_so_de_espacos_recusa_como_o_vazio(db_session, tmp_path) -> None:
 def test_a_conferencia_usa_o_trunk_da_revisao(db_session, tmp_path) -> None:
     """O ensaio monta o circuito com o trunk da revisão, e não com o derivado do
     nome: com outro trunk o circuito que nasceria tem outro bloco, e a diferença
-    tem de aparecer em vez de a comparação sair fiel."""
-    _site, dev = _ambiente(db_session, tmp_path)
-    prop = _proposta(db_session, dev)
+    tem de aparecer em vez de a comparação sair fiel.
 
-    derivado = next(d for d in conferir_fidelidade(db_session, prop)
+    O `_CONFIG_FIEL` entra porque a `description` da subinterface é gerenciada
+    desde a frente da velocidade (§7): só no enlace sem QoS, e com o código e a
+    organização da revisão, o bloco bate linha a linha."""
+    _site, dev = _ambiente(db_session, tmp_path, texto=_CONFIG_FIEL)
+    prop = _proposta(db_session, dev, vid=601)
+    identidade = {"circuit_code": "ADOC-64512-601", "organizacao_nome": "Cliente Alfa"}
+
+    derivado = next(d for d in conferir_fidelidade(db_session, prop, **identidade)
                     if d.contexto == "subinterface")
-    revisado = next(d for d in conferir_fidelidade(db_session, prop, edge_trunk="Eth-Trunk9")
+    revisado = next(d for d in conferir_fidelidade(db_session, prop, edge_trunk="Eth-Trunk9",
+                                                   **identidade)
                     if d.contexto == "subinterface")
 
     assert derivado.exige_ciente is False
@@ -468,3 +491,113 @@ def test_adotar_de_novo_nao_cria_nada(db_session, tmp_path) -> None:
 
     assert (len(_autorizacoes(db_session)),
             len(list(db_session.scalars(select(models.Circuit))))) == antes
+
+
+# ---- a velocidade e a identidade do ensaio (design §7) ----
+
+def test_a_velocidade_da_revisao_vai_para_o_circuito(db_session, tmp_path) -> None:
+    """A velocidade entra por `AdocaoIn` e é gravada (§7). O par vem do texto
+    porque é ele que traz o `qos car` de onde a sugestão sai."""
+    _site, dev = _ambiente(
+        db_session, tmp_path,
+        texto=(
+            "interface Eth-Trunk127.601\n"
+            " vlan-type dot1q 601\n"
+            " ip address 100.64.10.0 255.255.255.254\n"
+            " statistic enable\n"
+            " qos car cir 1024000 cbs 18700000 green pass red discard inbound\n"
+            " qos car cir 1024000 cbs 18700000 green pass red discard outbound\n"
+            "#\n"
+            "bgp 65001\n"
+            " peer 100.64.10.1 as-number 64512\n"
+            " ipv4-family unicast\n"
+            "  peer 100.64.10.1 enable\n"
+        ),
+    )
+    prop = _proposta(db_session, dev, vid=601)
+    assert prop.velocidade_mbps == 1024  # a sugestão veio do equipamento
+
+    circ_id = adotar_proposta(
+        db_session, proposta=prop, actor="cli",
+        revisao=_revisao(dev, vid=601, velocidade_mbps=1024, ciente=True,
+                         sessoes=[AdocaoSessaoIn(afi="ipv4")]),
+    )
+
+    assert db_session.get(models.Circuit, circ_id).velocidade_mbps == 1024
+
+
+def test_a_identidade_da_revisao_tira_a_diferenca_falsa_de_descricao(
+    db_session, tmp_path,
+) -> None:
+    """Sem isto, TODA adoção mostraria uma descrição falsa nos dois lados e
+    pediria `ciente`: o ensaio montava o circuito com código `ENSAIO-...` e uma
+    organização de mentira, e o render derivava a descrição desses dois (§7)."""
+    _site, dev = _ambiente(
+        db_session, tmp_path,
+        texto=(
+            "interface Eth-Trunk127.601\n"
+            " vlan-type dot1q 601\n"
+            " description ADOC-64512-601 CLIENTE ALFA\n"
+            " ip address 100.64.10.0 255.255.255.254\n"
+            " statistic enable\n"
+            "#\n"
+            "bgp 65001\n"
+            " peer 100.64.10.1 as-number 64512\n"
+            " ipv4-family unicast\n"
+            "  peer 100.64.10.1 enable\n"
+        ),
+    )
+    prop = _proposta(db_session, dev, vid=601)
+
+    sem_identidade = next(
+        d for d in conferir_fidelidade(db_session, prop) if d.contexto == "subinterface"
+    )
+    com_identidade = next(
+        d for d in conferir_fidelidade(
+            db_session, prop, circuit_code="ADOC-64512-601",
+            organizacao_nome="Cliente Alfa",
+        )
+        if d.contexto == "subinterface"
+    )
+
+    assert sem_identidade.exige_ciente is True
+    assert com_identidade.sobrando == ()
+    assert com_identidade.faltando == ()
+    assert com_identidade.exige_ciente is False
+
+
+def test_a_organizacao_escolhida_na_lista_vence_a_da_proposta(db_session, tmp_path) -> None:
+    """A revisão que escolhe uma organização JÁ cadastrada manda só o
+    `organizacao_id` (sem nome novo), e é o nome DELA que a `description` do
+    ensaio tem de carregar.
+
+    A classificação por ASN da proposta é heurística: aqui ela aponta para a
+    organização que já tinha o ASN 64512, e o operador escolhe outra na lista.
+    Com a escolha fora do ensaio, a conferência compararia a descrição da
+    primeira e acusaria a mesma diferença falsa que o código de mentira acusava
+    — por outro caminho."""
+    _site, dev = _ambiente(db_session, tmp_path, texto=_CONFIG_FIEL)
+    provedor = create_organization(
+        db_session, OrganizationCreate(name="Provedor X", asn=64512), actor="cli"
+    )
+    alfa = create_organization(db_session, OrganizationCreate(name="Cliente Alfa"), actor="cli")
+    prop = _proposta(db_session, dev, vid=601)
+    assert prop.organizacao_id == provedor.id  # a heurística do ASN
+
+    escolhida = next(
+        d for d in conferir_fidelidade(db_session, prop, circuit_code="ADOC-64512-601",
+                                       organizacao_id=alfa.id)
+        if d.contexto == "subinterface"
+    )
+    da_proposta = next(
+        d for d in conferir_fidelidade(db_session, prop, circuit_code="ADOC-64512-601",
+                                       organizacao_id=provedor.id)
+        if d.contexto == "subinterface"
+    )
+
+    assert escolhida.sobrando == ()
+    assert escolhida.faltando == ()
+    assert escolhida.exige_ciente is False
+    # A outra organização, no mesmo ensaio, é quem faz a diferença aparecer: é o
+    # nome dela que o render põe na descrição.
+    assert any("ADOC-64512-601 PROVEDOR X" in linha for linha in da_proposta.sobrando)

@@ -980,16 +980,30 @@ def _normaliza_linhas(linhas: list[str]) -> set[str]:
     return saida
 
 
+# O teto do campo de velocidade, em Mbps: o MESMO `le=100000` de
+# `CircuitCreate`/`CircuitUpdate` (schemas.py, §7). A leitura recusa antes de o
+# formulário recusar — um `cir 1000000000` no equipamento sugere 1000000, e a
+# revisão que aceitasse a sugestão morreria com 422 no schema, longe da causa.
+LIMITE_VELOCIDADE_MBPS = 100000
+
+
 def _velocidade_do_qos(sub) -> int | None:
-    """O `cir` do equipamento na unidade do campo, só quando o divisor é exato (§7).
+    """O `cir` do equipamento na unidade do campo, só quando ele serve (§7).
 
     `cir` é kbps e a velocidade é Mbps: `1024000` vira `1024`. Não múltiplo de
     1000 é captura estranha, e a sugestão fica vazia em vez de arredondar —
     um número inventado aqui vira QoS errado no equipamento mais adiante.
+
+    O teto vale pelo mesmo motivo: acima do que o campo aceita, a sugestão
+    vazia é a resposta honesta, e um número que o `AdocaoIn` recusaria depois
+    faria o operador levar um erro de schema no lugar de uma proposta sem
+    sugestão. O limite é inclusivo, como o `le` do schema: 100 Gbps é taxa que
+    se contrata.
     """
     if sub.qos_cir is None or sub.qos_cir <= 0 or sub.qos_cir % 1000:
         return None
-    return sub.qos_cir // 1000
+    mbps = sub.qos_cir // 1000
+    return mbps if mbps <= LIMITE_VELOCIDADE_MBPS else None
 
 
 def _trunk_da_subinterface(proposta: Proposta) -> str | None:
@@ -1013,6 +1027,11 @@ def _ensaio(
     session: Session, proposta: Proposta,
     perfis: dict[str, dict[str, int | None]] | None = None,
     edge_trunk: str | None = None,
+    *,
+    circuit_code: str | None = None,
+    organizacao_id: int | None = None,
+    organizacao_nome: str | None = None,
+    velocidade_mbps: int | None = None,
 ) -> dict:
     """Objetos transitórios com a forma do que a adoção criaria.
 
@@ -1029,25 +1048,42 @@ def _ensaio(
     trunk que a escrita não tem daria por fiel um circuito que nasce sem bloco
     nenhum. Sem valor na revisão, o ensaio deriva o trunk do nome da subinterface
     (o que a proposta sugere), que é o comportamento de quando não há revisão.
+
+    `circuit_code`, `organizacao_id`, `organizacao_nome` e `velocidade_mbps`
+    são a identidade que a revisão vai gravar, e entram pela mesma razão do
+    trunk: a `description` da subinterface deriva do código do circuito, do nome
+    da organização e da velocidade (§4). Sem eles, o ensaio emitiria a descrição
+    do código `ENSAIO-...` com a organização de mentira, e TODA adoção acusaria
+    uma diferença de descrição que a escrita não cria — pedindo `ciente` para
+    assumir uma linha que ninguém mudou.
     """
     device = get_device(session, proposta.device_id)
-    org_id = proposta.organizacao_id
+    org_id = organizacao_id or proposta.organizacao_id
     if org_id is None:
+        # Sem id, a organização ainda nasceria: é o caso da revisão que cria uma
+        # nova. O nome dela vem da revisão, e não do `ENSAIO-...`, porque é ele
+        # que a `description` da subinterface carrega — e um nome de mentira
+        # aqui faria toda adoção acusar uma diferença de descrição que a escrita
+        # não cria (§7).
         org = models.Organization(
-            name=f"ENSAIO-{device.name}-{proposta.vid}",
+            name=organizacao_nome or f"ENSAIO-{device.name}-{proposta.vid}",
             asn=proposta.candidatos[0].asn_remote if proposta.candidatos else None,
         )
         session.add(org)
         session.flush()
         org_id = org.id
     circ = models.Circuit(
-        code=f"ENSAIO-{device.name}-{proposta.vid}", organization_id=org_id,
+        # O código da revisão: a `description` sai dele (§4), e um código de
+        # mentira acusaria diferença em toda adoção.
+        code=circuit_code or f"ENSAIO-{device.name}-{proposta.vid}",
+        organization_id=org_id,
         site_id=proposta.site_id or device.site_id, access_port="ensaio",
         edge_device_id=device.id,
         # O trunk da revisão vence; sem ela, o derivado do nome da subinterface.
         edge_trunk=edge_trunk if edge_trunk is not None else _trunk_da_subinterface(proposta),
         stack=proposta.stack, vlan_mode=proposta.vlan_mode,
         qinq=proposta.qinq,          # sem isto a fidelidade acusa diferença em todo QinQ
+        velocidade_mbps=velocidade_mbps,
         p2p_v4_len=proposta.p2p_v4_len or 31,
     )
     session.add(circ)
@@ -1109,6 +1145,10 @@ def conferir_fidelidade(
     session: Session, proposta: Proposta,
     *, perfis: dict[str, dict[str, int | None]] | None = None,
     edge_trunk: str | None = None,
+    circuit_code: str | None = None,
+    organizacao_id: int | None = None,
+    organizacao_nome: str | None = None,
+    velocidade_mbps: int | None = None,
 ) -> list[Diferenca]:
     """O que a SoT reproduziria × o que a configuração tem (spec §9).
 
@@ -1124,6 +1164,12 @@ def conferir_fidelidade(
     escrita cria sem bloco de subinterface. É ele que o render usa para nomear a
     subinterface, e o nome entra na comparação contra o do bloco lido: um trunk
     divergente vira diferença nos dois lados, e exige `ciente`.
+
+    `circuit_code`, `organizacao_id`, `organizacao_nome` e `velocidade_mbps` são
+    o resto da identidade que a adoção vai gravar. A `description` da
+    subinterface deriva dos três primeiros (§4) e o `qos car` do quarto (§5):
+    com a identidade errada, o ensaio acusa diferença de descrição e de taxa em
+    toda adoção, e a revisão degenera em "marque o ciente sempre".
 
     O ensaio roda o render de verdade, e não uma reimplementação da montagem
     dos comandos: é o mesmo código que a adoção usaria, então a conferência não
@@ -1185,7 +1231,11 @@ def conferir_fidelidade(
     ensaio = session.begin_nested()
     try:
         try:
-            criados = _ensaio(session, proposta, perfis, edge_trunk)
+            criados = _ensaio(
+                session, proposta, perfis, edge_trunk,
+                circuit_code=circuit_code, organizacao_id=organizacao_id,
+                organizacao_nome=organizacao_nome, velocidade_mbps=velocidade_mbps,
+            )
         except IntegrityError:
             # Uma restrição de unicidade recusou o ensaio (a reserva que a
             # proposta pede já existe, na mesma grafia, é o caso comum): sem

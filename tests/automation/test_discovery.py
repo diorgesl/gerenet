@@ -1178,6 +1178,39 @@ def test_a_descricao_da_subinterface_passa_a_gatear(db_session, tmp_path) -> Non
     assert sub.exige_ciente is True
 
 
+def test_a_conferencia_casa_quando_a_revisao_traz_a_identidade(db_session, tmp_path) -> None:
+    """Com o código e a organização da revisão, o render emite exatamente a
+    descrição que o equipamento tem — e aí não sobra diferença nenhuma.
+
+    É o que faz a revisão da adoção não pedir `ciente` para um enlace cuja
+    descrição já segue o formato do §4."""
+    dev = _ambiente(db_session)
+    _com_texto(db_session, dev, tmp_path,
+               "interface Eth-Trunk127.2801\n"
+               " vlan-type dot1q 2801\n"
+               " description CIRC-2801 NETMAC [1G]\n"
+               " ip address 100.64.10.0 255.255.255.254\n"
+               " statistic enable\n"
+               " qos car cir 1024000 cbs 18700000 green pass red discard inbound\n"
+               " qos car cir 1024000 cbs 18700000 green pass red discard outbound\n"
+               "#\n"
+               "bgp 65001\n"
+               " peer 100.64.10.1 as-number 64512\n"
+               " ipv4-family unicast\n"
+               "  peer 100.64.10.1 enable\n")
+    (prop,) = listar_propostas(db_session, dev.id).propostas
+    sub = next(
+        d for d in conferir_fidelidade(
+            db_session, prop, circuit_code="CIRC-2801", organizacao_nome="NETMAC",
+            velocidade_mbps=1024,
+        )
+        if d.contexto == "subinterface"
+    )
+    assert sub.faltando == ()
+    assert sub.sobrando == ()
+    assert sub.exige_ciente is False
+
+
 def test_o_ensaio_nao_usa_faltando_para_explicar(db_session, tmp_path) -> None:
     """A explicação do ensaio vai no campo dela: `sobrando` e `faltando` vazios
     num contexto `ensaio` leriam como fidelidade."""
@@ -1228,17 +1261,20 @@ def test_conferencia_de_proposta_sem_candidato_explica(db_session) -> None:
 
 
 def test_mtu_da_subinterface_tambem_sai_do_que_gateia(db_session, tmp_path) -> None:
-    """A fixture tem `description` e não tem `mtu`: sem este caso, o braço do
-    `"mtu "` da tupla não é exercitado por teste nenhum e uma entrada apagada
-    passaria na suíte inteira. Numa borda real o `mtu` está em toda subinterface,
-    e no `faltando` ele faria toda proposta voltar a exigir ciente."""
+    """A subinterface tem `mtu` e a SoT não o emite: sozinho, ele não pode
+    exigir ciente. Com a descrição casando pela revisão, o que sobra é só ele —
+    e é este teste que exercita o braço do `"mtu "` da tupla. Sem ele, uma
+    entrada apagada passaria na suíte inteira."""
     dev = _ambiente(db_session)
     _com_texto(db_session, dev, tmp_path,
                "interface Eth-Trunk127.2601\n"
                " vlan-type dot1q 2601\n"
+               " description CIRC-2601 NETMAC [1G]\n"
                " ip address 100.64.10.0 255.255.255.254\n"
                " mtu 9000\n"
                " statistic enable\n"
+               " qos car cir 1024000 cbs 18700000 green pass red discard inbound\n"
+               " qos car cir 1024000 cbs 18700000 green pass red discard outbound\n"
                "#\n"
                "bgp 65001\n"
                " peer 100.64.10.1 as-number 64512\n"
@@ -1246,11 +1282,18 @@ def test_mtu_da_subinterface_tambem_sai_do_que_gateia(db_session, tmp_path) -> N
                "  peer 100.64.10.1 enable\n")
     (prop,) = listar_propostas(db_session, dev.id).propostas
 
-    sub = next(d for d in conferir_fidelidade(db_session, prop) if d.contexto == "subinterface")
+    sub = next(
+        d for d in conferir_fidelidade(
+            db_session, prop, circuit_code="CIRC-2601", organizacao_nome="NETMAC",
+            velocidade_mbps=1024,
+        )
+        if d.contexto == "subinterface"
+    )
 
     assert sub.nao_gerenciado == ("mtu 9000",)
-    assert [linha for linha in sub.sobrando if not linha.startswith("description ")] == []
     assert sub.faltando == ()
+    assert sub.sobrando == ()
+    assert sub.exige_ciente is False
 
 
 def test_o_trunk_revisado_divergente_aparece_no_nome_da_interface(db_session, tmp_path) -> None:
@@ -1552,3 +1595,45 @@ def test_cir_nao_multiplo_de_mil_nao_sugere_velocidade(db_session, tmp_path) -> 
                "  peer 100.64.10.1 enable\n")
     (prop,) = listar_propostas(db_session, dev.id).propostas
     assert prop.velocidade_mbps is None
+
+
+def test_cir_acima_do_teto_nao_sugere_velocidade(db_session, tmp_path) -> None:
+    """O `cir` absurdo recusado na LEITURA, e não no formulário mais adiante.
+
+    `cir 1000000000` são 1000000 Mbps, e `CircuitCreate.velocidade_mbps` recusa
+    acima de 100000 com 422: a proposta nasceria com a sugestão, o campo
+    chegaria à revisão e o operador levaria um erro de schema longe da causa —
+    a linha do equipamento. Sem sugestão, ele digita o que quer (§7)."""
+    dev = _ambiente(db_session)
+    _com_texto(db_session, dev, tmp_path,
+               "interface Eth-Trunk127.2703\n"
+               " vlan-type dot1q 2703\n"
+               " ip address 100.64.10.0 255.255.255.254\n"
+               " statistic enable\n"
+               " qos car cir 1000000000 cbs 18700000 green pass red discard inbound\n"
+               "#\n"
+               "bgp 65001\n"
+               " peer 100.64.10.1 as-number 64512\n"
+               " ipv4-family unicast\n"
+               "  peer 100.64.10.1 enable\n")
+    (prop,) = listar_propostas(db_session, dev.id).propostas
+    assert prop.velocidade_mbps is None
+
+
+def test_cir_no_teto_exato_ainda_sugere_velocidade(db_session, tmp_path) -> None:
+    """O teto é inclusivo, como o `le=100000` do schema: 100 Gbps é taxa que se
+    contrata, e recusá-la aqui deixaria o maior enlace legítimo sem sugestão."""
+    dev = _ambiente(db_session)
+    _com_texto(db_session, dev, tmp_path,
+               "interface Eth-Trunk127.2704\n"
+               " vlan-type dot1q 2704\n"
+               " ip address 100.64.10.0 255.255.255.254\n"
+               " statistic enable\n"
+               " qos car cir 100000000 cbs 18700000 green pass red discard inbound\n"
+               "#\n"
+               "bgp 65001\n"
+               " peer 100.64.10.1 as-number 64512\n"
+               " ipv4-family unicast\n"
+               "  peer 100.64.10.1 enable\n")
+    (prop,) = listar_propostas(db_session, dev.id).propostas
+    assert prop.velocidade_mbps == 100000

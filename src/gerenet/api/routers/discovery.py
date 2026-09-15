@@ -154,6 +154,10 @@ def _busca_proposta(
 def fidelidade(
     session: SessionDep, device_id: int, subinterface: str | None = None, vrf: str | None = None,
     edge_trunk: str | None = None,
+    circuit_code: str | None = None,
+    organizacao_id: int | None = None,
+    organizacao_nome: str | None = None,
+    velocidade_mbps: int | None = None,
     import_ipv4: int | None = None, export_ipv4: int | None = None,
     import_ipv6: int | None = None, export_ipv6: int | None = None,
 ) -> schemas.FidelidadeOut:
@@ -163,6 +167,11 @@ def fidelidade(
     Os quatro parâmetros de perfil são os que o operador escolheu na revisão: sem
     eles o ensaio não renderiza o corpo da política de exportação, e a conferência
     estaria comparando algo diferente do que a adoção vai gravar.
+
+    Os parâmetros de identidade (`edge_trunk`, `circuit_code`,
+    `organizacao_id`/`organizacao_nome`, `velocidade_mbps`) são o que a revisão
+    vai GRAVAR: o ensaio roda com eles para comparar exatamente o que a adoção
+    produziria.
     """
     try:
         proposta = _busca_proposta(session, device_id=device_id,
@@ -171,8 +180,11 @@ def fidelidade(
             "ipv4": {"import_profile_id": import_ipv4, "export_profile_id": export_ipv4},
             "ipv6": {"import_profile_id": import_ipv6, "export_profile_id": export_ipv6},
         }
-        diferencas = conferir_fidelidade(session, proposta, perfis=perfis,
-                                         edge_trunk=edge_trunk)
+        diferencas = conferir_fidelidade(
+            session, proposta, perfis=perfis, edge_trunk=edge_trunk,
+            circuit_code=circuit_code, organizacao_id=organizacao_id,
+            organizacao_nome=organizacao_nome, velocidade_mbps=velocidade_mbps,
+        )
     except NotFoundError as exc:
         # O `try` cobre a conferência inteira, e não só a busca: o ensaio lê o
         # equipamento de dentro dela, e o equipamento apagado entre a listagem e o

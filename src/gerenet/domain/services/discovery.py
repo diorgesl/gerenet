@@ -236,8 +236,16 @@ def adotar_proposta(session: Session, *, proposta, revisao: schemas.AdocaoIn, ac
     # O que o operador escolheu entra na conferência: sem os perfis o ensaio não
     # renderiza o corpo da política de exportação, que é justamente o que ele
     # escolhe errado; sem o trunk, a comparação não vale para o que vai gravar.
+    # A identidade (o código, a organização e a velocidade) entra pela mesma
+    # razão: é dela que a `description` da subinterface e o `qos car` saem, e um
+    # ensaio com a identidade do `ENSAIO-...` acusaria diferença em toda adoção.
     perfis = perfis_da_revisao(revisao)
-    difs = conferir_fidelidade(session, proposta, perfis=perfis, edge_trunk=revisao.edge_trunk)
+    difs = conferir_fidelidade(
+        session, proposta, perfis=perfis, edge_trunk=revisao.edge_trunk,
+        circuit_code=revisao.circuit_code, organizacao_id=revisao.organizacao_id,
+        organizacao_nome=revisao.organizacao_nova.name if revisao.organizacao_nova else None,
+        velocidade_mbps=revisao.velocidade_mbps,
+    )
     ensaio = [d for d in difs if d.contexto == "ensaio"]
     if ensaio:
         # A `explicacao` é a frase escrita para o operador (o ensaio recusado, o
@@ -321,6 +329,7 @@ def adotar_proposta(session: Session, *, proposta, revisao: schemas.AdocaoIn, ac
                 edge_device_id=proposta.device_id, edge_trunk=revisao.edge_trunk,
                 stack=stack, vlan_mode=proposta.vlan_mode, qinq=proposta.qinq,
                 p2p_v4_len=proposta.p2p_v4_len or 31, vrf=proposta.vrf,
+                velocidade_mbps=revisao.velocidade_mbps,
             ),
             actor=actor, commit=False,
         )

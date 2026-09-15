@@ -1148,8 +1148,8 @@ class AdocaoIn(BaseModel):
 
     A organização vem por id (existente) ou por `organizacao_nova`; o resto é o
     que o operador corrige do que a proposta leu: o código sugerido, o acesso e
-    o trunk do lado do cliente, os perfis de cada família e o caminho do segredo
-    no Vault quando o equipamento tem senha.
+    o trunk do lado do cliente, a velocidade contratada, os perfis de cada
+    família e o caminho do segredo no Vault quando o equipamento tem senha.
 
     `extra="forbid"` (nos três modelos, este e os dois filhos): o corpo vem de um
     `--json` escrito à mão e a API responde 201 calada a uma chave digitada
@@ -1168,6 +1168,7 @@ class AdocaoIn(BaseModel):
     access_device_id: int
     access_port: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9/\-]+$")
     edge_trunk: str | None = Field(default=None, max_length=64)
+    velocidade_mbps: int | None = Field(default=None, gt=0, le=100000)
     organizacao_id: int | None = None
     organizacao_nova: OrganizationCreate | None = None
     autorizacoes: list[AdocaoAutorizacaoIn] = Field(default_factory=list)

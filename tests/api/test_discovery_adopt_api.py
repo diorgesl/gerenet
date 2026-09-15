@@ -81,9 +81,9 @@ def _payload(ambiente) -> dict:
 
 
 def test_fidelidade_sob_demanda(client, db_session, tmp_path) -> None:
-    """A conferência de UMA proposta, sob demanda, com os perfis e o trunk que a
-    revisão escolheu: a lista não a traz embutida, porque cada conferência roda um
-    ensaio do render inteiro."""
+    """A conferência de UMA proposta, sob demanda, com os parâmetros que a revisão
+    escolheu: a lista não a traz embutida, porque cada conferência roda um ensaio
+    do render inteiro."""
     ambiente = _ambiente(db_session, tmp_path)
     url = (f"/api/v1/discovery/fidelidade?device_id={ambiente['dev'].id}"
            "&subinterface=Eth-Trunk127.1001")
@@ -99,17 +99,35 @@ def test_fidelidade_sob_demanda(client, db_session, tmp_path) -> None:
     # descrição da subinterface do ALFA que diz que a proposta comparada é a 1001.
     assert {"peer", "subinterface"} <= {d["contexto"] for d in corpo["diferencas"]}
     sub = next(d for d in corpo["diferencas"] if d["contexto"] == "subinterface")
-    assert any("description CLIENTE-ALFA" in linha for linha in sub["nao_gerenciado"])
+    # A descrição passou a ser gerenciada (§7), então ela aparece nos DOIS lados
+    # quando o ensaio vai sem identidade: a do `ENSAIO-...` sobra no render e a do
+    # equipamento falta nele. É essa diferença que exige o ciente.
+    assert any("description CLIENTE-ALFA" in linha for linha in sub["faltando"])
+    assert any("description ENSAIO-" in linha for linha in sub["sobrando"])
+    # O grupo que não gateia é só o `mtu` desde a frente da velocidade, e esta
+    # subinterface não tem nenhum: ele sai vazio, e não com a descrição dentro.
+    assert sub["nao_gerenciado"] == []
     # O gate do aceite viaja na resposta: é ele que a tela usa para exigir o ciente.
     assert any(d["exige_ciente"] for d in corpo["diferencas"])
 
-    # Sem o trunk a conferência deriva o da subinterface (o diff acima sai limpo no
-    # contexto da interface); com OUTRO trunk o bloco que nasceria é outro, e a
-    # diferença tem de aparecer. É o parâmetro que a tela manda junto da revisão.
+    # Sem o trunk a conferência deriva o da subinterface, e o nome do bloco bate
+    # dos dois lados; com OUTRO trunk o bloco que nasceria é outro, e o nome
+    # divergente aparece dos dois lados. É o parâmetro que a tela manda junto.
     revisado = client.get(f"{url}&edge_trunk=Eth-Trunk9", headers=_auth()).json()
     sub9 = next(d for d in revisado["diferencas"] if d["contexto"] == "subinterface")
-    assert sub9["exige_ciente"] is True
-    assert sub["exige_ciente"] is False
+    assert "interface Eth-Trunk9.1001" in sub9["sobrando"]
+    assert "interface Eth-Trunk127.1001" in sub9["faltando"]
+    assert "interface Eth-Trunk127.1001" not in sub["sobrando"] + sub["faltando"]
+
+    # A velocidade da revisão entra na conta do QoS (§5): o equipamento tem
+    # `qos car cir 1024000` nas duas direções (a fixture os traz) e o ensaio sem
+    # ela não emite taxa nenhuma. Com ela, a dobra do `equivalencia_vrp` casa a
+    # forma curta do render com a longa do VRP e as duas somem do diff.
+    assert "qos car cir 1024000 inbound" in sub["faltando"]
+    com_taxa = client.get(f"{url}&velocidade_mbps=1024", headers=_auth()).json()
+    sub_taxa = next(d for d in com_taxa["diferencas"] if d["contexto"] == "subinterface")
+    assert not any("qos car" in linha
+                   for linha in sub_taxa["sobrando"] + sub_taxa["faltando"])
 
     # Sem perfil nenhum o ensaio não emite o corpo da política de exportação; com o
     # produto que o operador escolheu na tela, o corpo entra na comparação — e a
