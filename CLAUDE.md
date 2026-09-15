@@ -440,5 +440,31 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   revisão, os dois grupos do diff, quando o `ciente` é exigido e o que a adoção
   grava) e a Etapa 3 do runbook do NE8000 (adoção num equipamento não crítico,
   com a CR de remoção do circuito como rollback).
+- Organização por ASN (2026-09-15): a revisão da adoção ganha o botão **Buscar
+  no registro** (`GET /api/v1/organizations/prefill?asn=N`, no router de
+  organizações e declarado ANTES de `/{organization_id}` — o FastAPI casa as
+  rotas na ordem de declaração). `identificar_asn` (`automation/irr.py`) faz
+  duas consultas whois: o `aut-num` do RADB
+  (`as-name`/`descr`/`member-of`) e a consulta direta no LACNIC, que delega os
+  ASNs brasileiros ao registro.br (`owner`/`ownerid`/`country`/`inetnum`), com
+  cache de 24h em `irr_cache` sob `source="registro"`; falha de uma fonte vira
+  aviso, das duas sem cache vivo vira `IrrError` (503 na API), e resposta
+  parcial é 200. O `conflito` de cada bloco é recalculado **fora** do cache —
+  é estado da SoT.
+  `_executa_whois` passou a capturar bytes e decodificar com queda para latin-1
+  (a resposta do nic.br derrubava a chamada com `UnicodeDecodeError`, que não é
+  `OSError` nem `SubprocessError`: um 500 no lugar da falha tratada). Coluna
+  nova `organizations.document` (o `ownerid`, genérica e não `cnpj`) e valor
+  novo `auth_origin.registro` — que nasce fora dos dois caminhos da revalidação
+  sem código novo, e existe para o bloco alocado não ser marcado `diverge`
+  eterno (dois testes pinam isso). `AdocaoIn.autorizacoes` só vale com
+  `organizacao_nova`, e cada bloco vira autorização `origin="registro"` com a
+  nota do ASN, na transação do `POST /adopt`; `create_authorization` ganhou
+  `commit=False` e idempotência por prefixo (§3.2). Migração
+  `alembic/versions/c4a8e1f0b7d3_organizacao_document_e_registro.py`. Sem CLI
+  nesta frente — decisão do usuário em 2026-09-15: a parte visual de importar e
+  migrar um peer fica só na web. Dívidas: more-specifics anunciados fora do
+  bloco alocado, blocos de ASN estrangeiro, o botão na página de organizações e
+  enriquecer organização já cadastrada.
 - Convenções previstas no `.gitignore`: Python com venv e pytest (`.venv/`, `.pytest_cache/`), deploy via Docker Compose (`compose.yaml` na raiz) com `.env` ignorado (o `.gitignore` ainda prevê `deploy/docker/.env`), `config.yaml` local com segredos **fora do repositório**, logs em `logs/` ignorados.
 - `.claude/settings.local.json` contém token e aponta o harness para uma API externa: é arquivo local — não versionar nem alterar.

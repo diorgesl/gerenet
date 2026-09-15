@@ -301,6 +301,23 @@ lido como VLAN) não é uma VLAN: se ele virar o VID de uma proposta, a adoção
 reserva com `VID fora do intervalo permitido (2–4094)`. É caso para o registro da Etapa 2, e
 não para o `ciente`.
 
+**A consulta ao registro.** A revisão de uma proposta sem organização tem o botão **Buscar
+no registro**: ele lê o ASN do peer no RADB e no registro (LACNIC, que delega os ASNs
+brasileiros ao registro.br) e preenche o cadastro da organização nova — tudo sugestão até o
+Adotar, e a parte desta etapa que depende de um serviço de fora.
+
+- [ ] **Consulta ao registro**: na revisão de uma proposta sem organização,
+      clicar **Buscar no registro** num ASN real da operação e conferir
+      - [ ] o nome e a razão social contra o que a operação sabe do cliente;
+      - [ ] o documento contra o CNPJ do cadastro;
+      - [ ] os blocos listados contra os prefixos que o cliente anuncia;
+      - [ ] que um ASN estrangeiro (ex.: o de um provedor de trânsito) devolve
+            identidade sem blocos, com o aviso — e não uma tela vazia;
+      - [ ] que um bloco já autorizado para outra organização aparece
+            desmarcado, com o nome dela.
+      Nada disso vai ao equipamento: a leitura é do registro, e o que for
+      gravado só entra no Adotar.
+
 ## Etapa 4 — Registrar o que a leitura errou
 
 Para cada divergência, anote a linha exata da configuração, o que a leitura devolveu e o que
