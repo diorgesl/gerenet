@@ -126,7 +126,9 @@ def test_render_dual_completo_ordenado(db_session: Session) -> None:
 
     sub = resultado.blocos[0]
     assert sub.comandos[0] == "interface Eth-Trunk127.2"
-    assert sub.comandos[1] == "vlan-type dot1q vid 2"
+    # §4: `<CÓDIGO> <NOME DA ORG>`, na forma que o VRP escreve (maiúsculas ASCII)
+    assert sub.comandos[1] == "description CIRC-R-1 CLIENTE RENDER"
+    assert sub.comandos[2] == "vlan-type dot1q vid 2"
     assert "ip address 100.64.0.0 255.255.255.254" in sub.comandos
     assert "ipv6 enable" in sub.comandos
     assert "ipv6 address 2804:194C:1000::6400:1/126" in sub.comandos

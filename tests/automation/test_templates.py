@@ -20,10 +20,39 @@ def test_subinterface_dual() -> None:
 def test_subinterface_v4_descricao_sem_ipv6() -> None:
     assert _render(
         "subinterface",
-        interface="Eth-Trunk127.4023", descricao="Cliente A", qinq=False, vid=4023,
+        interface="Eth-Trunk127.4023", descricao="CIRC-4023 ACME [1G]", qinq=False, vid=4023,
         enderecos_v4=[{"endereco": "100.64.0.1", "mascara": "255.255.255.254"}],
         enderecos_v6=[],
-    ) == "interface Eth-Trunk127.4023\ndescription Cliente A\nvlan-type dot1q vid 4023\nip address 100.64.0.1 255.255.255.254\nstatistic enable"
+    ) == "interface Eth-Trunk127.4023\ndescription CIRC-4023 ACME [1G]\nvlan-type dot1q vid 4023\nip address 100.64.0.1 255.255.255.254\nstatistic enable"
+
+
+def test_subinterface_com_qos_nas_duas_direcoes() -> None:
+    """O `cir` sai de `velocidade_mbps × 1000` (kbps) e a direção sai por
+    extenso: é a forma que o VRP ecoa (§5)."""
+    assert _render(
+        "subinterface",
+        interface="Eth-Trunk127.626", descricao="CIRC-626 NETMAC [1G]", qinq=False, vid=626,
+        enderecos_v4=[{"endereco": "100.110.0.13", "mascara": "255.255.255.252"}],
+        enderecos_v6=[], cir_kbps=1024000,
+    ) == (
+        "interface Eth-Trunk127.626\n"
+        "description CIRC-626 NETMAC [1G]\n"
+        "vlan-type dot1q vid 626\n"
+        "ip address 100.110.0.13 255.255.255.252\n"
+        "statistic enable\n"
+        "qos car cir 1024000 inbound\n"
+        "qos car cir 1024000 outbound"
+    )
+
+
+def test_subinterface_sem_velocidade_nao_emite_qos() -> None:
+    texto = _render(
+        "subinterface",
+        interface="Eth-Trunk127.4024", descricao=None, qinq=False, vid=4024,
+        enderecos_v4=[{"endereco": "100.64.0.1", "mascara": "255.255.255.254"}],
+        enderecos_v6=[], cir_kbps=None,
+    )
+    assert "qos car" not in texto
 
 
 def test_subinterface_qinq_0x88a8() -> None:
