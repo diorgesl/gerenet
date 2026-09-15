@@ -48,10 +48,10 @@ def test_show_detalha_pendencias_e_conflitos(db_session, tmp_path) -> None:
     assert r.exit_code == 0, r.output
     assert "organizacao_ausente" in r.output
     assert "senha_nao_legivel" in r.output
-    # A descrição da subinterface saiu do `faltando` para o `nao_gerenciado`:
-    # ela continua na tela, no bloco que diz que não exige ciente.
-    assert "o que a SoT não gerencia (não exige ciente):" in r.output
-    assert "      description CLIENTE-ALFA" in r.output
+    # A descrição da subinterface deixou de ser "não gerenciada": a SoT passou a
+    # emiti-la (§4), então o que o equipamento tem de diferente é diferença de
+    # verdade — ela continua na tela, agora no bloco das que exigem ciente.
+    assert "falta no render: description CLIENTE-ALFA" in r.output
 
 
 def test_show_imprime_a_explicacao_do_ensaio(db_session, tmp_path) -> None:

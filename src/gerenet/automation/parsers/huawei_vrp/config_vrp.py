@@ -50,6 +50,7 @@ class Subinterface:
     qinq: bool
     descricao: str | None
     mtu: int | None
+    qos_cir: int | None           # `cir` do `qos car`, em kbps (None sem QoS)
     enderecos_v4: tuple[tuple[str, str], ...]
     enderecos_v6: tuple[tuple[str, int], ...]
 
@@ -226,6 +227,14 @@ def _aplica_sub(reg: dict, linha: str, avisos: list[str]) -> None:
         mtu = _int_tolerante(partes[1], avisos, linha)
         if mtu is not None:
             reg["mtu"] = mtu
+    elif linha.startswith("qos car cir "):
+        # `qos car cir <cir> [cbs <...> green pass red discard] inbound|outbound`:
+        # o `cir` é o quarto token nas duas formas, e as duas direções carregam o
+        # mesmo valor. A primeira ocorrência vence.
+        if reg["qos_cir"] is None and len(partes) > 3:
+            cir = _int_tolerante(partes[3], avisos, linha)
+            if cir is not None:
+                reg["qos_cir"] = cir
     elif linha.startswith("ip address ") and not linha.startswith("ip address 0.0.0.0"):
         par = _par_v4(linha.split())
         if par is not None:
@@ -239,7 +248,8 @@ def _aplica_sub(reg: dict, linha: str, avisos: list[str]) -> None:
 def _monta_sub(reg: dict) -> Subinterface:
     return Subinterface(
         nome=reg["nome"], vid=reg["vid"], qinq=reg["qinq"], descricao=reg["descricao"],
-        mtu=reg["mtu"], enderecos_v4=tuple(reg["v4"]), enderecos_v6=tuple(reg["v6"]),
+        mtu=reg["mtu"], qos_cir=reg["qos_cir"],
+        enderecos_v4=tuple(reg["v4"]), enderecos_v6=tuple(reg["v6"]),
     )
 
 
@@ -289,7 +299,7 @@ def parse_config_vrp(texto: str) -> ConfigVrp:
             secao_desconhecida = False
             if linha.startswith("interface "):
                 iface = {"nome": linha.split(" ", 1)[1], "vid": None, "qinq": False,
-                         "descricao": None, "mtu": None, "v4": [], "v6": []}
+                         "descricao": None, "mtu": None, "qos_cir": None, "v4": [], "v6": []}
             elif linha.startswith("bgp "):
                 viu_bgp = True
                 asn_bloco = _int_tolerante(linha.split(" ", 1)[1].split()[0], avisos, linha)

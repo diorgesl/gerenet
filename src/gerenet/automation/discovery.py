@@ -212,6 +212,7 @@ class Proposta:
     vlan_mode: str
     p2p_v4_len: int | None
     qinq: bool = False
+    velocidade_mbps: int | None = None
     organizacao_id: int | None = None
     organizacao_sugerida: str | None = None
     site_id: int | None = None
@@ -709,6 +710,7 @@ def listar_propostas(session: Session, device_id: int) -> ResultadoPropostas:
                     # as duas famílias ou uma por família — o empilhamento é
                     # outro eixo, e o render só o emite com `Circuit.qinq`.
                     qinq=sub.qinq,
+                    velocidade_mbps=_velocidade_do_qos(sub),
                     p2p_v4_len=rede.prefixlen if (rede.version == 4 and par_p2p) else None,
                     site_id=device.site_id,
                     circuit_code_sugerido=(
@@ -978,6 +980,18 @@ def _normaliza_linhas(linhas: list[str]) -> set[str]:
     return saida
 
 
+def _velocidade_do_qos(sub) -> int | None:
+    """O `cir` do equipamento na unidade do campo, só quando o divisor é exato (§7).
+
+    `cir` é kbps e a velocidade é Mbps: `1024000` vira `1024`. Não múltiplo de
+    1000 é captura estranha, e a sugestão fica vazia em vez de arredondar —
+    um número inventado aqui vira QoS errado no equipamento mais adiante.
+    """
+    if sub.qos_cir is None or sub.qos_cir <= 0 or sub.qos_cir % 1000:
+        return None
+    return sub.qos_cir // 1000
+
+
 def _trunk_da_subinterface(proposta: Proposta) -> str | None:
     """O trunk do circuito, derivado do nome da subinterface do equipamento.
 
@@ -1068,18 +1082,21 @@ def _ensaio(
     return {"circuito": circ, "sessoes": sessoes}
 
 
-# Linhas de subinterface que o render não emite: o slot `description` do
-# template existe e nada o preenche, e não há `mtu` de subinterface.
-_NAO_GERENCIADAS_SUBINTERFACE = ("description ", "mtu ")
+# Linhas de subinterface que o render não emite. A `description` SAIU daqui: o
+# render passou a emiti-la (§4) e a SoT passou a gerenciá-la, então uma
+# descrição diferente no equipamento é diferença que exige ciente (§7). O `mtu`
+# fica: não há MTU de subinterface no modelo nem no template.
+_NAO_GERENCIADAS_SUBINTERFACE = ("mtu ",)
 
 
 def _particiona_subinterface(linhas: tuple[str, ...]) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Separa o que a SoT gerencia do que ela só não emite (design §17.1).
 
-    O render não tem `description` de subinterface (o slot existe no template e
-    nada o preenche) nem `mtu`, e numa borda real os dois estão em toda
-    subinterface. Deixá-los no `faltando` faria "diferença exige ciente"
-    degenerar em "marque sempre".
+    O que sobra é o `mtu`, que não existe no modelo nem no template, e numa
+    borda real está em toda subinterface. Deixá-lo no `faltando` faria
+    "diferença exige ciente" degenerar em "marque sempre". A `description`
+    esteve aqui até a frente da velocidade; hoje a SoT a emite (§4), e uma
+    descrição divergente é mudança de verdade.
     """
     gerenciadas, nao_gerenciadas = [], []
     for linha in linhas:

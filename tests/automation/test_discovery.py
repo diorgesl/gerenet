@@ -845,7 +845,11 @@ def test_fidelidade_ignora_comentario_dentro_da_interface(db_session, tmp_path) 
                "  peer 100.64.10.1 enable\n")
     (prop,) = listar_propostas(db_session, dev.id).propostas
     sub = next(d for d in conferir_fidelidade(db_session, prop) if d.contexto == "subinterface")
-    assert sub.sobrando == ()
+    # A `description` do ensaio é a única sobra: a configuração deste caso não
+    # tem descrição nenhuma e o render passou a emiti-la (§4). Fora ela, nada
+    # pode sobrar — se o comentário tivesse zerado o `dentro`, o `vlan-type` e o
+    # `ip address` escritos depois dele apareceriam aqui.
+    assert [linha for linha in sub.sobrando if not linha.startswith("description ")] == []
     assert sub.faltando == ()
 
 
@@ -1000,7 +1004,11 @@ def test_fidelidade_nao_acusa_as_duas_formas_da_mesma_linha(db_session, tmp_path
                "  peer 2804:194C:1000::1100:73:2 enable\n")
     (prop,) = listar_propostas(db_session, dev.id).propostas
     sub = next(d for d in conferir_fidelidade(db_session, prop) if d.contexto == "subinterface")
-    assert sub.sobrando == ()
+    # A `description` do ensaio é a única sobra (a configuração deste caso não
+    # tem descrição e o render passou a emiti-la, §4). Fora ela, as duas formas
+    # de cada linha têm de casar: sem a equivalência, o `vlan-type dot1q 2601`
+    # do equipamento e o `dot1q vid 2601` do render apareceriam os dois aqui.
+    assert [linha for linha in sub.sobrando if not linha.startswith("description ")] == []
     assert sub.faltando == ()
 
 
@@ -1157,23 +1165,17 @@ def test_o_resultado_traz_os_internos_e_a_idade_da_coleta(db_session, tmp_path) 
     assert resultado.snapshot_age_seconds >= 0
 
 
-def test_diferenca_separa_o_que_a_sot_nao_gerencia(db_session, tmp_path) -> None:
-    """Descrição e MTU da subinterface saem do que exige ciente (design §6)."""
+def test_a_descricao_da_subinterface_passa_a_gatear(db_session, tmp_path) -> None:
+    """A descrição saiu do grupo que não gateia (§7): a SoT passou a emiti-la, e
+    o que o equipamento tem de diferente é mudança que a adoção faria."""
     dev = _ambiente(db_session)
     _com_config(db_session, dev, tmp_path)
     alfa = _propostas(db_session, dev)[1001]
     diferencas = conferir_fidelidade(db_session, alfa)
     sub = next(d for d in diferencas if d.contexto == "subinterface")
-    assert any("description" in linha for linha in sub.nao_gerenciado)
-    assert not any("description" in linha for linha in sub.faltando + sub.sobrando)
-
-
-def test_exige_ciente_so_quando_o_render_mudaria_o_equipamento(db_session, tmp_path) -> None:
-    dev = _ambiente(db_session)
-    _com_config(db_session, dev, tmp_path)
-    alfa = _propostas(db_session, dev)[1001]
-    sub = next(d for d in conferir_fidelidade(db_session, alfa) if d.contexto == "subinterface")
-    assert sub.exige_ciente is False  # só descrição sobra, que não é gerenciada
+    assert any("description" in linha for linha in sub.faltando + sub.sobrando)
+    assert not any("description" in linha for linha in sub.nao_gerenciado)
+    assert sub.exige_ciente is True
 
 
 def test_o_ensaio_nao_usa_faltando_para_explicar(db_session, tmp_path) -> None:
@@ -1247,9 +1249,8 @@ def test_mtu_da_subinterface_tambem_sai_do_que_gateia(db_session, tmp_path) -> N
     sub = next(d for d in conferir_fidelidade(db_session, prop) if d.contexto == "subinterface")
 
     assert sub.nao_gerenciado == ("mtu 9000",)
+    assert [linha for linha in sub.sobrando if not linha.startswith("description ")] == []
     assert sub.faltando == ()
-    assert sub.sobrando == ()
-    assert sub.exige_ciente is False
 
 
 def test_o_trunk_revisado_divergente_aparece_no_nome_da_interface(db_session, tmp_path) -> None:
@@ -1514,3 +1515,40 @@ def test_as_referencias_incluem_os_filtros_do_corpo_da_politica() -> None:
         "ip community-filter CF-64501-BLK-1",
         "ip ipv6-prefix IP-PFX-64501-IN-V6",
     }
+
+
+def test_a_velocidade_vem_do_qos_do_equipamento(db_session, tmp_path) -> None:
+    """Num enlace que já tem QoS ninguém digita a taxa à mão (§7)."""
+    dev = _ambiente(db_session)
+    _com_texto(db_session, dev, tmp_path,
+               "interface Eth-Trunk127.2701\n"
+               " vlan-type dot1q 2701\n"
+               " ip address 100.64.10.0 255.255.255.254\n"
+               " statistic enable\n"
+               " qos car cir 1024000 cbs 18700000 green pass red discard inbound\n"
+               " qos car cir 1024000 cbs 18700000 green pass red discard outbound\n"
+               "#\n"
+               "bgp 65001\n"
+               " peer 100.64.10.1 as-number 64512\n"
+               " ipv4-family unicast\n"
+               "  peer 100.64.10.1 enable\n")
+    (prop,) = listar_propostas(db_session, dev.id).propostas
+    assert prop.velocidade_mbps == 1024
+
+
+def test_cir_nao_multiplo_de_mil_nao_sugere_velocidade(db_session, tmp_path) -> None:
+    """O divisor é inteiro: `cir 1536500` são 1536,5 Mbps, e arredondar aqui vira
+    QoS errado no equipamento mais adiante (§7). A sugestão fica vazia."""
+    dev = _ambiente(db_session)
+    _com_texto(db_session, dev, tmp_path,
+               "interface Eth-Trunk127.2702\n"
+               " vlan-type dot1q 2702\n"
+               " ip address 100.64.10.0 255.255.255.254\n"
+               " qos car cir 1536500 inbound\n"
+               "#\n"
+               "bgp 65001\n"
+               " peer 100.64.10.1 as-number 64512\n"
+               " ipv4-family unicast\n"
+               "  peer 100.64.10.1 enable\n")
+    (prop,) = listar_propostas(db_session, dev.id).propostas
+    assert prop.velocidade_mbps is None

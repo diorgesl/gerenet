@@ -1062,6 +1062,7 @@ class PropostaOut(BaseModel):
     vlan_mode: str
     p2p_v4_len: int | None
     qinq: bool
+    velocidade_mbps: int | None
     organizacao_id: int | None
     organizacao_sugerida: str | None
     site_id: int | None

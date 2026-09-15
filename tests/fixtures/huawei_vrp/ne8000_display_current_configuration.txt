@@ -17,6 +17,8 @@ interface Eth-Trunk127.1001
  ipv6 enable
  ipv6 address 2804:194C:1000::1100:73:1 126
  statistic enable
+ qos car cir 1024000 cbs 18700000 green pass red discard inbound
+ qos car cir 1024000 cbs 18700000 green pass red discard outbound
 #
 interface Eth-Trunk127.2001
  vlan-type dot1q 2001
