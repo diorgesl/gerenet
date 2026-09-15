@@ -74,20 +74,29 @@ curl -s -o /dev/null -w '%{http_code}\n' localhost:8000/metrics                 
 curl -s -H 'Authorization: Bearer <token>' localhost:8000/metrics | head
 ```
 
-## Dev: Prometheus e Grafana do compose
+## Dev: o Prometheus do compose e o painel no seu Grafana
+
+O `prometheus` do compose sobe no `up -d` comum e já vem com o scrape de
+`api:8000/metrics` (`docker/observability/prometheus.yml`); o `/targets` dele, em
+http://localhost:9090, mostra o alvo. O **Grafana** é opcional, atrás do profile
+`observabilidade`:
 
 ```bash
-docker compose up -d prometheus grafana
+docker compose up -d grafana                      # só o Grafana (e o Prometheus)
+docker compose --profile observabilidade up -d    # a stack inteira
 ```
 
-- Prometheus em http://localhost:9090 (`/targets` mostra o alvo `gerenet`);
-- Grafana em http://localhost:3000, acesso anônimo como viewer, com o dashboard
-  `gerenet — operação` já provisionado (arquivos em `docker/observability/`).
+Quem já tem Grafana não precisa desse serviço: importe o painel
+`gerenet — operação` (`docker/observability/grafana/dashboards/gerenet.json`) no
+seu, em *Dashboards → New → Import → Upload JSON file*, mapeando os painéis para
+o datasource Prometheus que já existe. O Grafana do profile é provisionado com
+esse mesmo JSON e um datasource apontando para o `prometheus` do compose, com
+acesso anônimo como viewer.
 
-Sem dado nos painéis: confira primeiro `/targets` (alvo UP) e depois
-`curl -s localhost:8000/metrics | head`. Com o token ligado, o scrape de dev
-também precisa do bloco `authorization` — via `credentials_file` apontando para
-um arquivo **fora do repositório**, nunca com o valor no `prometheus.yml`.
+Sem dado nos painéis: confira primeiro o `/targets` (alvo UP) e depois
+`curl -s localhost:8000/metrics | head`. Com o token ligado, o scrape também
+precisa do bloco `authorization` — via `credentials_file` apontando para um
+arquivo **fora do repositório**, nunca com o valor em arquivo versionado.
 
 Os dois painéis de idade (**Coleta mais antiga** e **Idade da coleta por
 equipamento**) aparecem "No data" até o primeiro snapshot de algum equipamento: a
@@ -95,10 +104,10 @@ série `gerenet_snapshot_age_seconds` não existe para quem nunca foi coletado, 
 série ausente não é zero. Depois do primeiro snapshot, o painel por equipamento
 lista só os equipamentos já coletados.
 
-O acesso anônimo é viewer: para editar os painéis é preciso entrar com o admin do
-Grafana, que nasce com a credencial padrão do primeiro boot (`admin`/`admin`,
-com o prompt de troca de senha no primeiro acesso). A conferência por `curl` usa
-`POST /login`, que é a rota real:
+No Grafana do profile `observabilidade`, o acesso anônimo é viewer: para editar
+os painéis é preciso entrar com o admin, que nasce com a credencial padrão do
+primeiro boot (`admin`/`admin`, com o prompt de troca de senha no primeiro
+acesso). A conferência por `curl` usa `POST /login`, que é a rota real:
 
 ```bash
 curl -s -X POST -H 'Content-Type: application/json' \
@@ -121,8 +130,8 @@ pelo arquivo montado da seção anterior. Se a API estiver atrás de proxy, o
 **Alerta é de quem instala.** A plataforma entrega as séries para isso
 (`gerenet_devices_comm_status`, `gerenet_device_consecutive_failures`,
 `gerenet_snapshot_age_seconds`, `gerenet_divergences`); nenhuma alert rule
-acompanha o repositório, e o §20.1 não pede nenhuma. O dashboard provisionado é
-leitura, não alerta — quem opera monta as regras no próprio Prometheus/Grafana.
+acompanha o repositório, e o §20.1 não pede nenhuma. O painel é de leitura, não
+de alerta — quem opera monta as regras no próprio Prometheus/Grafana.
 
 ## Coleta periódica
 

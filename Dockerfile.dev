@@ -16,8 +16,12 @@ COPY src ./src
 
 RUN uv sync --frozen
 
-COPY docker/dev-entrypoint.sh /usr/local/bin/dev-entrypoint
-RUN chmod +x /usr/local/bin/dev-entrypoint
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint
+RUN chmod +x /usr/local/bin/entrypoint
+
+# O entrypoint aplica as migrações quando RUN_MIGRATIONS=true (só a api do
+# compose liga; o worker roda com "false" para não correr com ela).
+ENTRYPOINT ["/usr/local/bin/entrypoint"]
 
 # Default: API com hot reload (compose/worker podem sobrescrever via command)
 CMD ["uv", "run", "uvicorn", "gerenet.api.main:create_app", "--factory", "--reload", "--host", "0.0.0.0", "--port", "8000"]

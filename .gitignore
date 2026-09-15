@@ -29,6 +29,18 @@ data/
 .docker/
 *.env
 
+# produção: o `.env` do servidor é cópia do .env.prod.example
+.env.prod
+
+# compose de cada máquina fica fora do git; os dois exemplos é que sobem
+/compose*.yaml
+!/compose.example.yaml
+!/compose.prod.example.yaml
+
+# worktrees do harness: são cópias de trabalho, não conteúdo do repo (sem esta
+# linha um `git add .` as commita como gitlink e elas viram submódulo fantasma)
+.claude/worktrees/
+
 # web (frontend)
 # sem a barra final: com ela, o padrão casa só diretório e o symlink para o
 # install de outro checkout (a worktree aponta para o node_modules da irmã)

@@ -134,8 +134,11 @@ services:
     depends_on:
       - api
 
-  # Observabilidade de dev (§20): raspa o /metrics da API e abre o dashboard
-  # provisionado. Em produção, o Prometheus/Grafana são os de quem instala.
+  # Observabilidade de dev (§20): o Prometheus raspa o /metrics da api e sobe no
+  # `up -d` comum. O Grafana fica atrás do profile `observabilidade` — quem já
+  # tem um aponta para o próprio Prometheus e importa o painel
+  # `gerenet — operação` de docker/observability/grafana/dashboards/gerenet.json
+  # (runbook de observabilidade).
   prometheus:
     image: prom/prometheus:v2.55.1
     container_name: gerenet-prometheus
@@ -146,6 +149,7 @@ services:
       - api
 
   grafana:
+    profiles: ["observabilidade"]
     image: grafana/grafana:11.3.0
     container_name: gerenet-grafana
     # Dev: anônimo para ver (viewer, sem senha) e o login de admin do primeiro

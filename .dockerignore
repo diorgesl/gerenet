@@ -10,7 +10,10 @@ __pycache__
 *.egg-info
 data
 logs
+# docs: só o wiki operacional entra na imagem de produção (o runtime lê
+# docs/wiki); runbooks e specs ficam de fora
 docs
+!docs/wiki
 tests
 **/node_modules
 web/dist

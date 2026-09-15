@@ -1,0 +1,194 @@
+# Produção (exemplo): infra e aplicação num host só, com a entrada pelo
+# Traefik que já roda no servidor.
+#
+# Uso: copie para o diretório de deploy como `compose.yaml`, junto de um `.env`
+# próprio (veja `.env.prod.example`) — os dois ficam fora do git:
+#
+#   cp compose.prod.example.yaml /opt/gerenet/compose.yaml
+#   cp .env.prod.example /opt/gerenet/.env && chmod 600 /opt/gerenet/.env
+#   cd /opt/gerenet && docker compose up -d --build
+#
+# O passo a passo (Vault, usuário admin, backup, atualização) está em
+# docs/runbook-deploy-producao.md.
+#
+# Diferenças para o compose de dev (compose.example.yaml): sem bind mount de
+# código e sem `--reload` (a imagem de produção tem o código e a SPA dentro),
+# nenhuma porta de infra publicada no host, e a api entra na rede do Traefik
+# por labels em vez de `ports`.
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-app-env: &app-env
+  GERENET_DATABASE_URL: postgresql+psycopg://gerenet:${POSTGRES_PASSWORD?Variable not set}@db:5432/gerenet
+  GERENET_REDIS_URL: redis://redis:6379/0
+  GERENET_VAULT_URL: http://vault:8200
+  GERENET_VAULT_TOKEN: ${GERENET_VAULT_TOKEN?Variable not set}
+  GERENET_API_KEY: ${GERENET_API_KEY?Variable not set}
+  # Sob HTTPS na ponta do Traefik: o cookie de sessão só trafega em TLS.
+  GERENET_COOKIE_SECURE: "true"
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: gerenet
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD?Variable not set}
+      POSTGRES_DB: gerenet
+    volumes: [db-data:/var/lib/postgresql/data]
+    # Sem `ports`: o banco só é alcançável pela rede interna do projeto.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gerenet"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    logging: *default-logging
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    # appendonly: a fila do worker (e os locks) sobrevivem ao restart.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redis-data:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    logging: *default-logging
+
+  vault:
+    image: hashicorp/vault:1.17
+    restart: always
+    # Modo servidor com storage em arquivo: os segredos sobrevivem ao restart
+    # (o servidor `-dev` do compose de dev é in-memory). Em troca, o Vault
+    # nasce selado e pede init/unseal manuais — runbook.
+    #
+    # `server` sem `-dev` é obrigatório: o CMD da imagem é `server -dev`, que
+    # ignora este VAULT_LOCAL_CONFIG, sobe com storage em memória e escuta só
+    # em 127.0.0.1 (a api não alcançaria). O entrypoint da imagem vê o
+    # argumento `server` e anexa `-config=/vault/config/local.json`.
+    command: ["server"]
+    environment:
+      VAULT_ADDR: http://127.0.0.1:8200
+      VAULT_LOCAL_CONFIG: |
+        {
+          "api_addr": "http://vault:8200",
+          "disable_mlock": false,
+          "listener": [{"tcp": {"address": "0.0.0.0:8200", "tls_disable": true}}],
+          "storage": [{"file": {"path": "/vault/file"}}]
+        }
+    cap_add: [IPC_LOCK]
+    volumes: [vault-data:/vault/file]
+    # Sem `ports`: quem fala com o Vault é a api e o worker, pela rede interna.
+    logging: *default-logging
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${DOCKER_IMAGE_GERENET:-gerenet}:${TAG:-latest}
+    restart: always
+    environment:
+      <<: *app-env
+      # Migrações só na api (o worker roda com RUN_MIGRATIONS por default
+      # "true" no entrypoint, então precisa ser desligado lá).
+      RUN_MIGRATIONS: "true"
+      GERENET_METRICS_TOKEN: ${GERENET_METRICS_TOKEN?Variable not set}
+    # `expose` é documental: quem publica para fora é o Traefik, pela rede.
+    expose: ["8000"]
+    volumes:
+      # Configurações coletadas dos equipamentos (e o backup pré-mudança).
+      # O diretório no host precisa pertencer ao uid 1000, que é o usuário da
+      # imagem de produção (runbook).
+      - ./data/backups:/srv/app/data/backups
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      vault:
+        condition: service_started
+    networks:
+      - default
+      - traefik-public
+    # O healthcheck é informativo (`docker compose ps`); `restart: always` não
+    # reinicia container unhealthy sozinho.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=traefik-public
+      - traefik.constraint-label=traefik-public
+
+      - traefik.http.services.${STACK_NAME?Variable not set}-api.loadbalancer.server.port=8000
+
+      - traefik.http.routers.${STACK_NAME?Variable not set}-api-http.rule=Host(`${GERENET_DOMAIN?Variable not set}`)
+      - traefik.http.routers.${STACK_NAME?Variable not set}-api-http.entrypoints=http
+
+      - traefik.http.routers.${STACK_NAME?Variable not set}-api-https.rule=Host(`${GERENET_DOMAIN?Variable not set}`)
+      - traefik.http.routers.${STACK_NAME?Variable not set}-api-https.entrypoints=https
+      - traefik.http.routers.${STACK_NAME?Variable not set}-api-https.tls=true
+      - traefik.http.routers.${STACK_NAME?Variable not set}-api-https.tls.certresolver=le
+
+      # Redireciona HTTP para HTTPS. Para servir as duas pontas, apague as duas
+      # linhas do middleware.
+      - traefik.http.middlewares.${STACK_NAME?Variable not set}-api-redirect.redirectscheme.scheme=https
+      - traefik.http.routers.${STACK_NAME?Variable not set}-api-http.middlewares=${STACK_NAME?Variable not set}-api-redirect
+    logging: *default-logging
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${DOCKER_IMAGE_GERENET:-gerenet}:${TAG:-latest}
+    restart: always
+    command: ["gerenet-worker"]
+    environment:
+      <<: *app-env
+      RUN_MIGRATIONS: "false"
+      # Coleta periódica (minutos; 0 desliga). O worker arma a varredura na
+      # subida, então mudar o valor pede restart dele.
+      GERENET_COLLECT_INTERVAL_MINUTES: ${GERENET_COLLECT_INTERVAL_MINUTES:-60}
+    volumes:
+      # Mesmo diretório da api: é aqui que a coleta grava os brutos, e a página
+      # Migrar (na api) lê os mesmos arquivos.
+      - ./data/backups:/srv/app/data/backups
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      vault:
+        condition: service_started
+    # Sem a rede do Traefik: o worker não recebe requisição de fora.
+    networks:
+      - default
+    logging: *default-logging
+
+# Observabilidade: o /metrics da api continua disponível (com
+# GERENET_METRICS_TOKEN) para o Prometheus que já roda no servidor. O painel
+# `gerenet — operação` está em docker/observability/grafana/dashboards/gerenet.json
+# para importar no Grafana existente.
+
+networks:
+  traefik-public:
+    name: traefik-public
+    external: true
+
+volumes:
+  db-data:
+  redis-data:
+  vault-data:

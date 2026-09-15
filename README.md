@@ -12,9 +12,14 @@ Fase 1: inventário e coleta read-only.
 ## Docker — dev completo (compose)
 
 Tudo (db, redis, vault, API, worker e frontend) com um comando, sem instalar
-Python/Node na máquina (só Docker):
+Python/Node na máquina (só Docker).
+
+O `compose.yaml` de cada máquina fica fora do git (o `.gitignore` cobre
+`/compose*.yaml` e libera os exemplos), então o primeiro uso copia o exemplo:
 
 ```bash
+cp compose.example.yaml compose.yaml
+cp .env.example .env
 docker compose up -d --build
 ```
 
@@ -35,14 +40,16 @@ Comandos dentro do container:
 Ao alterar `pyproject.toml`/`Dockerfile.dev` (dependências), recriar:
 `docker compose up -d --build`.
 
-Observabilidade de dev: `docker compose up -d prometheus grafana` sobe o
-Prometheus (http://localhost:9090) e o Grafana (http://localhost:3000, leitura
-anônima como viewer e o login de admin do primeiro boot para editar e exportar)
-com o dashboard `gerenet — operação` provisionado, raspando `api:8000/metrics` a
-cada 30 s. A plataforma expõe os itens do §20.1 no `/metrics`, sem autenticação
-na rede de gerência; ligar o `GERENET_METRICS_TOKEN` pede duas edições (a
-variável no serviço `api` e o token no scrape, por arquivo montado de fora do
-repositório), descritas no runbook de observabilidade. O worker do compose já
+Observabilidade: o Prometheus do compose sobe no `up -d` comum e raspa o
+`/metrics` da api (http://localhost:9090). O Grafana é **opcional** — fica atrás
+do profile `observabilidade` (`docker compose up -d grafana`, ou
+`--profile observabilidade up -d`), porque quem instala já costuma ter um: nesse
+caso, importe o painel `gerenet — operação`
+(`docker/observability/grafana/dashboards/gerenet.json`) no seu e aponte para o
+Prometheus que já existe. A plataforma expõe os itens do §20.1 nesse endpoint,
+sem autenticação na rede de gerência; ligar o `GERENET_METRICS_TOKEN` pede duas
+edições (a variável no serviço `api` e o token no scrape, por arquivo montado de
+fora do repositório), descritas no runbook de observabilidade. O worker do compose já
 sobe com a coleta periódica ligada (`GERENET_COLLECT_INTERVAL_MINUTES: "60"` —
 coleta a frota do banco dev a cada hora; `"0"` desliga), com as regras em
 `/wiki/equipamentos`.
@@ -50,6 +57,27 @@ coleta a frota do banco dev a cada hora; `"0"` desliga), com as regras em
 ⚠️ **`npm run test:e2e` (host): pare o compose antes** — o Playwright sobe o
 próprio uvicorn na :8000 e usa o banco dedicado `gerenet_e2e`; a api do compose
 ocupando a porta/banco de dev quebra esse fluxo.
+
+## Docker — produção (compose)
+
+O `compose.prod.example.yaml` sobe a infra e a aplicação num host só, com a
+entrada pelo Traefik que já existe no servidor: `db`, `redis` e `vault` não
+publicam porta nenhuma (o Vault vai em modo servidor, com storage em volume) e
+a `api` entra na rede `traefik-public` por labels, com TLS pelo certresolver
+`le`. O `worker` fica sem a rede do Traefik e compartilha `data/backups` com a
+`api`, que é onde a coleta grava os brutos.
+
+Igual ao dev, o arquivo usado é local:
+
+```bash
+cp compose.prod.example.yaml compose.yaml
+cp .env.prod.example .env && chmod 600 .env
+docker compose up -d --build
+```
+
+O Vault precisa de init/unseal e a instalação de um usuário admin antes do
+primeiro acesso. O passo a passo (com policy do Vault, backup e atualização)
+está em `docs/runbook-deploy-producao.md`.
 
 ## Autenticação web (ciclo C)
 
