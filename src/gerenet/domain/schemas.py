@@ -132,6 +132,37 @@ class OrganizationUpdate(BaseModel):
     admin_status: bool | None = None
 
 
+class OrganizationPrefillBlocoOut(BaseModel):
+    """Um bloco alocado ao AS, na forma que a tela consome."""
+
+    prefix: str
+    family: Literal["ipv4", "ipv6"]
+    fonte: str
+    # Nome da organização que já tem autorização ativa sobre o bloco; nulo no
+    # caso comum (design §7).
+    conflito: str | None = None
+
+
+class OrganizationPrefillOut(BaseModel):
+    """O cadastro de uma organização lido do registro — nada aqui é gravado.
+
+    Resposta parcial é normal: ASN estrangeiro devolve identidade sem blocos,
+    ASN sem objeto no RADB devolve blocos sem nome, e o motivo de cada ausência
+    está em `avisos`.
+    """
+
+    asn: int
+    nome: str | None
+    razao_social: str | None
+    documento: str | None
+    pais: str | None
+    as_set_sugerido: str | None
+    as_sets: list[str]
+    blocos: list[OrganizationPrefillBlocoOut]
+    fontes: dict[str, str]
+    avisos: list[str]
+
+
 class ContactCreate(BaseModel):
     organization_id: int
     name: str = Field(min_length=1, max_length=128)

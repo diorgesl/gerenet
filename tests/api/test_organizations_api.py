@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from gerenet.api.main import create_app
+from gerenet.automation.irr import IrrError
 from gerenet.config import Settings, set_settings
 from gerenet.domain import models
 
@@ -129,3 +130,91 @@ def test_cria_organizacao_com_o_documento_do_registro(client: TestClient) -> Non
         headers=_auth(),
     ).json()
     assert corpo["document"] == "13.172.064/0002-22"
+
+
+# ---- prefill (design §8) ----
+
+PREFILL = {
+    "nome": "PROVEINTERLTDA-AS",
+    "razao_social": "PROVEINTER LTDA",
+    "documento": "13.172.064/0001-11",
+    "pais": "BR",
+    "as_set_sugerido": "AS-264289",
+    "as_sets": ["AS-264289"],
+    "blocos": [
+        {"prefix": "138.121.28.0/22", "family": "ipv4", "fonte": "registro", "conflito": None},
+    ],
+    "fontes": {"nome": "radb", "blocos": "registro"},
+    "avisos": [],
+}
+
+
+def _stub_prefill(monkeypatch, resultado=None, erro=None) -> None:
+    """O whois nunca é chamado num teste de API: o que se testa aqui é o
+    contrato da rota, e não a leitura (essa tem os testes dela)."""
+    def _fake(asn: int, **kwargs):
+        if erro is not None:
+            raise erro
+        return resultado if resultado is not None else {**PREFILL, "asn": asn}
+
+    monkeypatch.setattr("gerenet.api.routers.organizations.identificar_asn", _fake)
+
+
+def test_prefill_devolve_o_que_o_registro_deu(client: TestClient, monkeypatch) -> None:
+    _stub_prefill(monkeypatch)
+    resp = client.get("/api/v1/organizations/prefill?asn=264289", headers=_auth())
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["asn"] == 264289
+    assert resp.json()["documento"] == "13.172.064/0001-11"
+    assert resp.json()["blocos"][0]["conflito"] is None
+
+
+def test_prefill_parcial_e_200(client: TestClient, monkeypatch) -> None:
+    """Identidade sem blocos (ASN estrangeiro) é resposta, não erro: confundir
+    as duas faz o operador concluir que o ASN não tem dado nenhum."""
+    _stub_prefill(monkeypatch, resultado={
+        **PREFILL, "documento": None, "pais": None, "blocos": [],
+        "avisos": ["O registro não devolveu blocos `inetnum` para AS13335 — ..."],
+    })
+    resp = client.get("/api/v1/organizations/prefill?asn=13335", headers=_auth())
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["blocos"] == []
+    assert resp.json()["avisos"] != []
+
+
+def test_prefill_sem_nada_nas_duas_fontes_e_404(client: TestClient, monkeypatch) -> None:
+    _stub_prefill(monkeypatch, resultado={
+        **PREFILL, "nome": None, "razao_social": None, "documento": None,
+        "pais": None, "as_set_sugerido": None, "as_sets": [], "blocos": [],
+    })
+    resp = client.get("/api/v1/organizations/prefill?asn=64512", headers=_auth())
+
+    assert resp.status_code == 404
+    assert "não devolveu nada" in resp.json()["detail"]
+
+
+def test_prefill_com_a_consulta_fora_e_503(client: TestClient, monkeypatch) -> None:
+    """503 é falha de consulta, e não ausência de dado: o operador precisa
+    saber que pode tentar de novo."""
+    _stub_prefill(monkeypatch, erro=IrrError("sem cache vivo"))
+    resp = client.get("/api/v1/organizations/prefill?asn=64512", headers=_auth())
+
+    assert resp.status_code == 503
+
+
+def test_prefill_recusa_asn_reservado(client: TestClient) -> None:
+    """64496-64511 é faixa de documentação (RFC 5398): `asn_valido` recusa."""
+    resp = client.get("/api/v1/organizations/prefill?asn=64496", headers=_auth())
+
+    assert resp.status_code == 422
+
+
+def test_prefill_convive_com_a_rota_de_detalhe(client: TestClient, monkeypatch) -> None:
+    """`/prefill` é declarado ANTES de `/{organization_id}`, que o capturaria
+    como um id inválido — o FastAPI casa as rotas na ordem de declaração."""
+    _stub_prefill(monkeypatch)
+
+    assert client.get("/api/v1/organizations/prefill?asn=64512", headers=_auth()).status_code == 200
+    assert client.get("/api/v1/organizations/999999", headers=_auth()).status_code == 404
