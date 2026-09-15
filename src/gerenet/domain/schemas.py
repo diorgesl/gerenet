@@ -1123,6 +1123,18 @@ class AdocaoSessaoIn(BaseModel):
     password_ref: str | None = Field(default=None, max_length=255)
 
 
+class AdocaoAutorizacaoIn(BaseModel):
+    """Um bloco do registro que entra como autorização da organização nova.
+
+    Só vale junto de `organizacao_nova`: a organização existente já tem as
+    autorizações dela, e somá-las por aqui autorizaria prefixo que ninguém
+    revisou nesta tela.
+    """
+
+    prefix: str = Field(min_length=1, max_length=64)
+    family: Literal["ipv4", "ipv6"]
+
+
 class AdocaoIn(BaseModel):
     """A revisão de uma proposta (design §6).
 
@@ -1141,6 +1153,7 @@ class AdocaoIn(BaseModel):
     edge_trunk: str | None = Field(default=None, max_length=64)
     organizacao_id: int | None = None
     organizacao_nova: OrganizationCreate | None = None
+    autorizacoes: list[AdocaoAutorizacaoIn] = Field(default_factory=list)
     sessoes: list[AdocaoSessaoIn] = Field(default_factory=list)
     ciente: bool = False
 
