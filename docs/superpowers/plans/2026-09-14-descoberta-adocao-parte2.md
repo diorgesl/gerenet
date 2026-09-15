@@ -84,11 +84,13 @@ from gerenet.domain import models
 from gerenet.domain.schemas import (
     BgpSessionCreate,
     CircuitCreate,
+    DeviceCreate,
     OrganizationCreate,
     SiteCreate,
 )
 from gerenet.domain.services.bgp_sessions import create_session
 from gerenet.domain.services.circuits import create_circuit
+from gerenet.domain.services.devices import create_device
 from gerenet.domain.services.organizations import create_organization
 from gerenet.domain.services.sites import create_site
 
@@ -112,17 +114,23 @@ def test_organizacao_no_default_grava_como_sempre(db_session) -> None:
 
 
 def _ambiente(db_session):
+    """Site, organização e equipamento: `CircuitCreate` exige device de acesso e edge."""
     site = create_site(db_session, SiteCreate(name="pop-commit"), actor="cli")
     org = create_organization(db_session, OrganizationCreate(name="Org Commit", asn=64700), actor="cli")
-    return site, org
+    dev = create_device(
+        db_session,
+        DeviceCreate(name="ne-commit", management_address="10.9.9.9", asn=65001),
+        actor="cli",
+    )
+    return site, org, dev
 
 
 def test_circuito_com_commit_false_nao_grava_antes_do_commit(db_session) -> None:
-    site, org = _ambiente(db_session)
+    site, org, dev = _ambiente(db_session)
     create_circuit(
         db_session,
         CircuitCreate(code="CIRC-SEM-COMMIT", organization_id=org.id, site_id=site.id,
-                      access_device_id=None, access_port="GE0/0/1", edge_device_id=None),
+                      access_device_id=dev.id, access_port="GE0/0/1", edge_device_id=dev.id),
         actor="cli", commit=False,
     )
     db_session.rollback()
@@ -132,18 +140,13 @@ def test_circuito_com_commit_false_nao_grava_antes_do_commit(db_session) -> None
 
 
 def test_sessao_com_commit_false_nao_grava_antes_do_commit(db_session) -> None:
-    site, org = _ambiente(db_session)
+    site, org, dev = _ambiente(db_session)
     circuito = create_circuit(
         db_session,
         CircuitCreate(code="CIRC-SESSAO", organization_id=org.id, site_id=site.id,
-                      access_device_id=None, access_port="GE0/0/1", edge_device_id=None),
+                      access_device_id=dev.id, access_port="GE0/0/1", edge_device_id=dev.id),
         actor="cli",
     )
-    from gerenet.domain.schemas import DeviceCreate
-    from gerenet.domain.services.devices import create_device
-
-    dev = create_device(db_session, DeviceCreate(name="ne-commit", management_address="10.9.9.9",
-                                                 asn=65001), actor="cli")
     create_session(
         db_session,
         BgpSessionCreate(circuit_id=circuito.id, device_id=dev.id, afi="ipv4",
@@ -662,14 +665,17 @@ def _indice_definicoes(texto: str) -> dict[str, tuple[str, ...]]:
     """Blocos de definição da configuração, indexados pela chave.
 
     Um bloco começa numa linha sem indentação cujo cabeçalho casa
-    `_chave_definicao` e vai até a próxima linha sem indentação (o `#` do VRP
-    separa blocos e não pertence a nenhum).
+    `_chave_definicao` e vai até a próxima linha sem indentação. Comentário é
+    qualquer linha começando com `#`, e não só o separador sozinho: o render
+    deste projeto emite comentário com texto na coluna 0 dentro do bloco, e a
+    lição vem da parte 1 (uma linha dessas fechava o bloco e truncava a leitura
+    em silêncio).
     """
     indice: dict[str, list[str]] = {}
     chave: str | None = None
     for bruta in texto.splitlines():
         linha = bruta.strip()
-        if not linha or linha == "#":
+        if not linha or linha.startswith("#"):
             chave = None
             continue
         if not bruta[:1].isspace():
@@ -895,7 +901,13 @@ def _sessao_da_proposta(proposta, overrides: schemas.AdocaoSessaoIn) -> schemas.
     """
     dados = next(s for s in proposta.sessoes if s["afi"] == overrides.afi)
     campos = set(schemas.BgpSessionCreate.model_fields)
-    base = {k: v for k, v in dados.items() if k in campos}
+    # Os três campos que o operador decide são retirados do que veio da proposta:
+    # se algum dia a leitura passar a preenchê-los, o `**base` não pode repetir o
+    # argumento e estourar o construtor.
+    base = {
+        k: v for k, v in dados.items()
+        if k in campos and k not in ("import_profile_id", "export_profile_id", "password_ref")
+    }
     return schemas.BgpSessionCreate(
         **base,
         import_profile_id=overrides.import_profile_id,
@@ -1167,6 +1179,17 @@ E em `DiscoveryOut`, acrescente:
     internos: list[CandidatoOut] = []
     snapshot_age_seconds: float | None = None
 ```
+
+**A rota que já existe precisa preenchê-los.** Em `listar`, a que responde o
+`GET /api/v1/discovery`, acrescente ao construtor do `DiscoveryOut`:
+
+```python
+        internos=[schemas.CandidatoOut.model_validate(c) for c in resultado.internos],
+        snapshot_age_seconds=resultado.snapshot_age_seconds,
+```
+
+Sem isso os dois campos existem no schema e chegam sempre vazios, e a idade da coleta, que a
+Task 3 fez o motor calcular justamente para o operador ver, não chega a lugar nenhum.
 
 - [ ] **Step 4: Write the router**
 
