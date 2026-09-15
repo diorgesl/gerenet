@@ -95,13 +95,29 @@ def _dedup_ordem(itens: list) -> list:
     return list(dict.fromkeys(itens))
 
 
+def _decodifica(bruto: bytes) -> str:
+    """Resposta whois em bytes → texto, com queda para latin-1.
+
+    O nic.br responde em latin-1 (sondagem de 2026-09-15: `N?cleo de Inf. e
+    Coord. do Ponto BR`), e o RADB pode devolver `descr` acentuado em algum
+    objeto. Com `text=True` a decodificação UTF-8 estoura DENTRO do
+    `subprocess.run`, e o `UnicodeDecodeError` não é `OSError` nem
+    `SubprocessError` — ele escaparia do `except` daqui como 500 em vez de
+    virar `_FalhaRede`. Decodificar aqui, com queda, é o que faz as duas
+    respostas virarem texto em vez de exceção.
+    """
+    try:
+        return bruto.decode("utf-8")
+    except UnicodeDecodeError:
+        return bruto.decode("latin-1")
+
+
 def _executa_whois(servidor: str, argumentos: list[str]) -> str:
     """`whois -h <servidor> <argumentos...>` — stdout; falha ⇒ `_FalhaRede`."""
     try:
         resultado = subprocess.run(
             ["whois", "-h", servidor, *argumentos],
             capture_output=True,
-            text=True,
             timeout=_TIMEOUT_SEG,
             check=False,  # returncode tratado abaixo (≠ 0 = falha de rede)
         )
@@ -111,7 +127,7 @@ def _executa_whois(servidor: str, argumentos: list[str]) -> str:
         raise _FalhaRede(
             f"whois {argumentos}@{servidor}: returncode {resultado.returncode}"
         )
-    return resultado.stdout
+    return _decodifica(resultado.stdout)
 
 
 def _parseia_resposta(texto: str) -> tuple[list[int], list[str], list[str]]:

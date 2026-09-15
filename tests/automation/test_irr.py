@@ -86,13 +86,17 @@ RESPOSTA_LACNIC_SEM_INVERSAO = """% IP Client: 2804:22e8:a2b:fd00:59f6:a3fc:273e
 
 # ---- mocks de subprocess.run ----
 
-def _mapa_whois(chamadas: list[list[str]], respostas: dict[tuple[str, ...], str]):
+def _mapa_whois(chamadas: list[list[str]], respostas: dict[tuple[str, ...], str | bytes]):
     def _run(comando, **kwargs):
         chamadas.append(comando)
         chave = tuple(comando)
         if chave not in respostas:
             raise AssertionError(f"consulta whois não prevista no mock: {comando}")
-        return subprocess.CompletedProcess(comando, 0, stdout=respostas[chave], stderr="")
+        resposta = respostas[chave]
+        # `str` vira bytes UTF-8, como o whois devolveria; `bytes` passa direto —
+        # é assim que um teste entrega uma resposta em latin-1 de verdade.
+        bruto = resposta if isinstance(resposta, bytes) else resposta.encode("utf-8")
+        return subprocess.CompletedProcess(comando, 0, stdout=bruto, stderr=b"")
 
     return _run
 
@@ -451,3 +455,34 @@ def test_consultar_membro_prefixo_de_route_set_e_ignorado(session, monkeypatch):
         "prefixos": ["180.10.0.0/16", "2001:db8:1::/48"],
     }
     assert [c[-1] for c in chamadas] == ["AS-CUSTOMERS", "as64512"]
+
+
+# ---- decodificação: a resposta do nic.br é latin-1 (design §3) ----
+
+RESPOSTA_LATIN1 = (
+    "% owner: Núcleo de Inf. e Coord. do Ponto BR\n"
+    "route:          180.10.0.0/16\n"
+    "origin:         AS64512\n"
+).encode("latin-1")
+
+
+def _run_fiel(comando, **kwargs):
+    """`subprocess.run` de mentira com o comportamento que importa: com
+    `text=True` ele decodifica em UTF-8, como o real, e é aí que a resposta
+    latin-1 do nic.br derruba a chamada."""
+    if kwargs.get("text"):
+        # O real levantaria UnicodeDecodeError aqui dentro.
+        return subprocess.CompletedProcess(
+            comando, 0, stdout=RESPOSTA_LATIN1.decode("utf-8"), stderr=""
+        )
+    return subprocess.CompletedProcess(comando, 0, stdout=RESPOSTA_LATIN1, stderr=b"")
+
+
+def test_consultar_aceita_resposta_em_latin1(monkeypatch):
+    """O nic.br responde em latin-1, e com `text=True` a decodificação UTF-8
+    estourava DENTRO do `subprocess.run` — um `UnicodeDecodeError` que não é
+    `OSError` nem `SubprocessError`, logo fora do `except` do módulo: 500 no
+    lugar da falha de rede tratada."""
+    monkeypatch.setattr("gerenet.automation.irr.subprocess.run", _run_fiel)
+
+    assert consultar("lacnic", "64512")["prefixos"] == ["180.10.0.0/16"]
