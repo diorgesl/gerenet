@@ -6,6 +6,7 @@ reservar_circuito entra na Task 9 — mesmo arquivo.
 import ipaddress
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from gerenet.config import get_settings
@@ -341,4 +342,138 @@ def liberar_circuito(session: Session, circuit_id: int, *, actor: str) -> models
     )
     session.commit()
     session.refresh(circ)
+    return circ
+
+
+# Enlaces v4 que o IPAM conhece: /31 (padrão) e /30 (opção do §25.8). O v6 é
+# sempre /126. O resto é rede compartilhada, que o IPAM não representa.
+_ENLACES_V4 = (30, 31)
+
+
+def _valida_prefixo_adocao(prefixo: dict) -> str:
+    """Cf. o prefixo adotado e devolve o texto pronto para gravar (design §4).
+
+    Exige rede canônica e alinhada num enlace p2p do IPAM: v4 em /30 ou /31 e v6
+    em /126. O que não for isso é rede compartilhada (IX, por exemplo), que o
+    IPAM não representa e que a proposta não deveria ter deixado chegar aqui.
+    A caixa é a que veio do equipamento: a reserva é gravada e conferida por
+    texto (§25.8, a mesma regra do `_preserva_caixa`), e o valor adotado é o que
+    está no roteador.
+    """
+    try:
+        rede = ipaddress.ip_network(prefixo["network"], strict=True)
+    except ValueError as exc:
+        raise ValidationError(f"Rede inválida para reserva: {prefixo.get('network')}.") from exc
+    if rede.version == 4 and rede.prefixlen not in _ENLACES_V4:
+        raise ValidationError(f"Enlace p2p v4 deve ser /30 ou /31: {rede}.")
+    if rede.version == 6 and rede.prefixlen != 126:
+        raise ValidationError(f"Enlace p2p v6 deve ser /126: {rede}.")
+    _valida_orientacao(prefixo.get("ponta_local", "inferior"))
+    return _preserva_caixa(prefixo["network"], str(rede))
+
+
+def _confere_vlan_livre(session: Session, site_id: int, vid: int) -> None:
+    """Recusa, nomeando o VID, o que a unicidade do site recusaria no flush.
+
+    Mesmo escopo do `_primeiro_vid` e do índice parcial de `vlans` (site, vid,
+    `device_id IS NULL`, reservada): as linhas MPLS são de escopo de device e
+    não disputam o VID. Nomear o recurso é para o operador ler o que está
+    tomado (§4); o flush continua sendo a defesa contra a corrida.
+    """
+    ocupada = session.scalars(
+        select(models.Vlan.id).where(
+            models.Vlan.site_id == site_id, models.Vlan.vid == vid,
+            models.Vlan.device_id.is_(None), models.Vlan.status == "reservada",
+        ).limit(1)
+    ).first()
+    if ocupada is not None:
+        raise ConflictError(f"VID {vid} já está reservado neste site para outro circuito.")
+
+
+def _confere_prefixo_livre(session: Session, site_id: int, texto: str) -> None:
+    """Idem para o prefixo: o índice parcial de `ip_prefixes` é (site, network, reservada)."""
+    ocupado = session.scalars(
+        select(models.IpPrefix.id).where(
+            models.IpPrefix.site_id == site_id, models.IpPrefix.network == texto,
+            models.IpPrefix.status == "reservada",
+        ).limit(1)
+    ).first()
+    if ocupado is not None:
+        raise ConflictError(
+            f"O prefixo {texto} já está reservado neste site para outro circuito."
+        )
+
+
+def reservar_adocao(
+    session: Session, circuit_id: int, *, vlans: list[dict], prefixos: list[dict],
+    actor: str, origem_snapshot_id: int | None = None, commit: bool = True,
+) -> models.Circuit:
+    """Reserva VLAN(s) e enlace(s) com os valores REAIS do equipamento (design §4).
+
+    Diferente da `reservar_circuito`, que escolhe em first-fit e deriva o /126 do
+    par v4 (§25.8): aqui os valores vêm do que está configurado no roteador, e um
+    circuito legado não segue nem a escolha nem a derivação. A orientação da
+    ponta é gravada porque é ela que faz o render devolver o endereço correto.
+    Idempotente: circuito já reservado devolve o estado atual.
+    """
+    circ = get_circuit(session, circuit_id)
+    if circ.admin_status is False:
+        raise ConflictError(f"Circuito {circ.code} desativado não recebe reservas.")
+    ja_reservado = (
+        session.scalars(
+            select(models.Vlan.id).where(
+                models.Vlan.circuit_id == circ.id, models.Vlan.status == "reservada"
+            ).limit(1)
+        ).first()
+        is not None
+    )
+    if ja_reservado:
+        registrar(
+            session, tipo="circuit.reserve", ator=actor, objeto="circuit",
+            objeto_id=circ.id, antes=None, depois={"repetida": True},
+        )
+        if commit:
+            session.commit()
+        return circ
+
+    for vlan in vlans:
+        validar_vid(vlan["vid"])
+        _confere_vlan_livre(session, circ.site_id, vlan["vid"])
+    textos = [_valida_prefixo_adocao(p) for p in prefixos]
+    for texto in textos:
+        _confere_prefixo_livre(session, circ.site_id, texto)
+
+    linhas_vlan = [
+        models.Vlan(site_id=circ.site_id, vid=v["vid"], kind=v["kind"],
+                    family=v.get("family"), circuit_id=circ.id, status="reservada")
+        for v in vlans
+    ]
+    linhas_prefixo = [
+        models.IpPrefix(site_id=circ.site_id, network=texto, kind="p2p", circuit_id=circ.id,
+                        ponta_local=origem.get("ponta_local", "inferior"))
+        for origem, texto in zip(prefixos, textos, strict=True)
+    ]
+    session.add_all(linhas_vlan + linhas_prefixo)
+    try:
+        session.flush()
+    except IntegrityError as exc:
+        session.rollback()
+        raise ConflictError(
+            "Reserva recusada por unicidade: a VLAN ou o prefixo já está reservado "
+            "neste site para outro circuito."
+        ) from exc
+    registrar(
+        session, tipo="circuit.reserve", ator=actor, objeto="circuit", objeto_id=circ.id,
+        antes=None,
+        depois={
+            "origem": "adocao",
+            "snapshot_id": origem_snapshot_id,
+            "vlans": [{"vid": v.vid, "kind": v.kind, "family": v.family} for v in linhas_vlan],
+            "ip_prefixes": [{"network": p.network, "ponta_local": p.ponta_local}
+                            for p in linhas_prefixo],
+        },
+    )
+    if commit:
+        session.commit()
+        session.refresh(circ)
     return circ
