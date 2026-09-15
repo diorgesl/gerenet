@@ -93,7 +93,10 @@ def _colidente_par(
     return None
 
 
-def create_session(session: Session, data: BgpSessionCreate, *, actor: str) -> models.BgpSession:
+def create_session(
+    session: Session, data: BgpSessionCreate, *, actor: str, commit: bool = True
+) -> models.BgpSession:
+    """Cria a sessão BGP; `commit=False` é para a adoção encadear os três numa transação (design §3)."""
     circ = get_circuit(session, data.circuit_id)
     if circ.admin_status is False:
         raise ConflictError(f"Circuito {circ.code} desativado não recebe sessões.")
@@ -155,13 +158,15 @@ def create_session(session: Session, data: BgpSessionCreate, *, actor: str) -> m
             session, tipo="bgp_session.create", ator=actor, objeto="bgp_session",
             objeto_id=sessao.id, antes=None, depois=dump,
         )
-        session.commit()
+        if commit:
+            session.commit()
     except IntegrityError as exc:
         session.rollback()
         raise ConflictError(
             "Não foi possível criar a sessão BGP: conflito de integridade."
         ) from exc
-    session.refresh(sessao)
+    if commit:
+        session.refresh(sessao)
     return sessao
 
 
