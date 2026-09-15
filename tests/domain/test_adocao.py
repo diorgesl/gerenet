@@ -32,6 +32,7 @@ _CONFIG_FIEL = (
     "interface Eth-Trunk127.601\n"
     " vlan-type dot1q 601\n"
     " ip address 100.64.10.0 255.255.255.254\n"
+    " statistic enable\n"
     "#\n"
     "bgp 65001\n"
     " peer 100.64.10.1 as-number 64512\n"

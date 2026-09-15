@@ -14,7 +14,7 @@ def test_subinterface_dual() -> None:
         interface="Eth-Trunk127.4024", descricao=None, qinq=False, vid=4024,
         enderecos_v4=[{"endereco": "100.110.0.73", "mascara": "255.255.255.252"}],
         enderecos_v6=["2804:194C:1000::1100:73:1/126"],
-    ) == "interface Eth-Trunk127.4024\nvlan-type dot1q vid 4024\nip address 100.110.0.73 255.255.255.252\nipv6 enable\nipv6 address 2804:194C:1000::1100:73:1/126"
+    ) == "interface Eth-Trunk127.4024\nvlan-type dot1q vid 4024\nip address 100.110.0.73 255.255.255.252\nipv6 enable\nipv6 address 2804:194C:1000::1100:73:1/126\nstatistic enable"
 
 
 def test_subinterface_v4_descricao_sem_ipv6() -> None:
@@ -23,7 +23,7 @@ def test_subinterface_v4_descricao_sem_ipv6() -> None:
         interface="Eth-Trunk127.4023", descricao="Cliente A", qinq=False, vid=4023,
         enderecos_v4=[{"endereco": "100.64.0.1", "mascara": "255.255.255.254"}],
         enderecos_v6=[],
-    ) == "interface Eth-Trunk127.4023\ndescription Cliente A\nvlan-type dot1q vid 4023\nip address 100.64.0.1 255.255.255.254"
+    ) == "interface Eth-Trunk127.4023\ndescription Cliente A\nvlan-type dot1q vid 4023\nip address 100.64.0.1 255.255.255.254\nstatistic enable"
 
 
 def test_subinterface_qinq_0x88a8() -> None:
@@ -31,7 +31,7 @@ def test_subinterface_qinq_0x88a8() -> None:
         "subinterface",
         interface="Eth-Trunk127.100", descricao=None, qinq=True, vid=100,
         enderecos_v4=[], enderecos_v6=["2001:DB8::1/126"],
-    ) == "interface Eth-Trunk127.100\nvlan-type dot1q 0x88a8 vid 100\n# second-dot1q: encapsulamento interno duplo — dívida do ciclo C\nipv6 enable\nipv6 address 2001:DB8::1/126"
+    ) == "interface Eth-Trunk127.100\nvlan-type dot1q 0x88a8 vid 100\n# second-dot1q: encapsulamento interno duplo — dívida do ciclo C\nipv6 enable\nipv6 address 2001:DB8::1/126\nstatistic enable"
 
 
 def test_prefix_list_v4_e_v6() -> None:

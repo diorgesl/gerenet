@@ -16,16 +16,19 @@ interface Eth-Trunk127.1001
  ip address 100.64.10.0 255.255.255.254
  ipv6 enable
  ipv6 address 2804:194C:1000::1100:73:1 126
+ statistic enable
 #
 interface Eth-Trunk127.2001
  vlan-type dot1q 2001
  description CLIENTE-BETA
  ip address 100.64.10.5 255.255.255.254
+ statistic enable
 #
 interface Eth-Trunk127.3001
  vlan-type dot1q 3001
  description TRANSITO-GAMA
  ip address 100.64.10.2 255.255.255.254
+ statistic enable
 #
 interface LoopBack0
  ip address 10.0.0.1 255.255.255.255
