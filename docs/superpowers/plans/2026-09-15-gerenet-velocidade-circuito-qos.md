@@ -1644,8 +1644,8 @@ def test_a_auditoria_leva_todas_as_diferencas(db_session, tmp_path) -> None:
     assert all(set(d) == campos for d in payload["diferencas"])
     assert payload["edge_trunk"] == "Eth-Trunk127"
     sub = next(d for d in payload["diferencas"] if d["contexto"] == "subinterface")
-    assert any("CLIENTE-ALFA" in linha for linha in sub["sobrando"])
-    assert any("ADOC-64512-1001 CLIENTE ALFA" in linha for linha in sub["faltando"])
+    assert any("CLIENTE-ALFA" in linha for linha in sub["faltando"])
+    assert any("ADOC-64512-1001 CLIENTE ALFA" in linha for linha in sub["sobrando"])
     assert sub["nao_gerenciado"] == []
 ```
 
@@ -1653,6 +1653,23 @@ def test_a_auditoria_leva_todas_as_diferencas(db_session, tmp_path) -> None:
 > `circuit_code="ADOC-64512-1001"`: a descrição que o ensaio emite é
 > `ADOC-64512-1001 CLIENTE ALFA` (sem velocidade, que nasce `None`), e a do
 > equipamento é `CLIENTE-ALFA`.
+>
+> **Ruling 20 — os dois lados estavam trocados, e a prosa acima sempre esteve
+> certa.** `Diferenca` monta `sobrando=esperado - encontrado` e
+> `faltando=encontrado - esperado` (`src/gerenet/automation/discovery.py:1265-1266`),
+> com `esperado` sendo o que o **render** produz: logo `sobrando` é o que o render
+> emite e o equipamento não tem, e `faltando` é o inverso. O snippet prende
+> `CLIENTE-ALFA` (do equipamento) no `sobrando` e `ADOC-64512-1001 CLIENTE ALFA`
+> (do render) no `faltando` — exatamente ao contrário do que a prosa do bloco
+> logo abaixo descreve, e ao contrário do Step 1g deste mesmo documento, que
+> está certo (`description CLIENTE-ALFA` no `faltando`, `description ENSAIO-` no
+> `sobrando`, `interface Eth-Trunk9.1001` no `sobrando`). O implementer mediu
+> antes de escrever, viu `Left contains one more item: 'description
+> ENSAIO-ne8000-adoc-1001 ENSAIO-NE8000-ADOC-1001'` com o lado esquerdo sendo o
+> `sobrando`, e escreveu as duas asserções certas — a única divergência
+> deliberada do texto literal do brief. Emendado aqui para que a próxima pessoa
+> que leia o Step 1d não troque de novo. — **Custo se errado:** nenhum; a
+> emenda alinha o snippet à prosa que já estava no mesmo passo e ao Step 1g.
 
 **1e. Os testes novos**, ao fim do arquivo — com os helpers da casa
 (`_ambiente(db_session, tmp_path, *, texto=None)` devolve `(site, dev)`,
