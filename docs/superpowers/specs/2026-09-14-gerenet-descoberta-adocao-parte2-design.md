@@ -199,9 +199,14 @@ revisão: código, acesso, `edge_trunk`, organização (id existente ou os dados
 nova), perfis por sessão, `password_ref`, e `ciente: bool`. Devolve o
 `circuit_id` criado. Erros: 404 quando a proposta não existe mais (alguém adotou
 antes, e a lista se cura), 409 quando uma unicidade recusou, 422 quando falta
-campo obrigatório ou o `ciente` era exigido e não veio. O `GET` de candidatos
-ganha, por proposta, o diff da conferência, para a tela não precisar de outra
-chamada.
+campo obrigatório ou o `ciente` era exigido e não veio.
+
+**A conferência sai sob demanda, num endpoint próprio.**
+`GET /api/v1/discovery/fidelidade?device_id=&vrf=&subinterface=` devolve o diff
+daquela proposta. Ela **não** vai embutida na lista: cada conferência roda
+`render_desejado` do equipamento inteiro dentro de um ensaio, e embutir isso
+faria a página pagar 69 renders a cada abertura. A tela chama quando o operador
+abre a revisão de uma proposta, que é uma por vez.
 
 **CLI.** `gerenet discovery adopt <device> <peer> --json <arquivo>` com a revisão
 completa, mais `--ciente` para o caso em que há diferença. O `--json` é o caminho
