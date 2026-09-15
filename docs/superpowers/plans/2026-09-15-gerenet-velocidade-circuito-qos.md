@@ -2279,7 +2279,21 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 
 **Files:**
 - Modify: `docs/wiki/circuitos.md`
+- Modify: `docs/wiki/descoberta.md` (a frase que ficou falsa na Task 6 — Ruling do pré-voo, 9)
 - Modify: `docs/runbook-validacao-ne8000.md`
+
+> **Ruling do pré-voo, 9 — esta tarefa não estava consertando duas frases que a
+> frente tornou mentirosas.** As duas dizem que o `description` da subinterface
+> está no grupo "o que a SoT não gerencia", e isso deixou de ser verdade na
+> Task 6: a `description` passou a ser gerenciada e a **exigir ciente**. São
+> `docs/wiki/descoberta.md:150-152` e `docs/runbook-validacao-ne8000.md:271`
+> (o parêntese "o `description` e o MTU da subinterface"). A página
+> `docs/wiki/descoberta.md` **não estava no `Files:` de tarefa nenhuma** — só
+> esta a alcança, e sem ela a frase sobrevive à frente inteira. O conserto nas
+> duas é o mesmo: o grupo que não gateia hoje é só o `mtu`.
+> **Custo se errado:** quem for validar no equipamento lê a wiki e o runbook,
+> espera que a descrição divergente não peça `ciente`, e marca o `ciente` como
+> ruído em vez de tratá-lo como o aviso de que a SoT vai reescrever a linha.
 
 **Interfaces:**
 - Consumes: tudo o que as tarefas anteriores entregaram.
@@ -2336,9 +2350,47 @@ A descrição é **derivada**: renomear a organização reescreve a descrição 
 todas as subinterfaces dela no próximo provisionamento.
 ```
 
+- [ ] **Step 1b: A página da descoberta**
+
+Em `docs/wiki/descoberta.md`, na seção "O diff, em dois grupos — e só um
+bloqueia", o segundo grupo ainda lista a `description`:
+
+```markdown
+- **O que a SoT não gerencia**: linha que o equipamento tem e o render não emite
+  de propósito — hoje o `description` e o `mtu` da subinterface. Numa borda real
+  elas estão em toda proposta, e "diferença exige `ciente`" degeneraria em
+  "marque sempre". Ficam visíveis, para leitura, e não gateiam nada.
+```
+
+A `description` saiu deste grupo na frente da velocidade (§4 do design): a SoT
+passou a emiti-la e a **gerenciá-la**, então uma descrição diferente no
+equipamento é diferença de verdade e exige o `ciente`. O grupo passa a ter só o
+`mtu`:
+
+```markdown
+- **O que a SoT não gerencia**: linha que o equipamento tem e o render não emite
+  de propósito — hoje só o `mtu` da subinterface. Numa borda real ele está em
+  toda proposta, e "diferença exige `ciente`" degeneraria em "marque sempre".
+  Fica visível, para leitura, e não gateia nada.
+
+  A `description` **esteve** aqui até a frente da velocidade: hoje a SoT a
+  deriva do circuito e a emite, então uma descrição divergente é mudança de
+  verdade — e uma proposta cuja descrição fuja do formato
+  `<CÓDIGO> <ORG> [<VELOCIDADE>]` pede o `ciente`.
+```
+
 - [ ] **Step 2: O runbook**
 
-Em `docs/runbook-validacao-ne8000.md`, na seção da Etapa 3 (a da adoção), acrescentar um item ao checklist:
+Em `docs/runbook-validacao-ne8000.md`, primeiro o parêntese que ficou falso na
+mesma seção da Etapa 3 — o item do grupo que não gateia lista a `description`,
+que hoje gateia:
+
+```markdown
+- o grupo **O que a SoT não gerencia** (só o `mtu` da subinterface) é o
+  esperado, e não gateia nada;
+```
+
+E, no mesmo lugar, acrescentar os itens novos ao checklist:
 
 ```markdown
 - [ ] **A `description` da subinterface agora é gerenciada.** Adotar um enlace
@@ -2364,7 +2416,7 @@ Expected: `pytest` verde (as seis falhas de `tests/worker/` são o flake do Redi
 - [ ] **Step 4: Commit**
 
 ```bash
-git add docs/wiki/circuitos.md docs/runbook-validacao-ne8000.md
+git add docs/wiki/circuitos.md docs/wiki/descoberta.md docs/runbook-validacao-ne8000.md
 git commit -m "docs: a velocidade, o formato da descrição e o QoS na wiki e no runbook
 
 Co-Authored-By: Claude Code <noreply@anthropic.com>"
