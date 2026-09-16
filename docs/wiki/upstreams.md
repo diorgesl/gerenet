@@ -29,11 +29,19 @@ circuitos e as sessões.
 
 O cadastro (`gerenet upstreams add`, página `/upstreams`) tem nome único,
 `tipo` (`transito`, `ix`, `pni`, `contingencia`), capacidade, prioridade,
-custo, a organização operadora, os esperados de prefixos v4/v6 e a margem do
-maximum-prefix. O `tipo` escolhe o produto de importação por padrão:
-`transito`/`ix` → `up-full`, `pni` → `up-parcial`, `contingencia` →
+custo, a organização operadora, os esperados de prefixos v4/v6, a margem do
+maximum-prefix e o **tipo de policy**. O `tipo` escolhe o produto de importação
+por padrão: `transito`/`ix` → `up-full`, `pni` → `up-parcial`, `contingencia` →
 `up-default`.
 
+- **Tipo de policy** (`--produto-import`): `full`, `parcial` ou `default` — o
+  tipo de rota que a operadora envia. Preenchido, é ele que decide o produto da
+  importação, e o `tipo` do upstream fica de fora; vazio, o produto continua
+  saindo do `tipo`, como sempre saiu. A operadora não tem prefix-list própria:
+  o que a descreve é o produto, e é por ele que a propagação acha o perfil de
+  importação das sessões que não têm um. Mudar o campo re-propaga às sessões. O
+  detalhe do upstream mostra a linha **Tipo de policy**, com `—` quando o campo
+  está vazio.
 - **Margem**: com `--expected-prefixes-v4/6` e `--max-prefix-margin-pct`
   (default 20 %), o maximum-prefix das sessões é calculado como
   esperado × (1 + margem), e o limiar de aviso assume 80 % quando não
@@ -44,6 +52,15 @@ maximum-prefix. O `tipo` escolhe o produto de importação por padrão:
   <circuito> --papel principal|contingencia --ordem <n>` — um circuito
   pertence a no máximo um upstream, e a ordem do vínculo é a preferência. É
   daí que sai a matriz principal × contingência mostrada na UI.
+- **Acesso**: a seção do diálogo de criação — equipamento de acesso e porta,
+  mais os campos do circuito (código, site, edge, Eth-Trunk e velocidade) —
+  cria o circuito **na mesma chamada** e o vincula como principal: um erro em
+  qualquer ponta não deixa upstream nem circuito gravados. O circuito nasce sem
+  VLAN e sem endereços — a **reserva continua na página do circuito**, que tem
+  o assistente, e o vínculo não a exige. Só a criação monta a seção; o vínculo
+  de um upstream que já existe se faz no detalhe dele. No CLI, as mesmas opções
+  (`--circuito-codigo`, que exige `--site` e `--edge-device`, mais
+  `--edge-trunk`, `--access-device`, `--access-port` e `--velocidade-mbps`).
 - **Importação**: `up-full` aceita tudo do provedor exceto o que a
   prefix-list de proteção (rotas internas + autorizações ativas de clientes)
   e as communities com `bloquear` negam; sem `allow_default_route`, a default

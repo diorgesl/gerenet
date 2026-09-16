@@ -129,7 +129,10 @@ ele não aceitar.
 | Equipamento e porta de acesso | Em branco: a configuração do edge não diz de que switch e porta o cliente chega. |
 | Trunk do edge | Derivado do nome da subinterface (`Eth-Trunk127.<vid>`) — é com ele que o render monta `<trunk>.<vid>`. |
 | Organização | De uma lista (as desativadas aparecem com o rótulo) ou **Criar a nova**, com o nome digitado e o ASN do peer. |
+| Tipo de organização | `downstream`, `parceiro` ou `operadora` — a operadora traz o bloco de upstream, e o bloco exige operadora (veja abaixo). |
+| Upstream | Só com a operadora: **vincular** um existente ou **criar** o novo, com o tipo, o tipo de policy e o papel (veja abaixo). |
 | Perfil de importação e de exportação | Por família: é o produto da política que o render emite. |
+| Route-policy de importação e de exportação | Por família: o nome lido da configuração, que se mantém ou se limpa no botão ao lado (veja abaixo). |
 | Caminho do segredo no Vault | Por família, quando o peer tem senha — o valor do segredo nunca passa pela tela. |
 
 O que a revisão mostra e não se edita: as reservas que serão gravadas (VID, rede
@@ -141,6 +144,72 @@ motivo escrito ao lado do campo.
 
 O aceite vale para o diff que está na tela: mexer num campo que entra na
 comparação (o perfil, o trunk) refaz a conferência e desmarca a caixa sozinho.
+
+## Enlace de operadora: o tipo de organização e o bloco de upstream
+
+O **Tipo de organização** diz o que o enlace é para a SoT: `downstream` (o caso
+comum), `parceiro` ou `operadora`. Ele e o bloco de upstream andam juntos, nos
+dois sentidos: `operadora` exige o bloco, e o bloco exige organização operadora,
+nova ou existente. A razão é que os dois critérios do render não são o mesmo —
+o despacho do enlace sai do **vínculo** do circuito com um upstream, e a lista
+de autorizações de cliente é filtrada pelo **`kind`** da organização. Operadora
+sem vínculo é o único estado em que os dois discordam, e a revisão não deixa
+criá-lo: o botão **Adotar** fica desabilitado e uma das duas frases aparece
+dizendo qual metade está faltando.
+
+No bloco **Upstream**, a revisão escolhe entre duas formas:
+
+- **Vincular a um existente** — o select lista os upstreams cadastrados; o
+  escolhido tem de ser da operadora da revisão e estar ativo (desativado, a
+  adoção pede a reativação antes de seguir).
+- **Criar o novo** — nome, tipo (trânsito, IX, PNI ou contingência), tipo de
+  policy (`full`, `parcial` ou `default`; vazio deixa o produto sair do tipo,
+  como no [cadastro do upstream](/wiki/upstreams)) e o papel do vínculo,
+  `principal` ou `contingência`.
+
+Nos dois casos o circuito nasce vinculado ao upstream na mesma transação —
+como **principal**, salvo se a revisão escolher a contingência —, e é o vínculo
+que decide o caminho do render da primeira mudança em diante. O que a revisão
+cria do upstream novo é o essencial (nome, tipo, tipo de policy e papel); os
+outros campos do cadastro ficam para a [página do upstream](/wiki/upstreams),
+depois. O tipo de policy escolhido aqui também preenche o perfil de importação
+das sessões que a revisão deixar sem um.
+
+## O nome de política lido no equipamento
+
+A configuração de cada peer nomeia a route-policy de importação e a de
+exportação, e a revisão mostra os dois nomes **por família** — *Route-policy de
+importação (ipv4)*, *Route-policy de exportação (ipv6)* — já preenchidos com o
+que a leitura encontrou. Importar o nome tem consequência: **o gerenet passa a
+ser dono daquele nome no equipamento**. A primeira mudança aprovada da sessão
+emite `route-policy <nome lido>` com o corpo que a SoT monta, e, se esse corpo
+divergir do que está lá, é o equipamento que muda. A conferência de fidelidade
+compara o corpo das definições sob o nome — o contexto `definicao` do diff —, e
+manter o nome com o corpo diferente é uma das diferenças que exigem o `ciente`.
+
+**Limpar** o campo devolve o nome padrão — `RP-<ASN>-IMPORT-<AFI>` na
+importação e `RP-<ASN>-EXPORT-<AFI>` na exportação —, e a política do
+equipamento sai do que a SoT gerencia: o render volta a emitir a definição dele
+sob o nome derivado do ASN do par. O nome aceita até 63 caracteres, com letras,
+números, ponto, hífen e sublinhado.
+
+O nome tem de ter um dono só no equipamento, e a repetição é recusada em dois
+momentos:
+
+- **O nome já é de outra sessão** (ou de outro enlace da mesma leitura —
+  inclusive as duas famílias de um dual stack): o caso chega como conflito
+  `politica_compartilhada`, a proposta fica `nao_adotavel` e a mensagem diz quem
+  é o dono do nome. Na adoção, o nome que já tem dono é recusado na escrita com
+  a mesma razão.
+- **As duas direções do mesmo peer usam o mesmo nome**: no VRP
+  `route-policy <nome>` é um objeto só, sem direção, e a definição de import
+  seria reescrita pela de export no mesmo nó. A guarda recusa, e a adoção
+  inteira volta atrás — nada é gravado.
+
+Nos dois casos a saída é a mesma: o **Limpar** ao lado do nome devolve o padrão
+num dos lados, e a adoção passa. Não há modelo para uma política com dois donos
+— nem dois peers, nem as duas direções de um só. Os dois campos também estão no
+cadastro e na edição da sessão.
 
 ## O diff, em dois grupos — e só um bloqueia
 
@@ -169,14 +238,17 @@ adoção fica bloqueada, e não há `ciente` que a libere.
 Uma transação só, e nada é enviado ao equipamento:
 
 1. a organização, quando a revisão pede uma nova (o ASN é o do peer);
-2. o circuito, com o acesso e o trunk da revisão e a stack derivada das sessões
+2. o upstream, quando a revisão pede um novo;
+3. o circuito, com o acesso e o trunk da revisão e a stack derivada das sessões
    que nascem;
-3. as reservas **pelos valores reais** da proposta — o VID e o par p2p que o
+4. as reservas **pelos valores reais** da proposta — o VID e o par p2p que o
    equipamento já usa, e não o que o alocador daria: aqui quem manda é a
    configuração lida, e o snapshot de origem fica gravado na reserva;
-4. uma sessão por família, com o ASN local do equipamento e o remoto lido da
+5. o vínculo do circuito com o upstream, com o papel e a ordem da revisão — é
+   ele que faz o render tratar o enlace pela operadora daqui em diante;
+6. uma sessão por família, com o ASN local do equipamento e o remoto lido da
    configuração;
-5. o evento `discovery.adopt`, com o snapshot, o `ciente` e o diff inteiro.
+7. o evento `discovery.adopt`, com o snapshot, o `ciente` e o diff inteiro.
 
 Se qualquer passo recusar, tudo é desfeito: não existe adoção parcial. A
 proposta adotada sai da lista sozinha, porque a lista é recalculada do que a SoT

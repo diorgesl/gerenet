@@ -466,5 +466,48 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   migrar um peer fica só na web. Dívidas: more-specifics anunciados fora do
   bloco alocado, blocos de ASN estrangeiro, o botão na página de organizações e
   enriquecer organização já cadastrada.
+- Default route, adoção de upstream e políticas importadas (2026-09-16): a
+  sessão BGP ganhou a coluna `default_route_advertise` — o `peer X
+  default-route-advertise` (escopo de cliente, com a guarda no serviço pelo
+  `upstream_do_circuito`), ficando o `allow_default_route` com o sentido de
+  sempre (aceitar a default do provedor, escopo de upstream) —, e a migração
+  `alembic/versions/a3d1c7e5b9f2_adocao_upstream_e_politicas.py` copia a
+  intenção do campo antigo para a coluna nova nas sessões sem vínculo de
+  upstream e zera o antigo (as de upstream ficam intactas); o `upstream_id`
+  entrou no `BgpSessionOut` e é por ele que a web escolhe o checkbox do escopo
+  ("Anunciar rota default ao cliente" × "Aceitar rota default do provedor"), e
+  não pelo `kind` da organização. A adoção ganhou o select de **`kind`**
+  (`downstream`/`parceiro`/`operadora`) com a regra de coerência do §5.1
+  (operadora exige o bloco de upstream, e o bloco exige operadora — o render
+  despacha o enlace pelo vínculo e `_autorizadas_clientes` filtra pelo `kind`)
+  e o bloco `AdocaoUpstreamIn` (vincula um existente ou cria o novo, com tipo,
+  `produto_import` e papel), gravados na transação única do `adotar_proposta`
+  na ordem do design §5.3 (upstream → circuito → reserva → vínculo → sessões →
+  `propagar_defaults`), com o ensaio da conferência montando o vínculo. Os
+  nomes de política lidos no equipamento (`bgp_sessions.import_route_policy` e
+  `.export_route_policy`, por sessão) são a **exceção ao §25.4**: preenchidos,
+  o render emite o corpo sob aquele nome (`_nome_rp_import`/`_nome_rp_export`);
+  a revisão da adoção importa o nome lido e o botão de limpar devolve o padrão
+  (`RP-<ASN>-IMPORT-<AFI>`/`RP-<ASN>-EXPORT-<AFI>`). O nome repetido é
+  recusado: `politica_compartilhada` na proposta e
+  `_recusa_nome_de_politica_repetido` na escrita (outra sessão ativa ou outro
+  enlace da leitura), mais a guarda do mesmo nome nas duas direções no
+  `create_session`. No upstream, o `produto_import` (tipo de policy) vence o
+  `tipo` pelo `PERFIL_DO_PRODUTO` no produto da importação e entra em
+  `_CAMPOS_PROPAGACAO`; o `POST /api/v1/upstreams` aceita o bloco de **acesso**
+  que cria o circuito vinculado como principal na mesma chamada
+  (`criar_com_circuito`, `commit=False` nos três serviços — a reserva de VLAN e
+  de endereços segue na página do circuito). Web: `/discovery` (o `kind`, o
+  bloco do upstream e os nomes de política por família, com o limpar),
+  `/upstreams` e o detalhe (tipo de policy e a seção de acesso do cadastro).
+  Desvios registrados do spec: o `propagar_defaults` **não** ganha `commit` (ele
+  propaga no meio do `update_upstream`, que commita no fim), e as três flags
+  novas da sessão (`--default-route-advertise`, `--import-route-policy`,
+  `--export-route-policy`) entram só no `bgp-sessions add` — não existe
+  `update` no CLI, e criar um não é desta frente. Dívida do §11 que fica: não
+  há modelo para uma route-policy compartilhada, nem por dois peers do mesmo
+  equipamento, nem pelas duas direções de um só — a adoção recusa (a transação
+  volta inteira) e a saída é o botão de limpar, e o render continua emitindo os
+  dois blocos sob o mesmo nome quando o caso chega por outro caminho.
 - Convenções previstas no `.gitignore`: Python com venv e pytest (`.venv/`, `.pytest_cache/`), deploy via Docker Compose (`compose.yaml` na raiz) com `.env` ignorado (o `.gitignore` ainda prevê `deploy/docker/.env`), `config.yaml` local com segredos **fora do repositório**, logs em `logs/` ignorados.
 - `.claude/settings.local.json` contém token e aponta o harness para uma API externa: é arquivo local — não versionar nem alterar.
