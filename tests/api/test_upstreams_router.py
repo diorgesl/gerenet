@@ -220,6 +220,9 @@ def test_upstream_detail_traz_sessoes_dos_circuitos(
     data = client.get(f"/api/v1/upstreams/{up_com_sessao_upfull.id}", headers=_auth()).json()
     assert len(data["sessoes"]) == 1
     assert data["sessoes"][0]["organization_kind"] == "operadora"
+    # A sessão é de um circuito vinculado a ESTE upstream: o campo derivado não
+    # pode sair nulo só porque quem monta a resposta é outro router.
+    assert data["sessoes"][0]["upstream_id"] == up_com_sessao_upfull.id
 
 
 def test_desvincular_so_principal_restante_da_400(

@@ -44,17 +44,23 @@ def _out_upstream(up: models.Upstream) -> UpstreamOut:
     return UpstreamOut.model_validate(up).model_copy(update=_org_kind_nome(up))
 
 
-def _out_sessao(session: Session, sessao: models.BgpSession) -> BgpSessionOut:
+def _out_sessao(session: Session, up: models.Upstream, sessao: models.BgpSession) -> BgpSessionOut:
+    """Sessão da listagem do upstream — o vínculo é o `up` do escopo.
+
+    `_detalhe` monta a lista a partir de `up.circuitos`, então o dono do vínculo
+    já está em mãos: derivar de novo seria uma consulta por sessão para o mesmo
+    dado (e um `None` para uma sessão que está vinculada).
+    """
     circ = session.get(models.Circuit, sessao.circuit_id)
     org = circ.organization if circ else None
     return BgpSessionOut.model_validate(sessao).model_copy(
-        update={"organization_kind": org.kind if org else None}
+        update={"organization_kind": org.kind if org else None, "upstream_id": up.id}
     )
 
 
 def _detalhe(session: Session, up: models.Upstream) -> UpstreamDetailOut:
     sessoes = [
-        _out_sessao(session, s)
+        _out_sessao(session, up, s)
         for vinculo in up.circuitos
         for s in list_sessions(session, circuit_id=vinculo.circuit_id, include_disabled=False)
     ]
