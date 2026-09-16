@@ -854,6 +854,21 @@ export function useDiscoveryDesdesignorar() {
   return mutation;
 }
 
+/** A identidade que a conferência usa: o que a adoção VAI gravar e que o ensaio
+ * precisa ter para a comparação valer (§6 do design da velocidade).
+ *
+ * Tudo texto (menos o id da organização) de propósito: a assinatura que
+ * invalida o aceite compara o que o operador DIGITOU. Com o número já
+ * normalizado, `0100` e `100` seriam a mesma coisa, e o aceite viajaria contra
+ * um diff que a tela nunca mostrou. */
+export type IdentidadeDaConferencia = {
+  edgeTrunk: string;
+  circuitCode: string;
+  organizacaoId: number;
+  organizacaoNome: string;
+  velocidade: string;
+};
+
 /** Os perfis entram na chave de propósito: trocar um `select` de perfil refaz a
  * conferência, porque o corpo da política de exportação muda com ele. */
 export const useFidelidade = (
@@ -861,15 +876,23 @@ export const useFidelidade = (
   vrf: string | null,
   subinterface: string | null,
   perfis: Record<string, { import?: number; export?: number }> = {},
-  edgeTrunk: string | null = null,
+  identidade: IdentidadeDaConferencia | null = null,
 ) =>
   useQuery({
-    queryKey: ["fidelidade", deviceId, vrf, subinterface, perfis, edgeTrunk],
+    queryKey: ["fidelidade", deviceId, vrf, subinterface, perfis, identidade],
     queryFn: () => {
       const qs = new URLSearchParams({ device_id: String(deviceId) });
       if (vrf) qs.set("vrf", vrf);
       if (subinterface) qs.set("subinterface", subinterface);
-      if (edgeTrunk) qs.set("edge_trunk", edgeTrunk);
+      if (identidade) {
+        if (identidade.edgeTrunk) qs.set("edge_trunk", identidade.edgeTrunk);
+        if (identidade.circuitCode) qs.set("circuit_code", identidade.circuitCode);
+        if (identidade.organizacaoId > 0) {
+          qs.set("organizacao_id", String(identidade.organizacaoId));
+        }
+        if (identidade.organizacaoNome) qs.set("organizacao_nome", identidade.organizacaoNome);
+        if (identidade.velocidade) qs.set("velocidade_mbps", identidade.velocidade);
+      }
       for (const [afi, p] of Object.entries(perfis)) {
         if (p.import) qs.set(`import_${afi}`, String(p.import));
         if (p.export) qs.set(`export_${afi}`, String(p.export));

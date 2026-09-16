@@ -7,6 +7,7 @@ import {
   useOrganizations,
   usePolicyProfiles,
   usePrefill,
+  type IdentidadeDaConferencia,
 } from "@/api/hooks";
 import { FormField } from "@/components/FormField";
 import { Modal } from "@/components/Modal";
@@ -45,8 +46,13 @@ const LIMITE_DO_TRUNK = 64;
 const LIMITE_DO_NOME = 128;
 const LIMITE_DO_CAMINHO = 255;
 
-/** O trunk é digitado: a espera é o que segura a enxurrada de consultas. */
-const ESPERA_DO_TRUNK_MS = 300;
+/** O teto do schema (`CircuitCreate.velocidade_mbps`), espelhado. */
+const LIMITE_DA_VELOCIDADE = 100000;
+
+/** O trunk, o código e a velocidade são digitados: a espera é o que segura a
+ * enxurrada de consultas — cada conferência roda um render do equipamento
+ * inteiro no servidor. */
+const ESPERA_DA_IDENTIDADE_MS = 300;
 
 /** Um bloco do registro na lista da revisão: o `marcado` é a escolha do
  * operador e o `conflito` é o estado do bloco na SoT (§7). */
@@ -88,9 +94,28 @@ export function AdocaoDialog({
   const [acesso, setAcesso] = useState<number>(0);
   const [porta, setPorta] = useState("");
   const [trunk, setTrunk] = useState(trunkDoNome(proposta));
-  const [trunkDaConferencia, setTrunkDaConferencia] = useState(trunkDoNome(proposta));
   const [orgId, setOrgId] = useState<number>(proposta.organizacao_id ?? 0);
   const [orgNome, setOrgNome] = useState(proposta.organizacao_sugerida ?? "");
+  const [velocidade, setVelocidade] = useState(
+    proposta.velocidade_mbps === null ? "" : String(proposta.velocidade_mbps),
+  );
+  // A `criarOrg` sobe para cá porque a assinatura abaixo a lê: ela é quem decide
+  // qual das duas metades da organização — o nome da nova ou a id da existente —
+  // entra na conferência.
+  const criarOrg = orgId === 0;
+  // O que o operador digitou, como assinatura: é ela que a espera observa e é
+  // dela que sai o objeto da conferência. Comparar o objeto direto refaria a
+  // consulta a cada render, porque cada render cria um objeto novo.
+  const assinaturaDaIdentidade = JSON.stringify({
+    edgeTrunk: trunk,
+    circuitCode: code,
+    organizacaoId: criarOrg ? 0 : orgId,
+    organizacaoNome: criarOrg ? orgNome.trim() : "",
+    velocidade,
+  });
+  const [identidadeDaConferencia, setIdentidadeDaConferencia] = useState<IdentidadeDaConferencia>(
+    () => JSON.parse(assinaturaDaIdentidade) as IdentidadeDaConferencia,
+  );
   const [razaoSocial, setRazaoSocial] = useState("");
   const [documento, setDocumento] = useState("");
   const [asSet, setAsSet] = useState("");
@@ -105,14 +130,17 @@ export function AdocaoDialog({
   // guarda o caminho no Vault, nunca o valor.
   const [caminhos, setCaminhos] = useState<Record<string, string>>({});
   const { data: fidelidade, error: erroDaConferencia } = useFidelidade(
-    proposta.device_id, proposta.vrf, proposta.subinterface, perfis, trunkDaConferencia || null,
+    proposta.device_id, proposta.vrf, proposta.subinterface, perfis, identidadeDaConferencia,
   );
 
-  // O trunk digitado só entra na consulta depois da última tecla.
+  // A identidade digitada só entra na consulta depois da última tecla.
   useEffect(() => {
-    const timer = setTimeout(() => setTrunkDaConferencia(trunk), ESPERA_DO_TRUNK_MS);
+    const timer = setTimeout(
+      () => setIdentidadeDaConferencia(JSON.parse(assinaturaDaIdentidade) as IdentidadeDaConferencia),
+      ESPERA_DA_IDENTIDADE_MS,
+    );
     return () => clearTimeout(timer);
-  }, [trunk]);
+  }, [assinaturaDaIdentidade]);
 
   const setPerfil = (afi: string, valores: { import?: number; export?: number }) =>
     setPerfis((atual) => ({ ...atual, [afi]: { ...atual[afi], ...valores } }));
@@ -156,7 +184,6 @@ export function AdocaoDialog({
   // Nunca é beco sem saída (qualquer valor serve, e nome livre é legítimo), e o
   // desencontro fica registrado no relatório, para o runbook.
   const exigirTrunk = proposta.vid !== null && proposta.subinterface !== null;
-  const criarOrg = orgId === 0;
   // A proposta sem ASN remoto chega com conflito e o Adotar da lista fica
   // barrado: aqui é defesa em profundidade, para o corpo não mandar um ASN
   // sentinela que o serviço recusaria.
@@ -166,13 +193,22 @@ export function AdocaoDialog({
   const nomeLongo = orgNome.trim().length > LIMITE_DO_NOME;
   const caminhoLongo = (afi: string) =>
     (caminhos[afi] ?? "").trim().length > LIMITE_DO_CAMINHO;
-  // O trunk digitado e o da conferência têm de ser o mesmo. Entre a tecla e a
-  // consulta nova vai a espera inteira, e nela o diff na tela ainda é o do valor
-  // anterior; o `ciente` é um booleano sem vínculo com o diff que assumiu, então
-  // um aceite marcado contra o diff velho viajaria idêntico com o trunk novo. O
-  // servidor recalcula o diff e recusa o que ninguém assumiu, mas não tem como
-  // saber contra qual deles o aceite foi dado.
-  const trunkConferido = trunk === trunkDaConferencia;
+  const velocidadeNumero = velocidade === "" ? null : Number(velocidade);
+  const velocidadeInvalida =
+    velocidade !== "" &&
+    (!Number.isInteger(velocidadeNumero) ||
+      (velocidadeNumero as number) <= 0 ||
+      (velocidadeNumero as number) > LIMITE_DA_VELOCIDADE);
+  // A identidade digitada e a da conferência têm de ser a mesma. Entre a tecla e
+  // a consulta nova vai a espera inteira, e nela o diff na tela ainda é o da
+  // identidade anterior — o trunk, o código, a organização e a velocidade entram
+  // todos no ensaio, então qualquer um deles muda o que o render produz. E o
+  // `ciente` é um booleano sem vínculo com o diff que assumiu: um aceite marcado
+  // contra o diff velho viajaria idêntico com a identidade nova. O servidor
+  // recalcula o diff e recusa o que ninguém assumiu, mas não tem como saber
+  // contra qual deles o aceite foi dado.
+  const identidadeConferida =
+    assinaturaDaIdentidade === JSON.stringify(identidadeDaConferencia);
   // O que o formulário exige antes do aceite: os campos que a configuração do
   // edge não tem e que, vazios, fora da forma ou acima do tamanho do schema,
   // voltariam como o 422 do Pydantic em vez de uma frase desta tela.
@@ -184,6 +220,7 @@ export function AdocaoDialog({
     portaInvalida ||
     (exigirTrunk && trunk === "") ||
     trunk.length > LIMITE_DO_TRUNK ||
+    velocidadeInvalida ||
     (criarOrg && (orgNome.trim() === "" || nomeLongo || asnRemoto === null)) ||
     proposta.candidatos.some((c) => caminhoLongo(c.afi));
   // Sem a conferência não há aceite que valha (§6): o ensaio recusado devolve a
@@ -195,7 +232,7 @@ export function AdocaoDialog({
   const podeAdotar =
     !revisaoIncompleta &&
     !semConferencia &&
-    trunkConferido &&
+    identidadeConferida &&
     (mudam.length === 0 || ciente) &&
     !adotar.isPending;
 
@@ -255,6 +292,7 @@ export function AdocaoDialog({
         subinterface: proposta.subinterface, circuit_code: code,
         access_device_id: acesso, access_port: porta,
         edge_trunk: trunk || null,
+        velocidade_mbps: velocidadeNumero,
         organizacao_id: criarOrg ? null : orgId,
         organizacao_nova: organizacaoNova,
         // Só os blocos livres e marcados: o conflitante a API recusaria, e o
@@ -346,6 +384,26 @@ export function AdocaoDialog({
         erro={trunk.length > LIMITE_DO_TRUNK ? `O trunk do edge aceita até ${LIMITE_DO_TRUNK} caracteres.` : undefined}
       >
         <input value={trunk} onChange={(e) => setTrunk(e.target.value)} />
+      </FormField>
+      {/* O campo nasce com a velocidade que a leitura achou no `qos car` do
+          equipamento: é ela que a adoção grava se ninguém mexer, e é ela que
+          entra no ensaio. */}
+      <FormField
+        label="Velocidade (Mbps)"
+        help={help("adocao.velocidade")}
+        erro={
+          velocidadeInvalida
+            ? `A velocidade aceita de 1 a ${LIMITE_DA_VELOCIDADE} Mbps.`
+            : undefined
+        }
+      >
+        <input
+          type="number"
+          min={1}
+          max={LIMITE_DA_VELOCIDADE}
+          value={velocidade}
+          onChange={(e) => setVelocidade(e.target.value)}
+        />
       </FormField>
       <FormField label="Organização" help={help("adocao.organizacao")}>
         <select value={orgId} onChange={(e) => setOrgId(Number(e.target.value))}>

@@ -28,6 +28,9 @@ const PROPOSTA = {
   vlan_mode: "unica",
   p2p_v4_len: 31,
   qinq: true,
+  // Sem sugestão de velocidade: a leitura não achou `qos car` neste
+  // equipamento, e é o campo vazio que os testes da revisão preenchem à mão.
+  velocidade_mbps: null,
   organizacao_id: null,
   organizacao_sugerida: "CLIENTE-ALFA",
   site_id: 1,
@@ -631,6 +634,104 @@ describe("Discovery", () => {
     expect(conferencias().length - antes).toBeLessThan(5);
   });
 
+  it("a conferência leva a velocidade digitada para o servidor", async () => {
+    // A taxa entra no ensaio: sem ela, o render não emite o `qos car` e a
+    // conferência acusaria uma diferença de QoS que a adoção não cria (§7).
+    mockFetchComFidelidade({ exigeCiente: true });
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+    await waitFor(() => expect(conferencias().length).toBeGreaterThan(0));
+    const antes = conferencias().length;
+
+    await userEvent.type(within(dialog).getByLabelText(/^Velocidade \(Mbps\)/), "1024");
+
+    await esperaConferenciaNova(antes);
+    expect(conferencias()[conferencias().length - 1]).toContain("velocidade_mbps=1024");
+  });
+
+  it("mudar o código refaz a conferência com a identidade da revisão", async () => {
+    // O código entra na descrição da subinterface (§4): mudá-lo muda o que o
+    // ensaio produz, e o aceite marcado contra o diff antigo não vale para o
+    // novo. A conferência refeita leva a identidade INTEIRA — e não só o campo
+    // mexido: o ensaio roda com o que a adoção vai gravar, e um render sem o
+    // resto da identidade compara uma configuração que não é a do circuito que
+    // nasce.
+    mockFetchComFidelidade({ exigeCiente: true });
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+    // A velocidade primeiro, e a conferência dela aguardada: assim o que refaz a
+    // consulta na segunda metade do teste é o CÓDIGO, e não o número digitado.
+    await userEvent.type(within(dialog).getByLabelText(/^Velocidade \(Mbps\)/), "1024");
+    await waitFor(
+      () => expect(conferencias().some((u) => u.includes("velocidade_mbps=1024"))).toBe(true),
+      { timeout: 2000 },
+    );
+    const antes = conferencias().length;
+
+    const campoDoCodigo = within(dialog).getByRole("textbox", { name: /Código do circuito/ });
+    await userEvent.clear(campoDoCodigo);
+    await userEvent.type(campoDoCodigo, "CIRC-2");
+
+    await esperaConferenciaNova(antes);
+    const nova = conferencias()[conferencias().length - 1];
+    expect(nova).toContain("circuit_code=CIRC-2");
+    expect(nova).toContain("edge_trunk=Eth-Trunk127");
+    expect(nova).toContain("organizacao_nome=CLIENTE-ALFA");
+    expect(nova).toContain("velocidade_mbps=1024");
+
+    // A outra metade do par da organização é a id: escolhida uma existente, o
+    // ensaio troca o nome por ela — o mesmo par exclusivo que o corpo da adoção
+    // monta (o `criarOrg` decide qual dos dois vai).
+    const antesDaOrg = conferencias().length;
+    await userEvent.selectOptions(
+      within(dialog).getByRole("combobox", { name: /Organização/ }),
+      "2",
+    );
+    await esperaConferenciaNova(antesDaOrg);
+    const comOrg = conferencias()[conferencias().length - 1];
+    expect(comOrg).toContain("organizacao_id=2");
+    expect(comOrg).not.toContain("organizacao_nome=");
+  });
+
+  it("a velocidade sugerida nasce no campo, e fora da faixa o aceite barra com o motivo", async () => {
+    // A sugestão vem do `qos car` que a leitura achou no equipamento (§7): o
+    // campo nasce preenchido, e é essa taxa que a adoção grava se ninguém mexer.
+    mockFetch({
+      descoberta: { ...DISCOVERY, propostas: [{ ...PROPOSTA, velocidade_mbps: 1024 }] },
+      diferencas: [DIFERENCA_SO_NAO_GERENCIADA],
+    });
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+    const campo = within(dialog).getByLabelText(/^Velocidade \(Mbps\)/);
+    expect(campo).toHaveValue(1024);
+    await preencheAcesso(dialog);
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeEnabled(),
+    );
+
+    // Zero é uma taxa que o schema recusa (`> 0`): o campo diz isso em
+    // português, em vez de deixar o botão barrado sem motivo.
+    await userEvent.clear(campo);
+    await userEvent.type(campo, "0");
+    expect(
+      within(dialog).getByText(/A velocidade aceita de 1 a 100000 Mbps\./),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeDisabled(),
+    );
+
+    // De volta à faixa, o caminho reabre: quem barrava era a taxa.
+    await userEvent.clear(campo);
+    await userEvent.type(campo, "2048");
+    await waitFor(
+      () => expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeEnabled(),
+      { timeout: 2000 },
+    );
+  });
+
   it("o aceite não atravessa a espera do trunk: o botão exige a conferência do valor digitado", async () => {
     // A espera do trunk abre a janela que este teste fecha: a tela mostra o diff
     // do valor anterior e o campo já tem o novo. O `ciente` é um booleano sem
@@ -695,6 +796,7 @@ describe("Discovery", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
     const dialog = screen.getByRole("dialog");
     await preencheAcesso(dialog);
+    await userEvent.type(within(dialog).getByLabelText(/^Velocidade \(Mbps\)/), "1024");
     await userEvent.type(
       within(dialog).getByRole("textbox", { name: /Caminho do segredo no Vault \(ipv4\)/ }),
       "gerenet/bgp/100.64.10.1",
@@ -707,9 +809,9 @@ describe("Discovery", () => {
 
     // O corpo é a revisão inteira: a identidade da proposta (a que o serviço
     // confere, e a que faz a revisão de um enlace não valer no outro), o
-    // circuito com o acesso e o trunk derivado, a organização nova com o `kind`
-    // e o ASN do candidato, a sessão com o caminho do segredo — nunca o valor —
-    // e o ciente.
+    // circuito com o acesso, o trunk derivado e a velocidade digitada, a
+    // organização nova com o `kind` e o ASN do candidato, a sessão com o caminho
+    // do segredo — nunca o valor — e o ciente.
     await waitFor(() =>
       expect(corpoDoPost()).toEqual({
         device_id: 1,
@@ -719,6 +821,7 @@ describe("Discovery", () => {
         access_device_id: 1,
         access_port: "GE0/0/1",
         edge_trunk: "Eth-Trunk127",
+        velocidade_mbps: 1024,
         organizacao_id: null,
         organizacao_nova: {
           name: "CLIENTE-ALFA",
