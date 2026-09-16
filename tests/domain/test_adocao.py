@@ -435,6 +435,44 @@ def test_autorizacoes_com_organizacao_existente_sao_recusadas(db_session, tmp_pa
     assert _autorizacoes(db_session) == []
 
 
+def test_blocos_com_organizacao_existente_dona_do_bloco_recusam_antes_do_ciente(
+    db_session, tmp_path,
+) -> None:
+    """A ORDEM da guarda é o conserto (item 16): com a organização existente já
+    dona do bloco, o ensaio pendura a linha nela e a prefix-list sai duas vezes —
+    uma sobra falsa, no grupo que muda —, e o gate do `ciente` vencia a recusa
+    específica. Sem o `ciente` o operador via "Há diferenças que mudariam o
+    equipamento…", marcava o aceite por hábito e só na segunda viagem descobria o
+    que havia para corrigir; nada era gravado nos dois casos. Com o guard lendo a
+    revisão antes da conferência, a primeira mensagem é a que diz o que fazer.
+
+    A organização existente tem o nome e o ASN do enlace, e a configuração é a do
+    `_CONFIG_FIEL`, que o render reproduz linha a linha: sem os blocos a
+    conferência não achava diferença nenhuma, e a sobra acima é a única coisa que
+    o `ciente` poderia estar pedindo."""
+    existente = create_organization(
+        db_session, OrganizationCreate(name="Cliente Alfa", asn=64512), actor="cli"
+    )
+    create_authorization(db_session, PrefixAuthorizationCreate(
+        organization_id=existente.id, family="ipv4", prefix="138.121.28.0/22"), actor="cli")
+    _site, dev = _ambiente(db_session, tmp_path, texto=_CONFIG_FIEL)
+    revisao = _revisao(dev, vid=601, ciente=False, autorizacoes=[
+        AdocaoAutorizacaoIn(prefix="138.121.28.0/22", family="ipv4"),
+    ])
+    revisao.organizacao_nova = None
+    revisao.organizacao_id = existente.id
+
+    with pytest.raises(ValidationError, match="organização nova"):
+        adotar_proposta(db_session, proposta=_proposta(db_session, dev, vid=601),
+                        revisao=revisao, actor="cli")
+
+    # Nada mudou na SoT: o bloco que já existia continua sendo o único, e o
+    # ensaio não deixou rastro.
+    assert [(a.prefix, a.organization_id) for a in _autorizacoes(db_session)] == [
+        ("138.121.28.0/22", existente.id)
+    ]
+
+
 def test_autorizacoes_com_os_dois_campos_sao_recusadas(db_session, tmp_path) -> None:
     """O corpo com `organizacao_id` E `organizacao_nova` é contraditório, e sem
     esta guarda ele passava: a organização nova nem era criada (o id não é nulo)

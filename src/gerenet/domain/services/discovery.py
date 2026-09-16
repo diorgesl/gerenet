@@ -244,6 +244,17 @@ def adotar_proposta(session: Session, *, proposta, revisao: schemas.AdocaoIn, ac
     # conferência, então a checagem é feita por ela.
     if revisao.organizacao_id is None and revisao.organizacao_nova is not None:
         _confere_nome_livre(session, revisao.organizacao_nova.name)
+    # O mesmo movimento do `_confere_nome_livre`, um passo adiante: o input
+    # contraditório (blocos de prefixo + organização EXISTENTE) era recusado na
+    # escrita, e só depois da conferência — o operador via a mensagem do
+    # `ciente`, marcava o aceite por hábito e só então descobria o que havia
+    # para corrigir. A guarda lê dois campos da revisão e não toca a sessão, e
+    # por isso a ordem entre ela e a conferência é escolha, não dependência.
+    if revisao.autorizacoes and revisao.organizacao_id is not None:
+        raise ValidationError(
+            "As autorizações de prefixo só entram com a organização nova: para uma "
+            "organização existente, cadastre os blocos na página dela."
+        )
     # O que o operador escolheu entra na conferência: sem os perfis o ensaio não
     # renderiza o corpo da política de exportação, que é justamente o que ele
     # escolhe errado; sem o trunk, a comparação não vale para o que vai gravar.
@@ -292,11 +303,6 @@ def adotar_proposta(session: Session, *, proposta, revisao: schemas.AdocaoIn, ac
         raise ValidationError(
             "Informe a organização: escolha uma existente ou crie a nova com o ASN "
             f"{asn_remoto}."
-        )
-    if revisao.autorizacoes and revisao.organizacao_id is not None:
-        raise ValidationError(
-            "As autorizações de prefixo só entram com a organização nova: para uma "
-            "organização existente, cadastre os blocos na página dela."
         )
 
     # O `stack` sai das sessões que vão nascer, e não do que a proposta sugeriu: o
