@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import select
 
-from gerenet.automation import changes, render
+from gerenet.automation import changes, removal, render
 from gerenet.domain import models
 from gerenet.domain.services.errors import ValidationError
 
@@ -27,7 +27,7 @@ def _ambiente(db_session):
     return {"site": site, "dev": dev, "org": org}
 
 
-def _circuito(db_session, amb):
+def _circuito(db_session, amb, *, velocidade_mbps: int | None = None):
     from gerenet.domain.schemas import CircuitCreate, PrefixAuthorizationCreate
     from gerenet.domain.services.circuits import create_circuit
     from gerenet.domain.services.ipam import reservar_circuito
@@ -39,7 +39,7 @@ def _circuito(db_session, amb):
             code="circ-001", organization_id=amb["org"].id, site_id=amb["site"].id,
             access_device_id=amb["dev"].id, access_port="GE0/0/1",
             edge_device_id=amb["dev"].id, stack="ipv4", vlan_mode="unica",
-            edge_trunk="GE1/0/0", p2p_v4_len=31,
+            edge_trunk="GE1/0/0", p2p_v4_len=31, velocidade_mbps=velocidade_mbps,
         ),
         actor="cli",
     )
@@ -148,10 +148,21 @@ def test_ja_existe_as_path_filter_pelo_encontrado() -> None:
 
 
 def test_plan_provision_pula_blocos_ja_presentes(db_session, tmp_path):
+    """Item 1 — com QoS no circuito, o bloco com `description` e `qos car` é
+    pulado quando o encontrado já tem os dois.
+
+    É a junção que faltava: dobra do `qos car` (`equivalencia_vrp`) e
+    `_ja_existe` tinham teste cada uma, e nenhum teste as ligava. Sem a dobra, o
+    `qos car cir 1024000 inbound` do bloco nunca casaria o
+    `qos car cir 1024000 cbs … inbound` do VRP e o plano reaplicaria o parque.
+    """
     amb = _ambiente(db_session)
-    circ = _circuito(db_session, amb)
+    circ = _circuito(db_session, amb, velocidade_mbps=1024)
     _sessao(db_session, circ, amb)
     snap = _snapshot_encontrado(db_session, amb, tmp_path)
+    # A cena só mede a junção se o backup realmente carregar o QoS; sem isto,
+    # tirar a velocidade do circuito deixaria o teste verde sem medir nada.
+    assert "qos car cir 1024000 inbound" in removal.texto_backup(snap)
     plano = changes.plan_provision(db_session, circ)
     assert plano[0].blocos == []
     assert plano[0].baseline_snapshot_id == snap.id
