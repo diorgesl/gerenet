@@ -87,4 +87,8 @@ def conteudo_conforme(comandos: list[str], linhas: set[str]) -> bool:
     extras = [
         c for c in (" ".join(c.split()) for c in comandos) if c.startswith(LINHAS_DE_CONTEUDO)
     ]
-    return all(equivalencia_vrp(c) in linhas for c in extras)
+    # A equivalência vale para os DOIS lados: os chamadores de hoje já mandam o
+    # conjunto dobrado (`linhas_da_interface`), mas quem mandar a linha crua
+    # receberia um falso "não conforme" e reaplicaria o que já está certo.
+    dobradas = {equivalencia_vrp(" ".join(linha.split())) for linha in linhas}
+    return all(equivalencia_vrp(c) in dobradas for c in extras)

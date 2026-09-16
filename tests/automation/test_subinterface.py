@@ -104,6 +104,19 @@ def test_conteudo_conforme_confere_a_taxa_e_nao_so_a_presenca() -> None:
     assert not subinterface.conteudo_conforme(comandos, {_CURTA})
 
 
+def test_conteudo_conforme_dobra_os_dois_lados() -> None:
+    """Item 3 — a equivalência vale para o conjunto também, não só para o bloco.
+
+    Os dois chamadores de hoje mandam as linhas já dobradas
+    (`linhas_da_interface`), então a armadilha não morde; ela morde o próximo,
+    que passaria a linha crua do equipamento e receberia um falso "não
+    conforme" — o bloco certo seria reaplicado.
+    """
+    comandos = ["interface GE1/0/0.2", _CURTA]
+    assert subinterface.conteudo_conforme(comandos, {_LONGA})
+    assert subinterface.conteudo_conforme(comandos, {f" {_LONGA}"})  # linha crua do `display`
+
+
 def test_conteudo_conforme_le_a_linha_indentada_do_bloco() -> None:
     """C1 — o filtro de conteúdo tem de ver a linha indentada como a plana.
 
