@@ -25,7 +25,8 @@ O circuito amarra cliente → POP → equipamentos → recursos. Campos:
 | QinQ | Ativa quando o acesso usa VLAN interna do cliente (dot1q + tag na borda). |
 | VRF | Nome do VRF/VS; **vazio = instância pública/global** (peers BGP na pública, §25.3). |
 | MTU | 576–9600 — coerente fim a fim no caminho do serviço. |
-| Banda | Texto (ex.: 1G, 10G, 500M). |
+| Banda | Texto (ex.: 1G, 10G, 500M) — a nota que o humano lê. |
+| Velocidade (Mbps) | A taxa contratada, em Mbps, que a máquina usa (ex.: `1024` = 1 Gbps). Vazio = "não sei a velocidade", e é o estado de todo circuito anterior a este campo. |
 | BFD | Intenção do enlace; o BFD efetivo no MVP vem da sessão BGP (`bfd_enabled`). |
 | Comprimento p2p v4 | `/31` (padrão) ou `/30`. |
 
@@ -52,6 +53,44 @@ Exemplo (spec §25.8): IPv4 `100.110.0.73` → octetos 2–4 `110.0.73` → díg
 
 Em circuito `ipv6` puro, o alocador também reserva um par IPv4 interno (só para
 derivar o sufixo — não vai para a interface).
+
+## A descrição e o QoS da subinterface
+
+A `description` da subinterface deriva do circuito:
+
+```
+description <CÓDIGO> <NOME DA ORGANIZAÇÃO> [<VELOCIDADE>]
+```
+
+| Velocidade | Linha |
+|---|---|
+| 1024 | `description CIRC-626 NETMAC [1G]` |
+| 100 | `description CIRC-500 ACME TELECOMUNICACOES [100M]` |
+| vazia | `description CIRC-500 ACME TELECOMUNICACOES` |
+
+O nome da organização vai em maiúsculas e sem acento, e cede no orçamento de 80
+caracteres se não couber — cortado seco. Velocidade múltipla de 1024 sai em
+`G`; qualquer outra sai em `M`.
+
+Com a velocidade preenchida, o render emite também o limitador de taxa nas duas
+direções, depois do `statistic enable`:
+
+```
+qos car cir <velocidade_mbps × 1000> inbound
+qos car cir <velocidade_mbps × 1000> outbound
+```
+
+O `cir` é em kbps: `1024` Mbps produzem `cir 1024000`. O `cbs`, o `green pass`
+e o `red discard` **não** são emitidos — o VRP os completa ao aplicar.
+
+**Circuito que já está provisionado converge numa mudança nova.** Até esta
+frente, o plano pulava a subinterface inteira pelo nome; agora ele confere
+também a descrição e o QoS, e o que faltar entra no plano como "atualizar". O
+bloco vai inteiro ao equipamento (reemitir endereço com o mesmo valor é
+inócuo no VRP), e o que a mudança registra é o estado desejado daquele pedaço.
+
+A descrição é **derivada**: renomear a organização reescreve a descrição de
+todas as subinterfaces dela no próximo provisionamento.
 
 ## Reservar recursos
 

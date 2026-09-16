@@ -268,12 +268,26 @@ aceitar:
 
 - o grupo **Diferenças que mudariam o equipamento** tem de estar vazio, ou ter só linha que
   você sabe explicar — é o que o `ciente` assume, e ele fica registrado na auditoria;
-- o grupo **O que a SoT não gerencia** (o `description` e o MTU da subinterface) é o
+- o grupo **O que a SoT não gerencia** (só o `mtu` da subinterface) é o
   esperado, e não gateia nada;
 - o trunk derivado do nome da subinterface, o equipamento/porta de acesso e a organização
   estão certos;
 - os perfis de importação e exportação são os deste enlace: é o produto deles que o render
   emite, e é o corpo dessas políticas que a conferência de fidelidade compara.
+
+- [ ] **A `description` da subinterface agora é gerenciada.** Adotar um enlace
+      cuja descrição fuja do formato `<CÓDIGO> <ORG> [<VELOCIDADE>]` passa a
+      pedir o `ciente` — é a SoT avisando que vai reescrever a linha. A revisão
+      já traz o código e a organização; com eles a descrição casa e o `ciente`
+      não é pedido.
+- [ ] **Conferir o limite real do `description` nesta versão do VRP**
+      (`V800R024C00SPC500`). O orçamento do §4 é de 80 caracteres por adoção
+      desta frente; se o equipamento recusar ou truncar antes disso, o número
+      desce em `naming.LIMITE_DESCRICAO` e o corte acompanha sozinho.
+- [ ] **Reaplicar o bloco inteiro numa subinterface que já está de pé.** É o que
+      o `atualizar` faz, e o endereço vai junto com os mesmos valores. Confirmar
+      em equipamento não crítico que o VRP aceita a reemissão sem derrubar a
+      subinterface, **antes** de soltar no parque.
 
 **Confira o que nasceu.** O circuito na lista de **Circuitos**, com a VLAN e o par p2p
 reservados **nos valores reais** do equipamento (não nos que o alocador daria) e a sessão no
