@@ -192,7 +192,14 @@ export default function BgpSessions() {
         graceful_restart: formEdit.graceful_restart,
         shutdown: formEdit.shutdown,
         allow_default_route: formEdit.allow_default_route,
-        default_route_advertise: formEdit.default_route_advertise,
+        // O anúncio da default só é mandado no escopo em que o checkbox dele
+        // existe (o de cliente). Com vínculo de upstream a tela mostra o de
+        // aceitar a default, e o valor lido da entidade não tem controle que o
+        // desminta: reenviá-lo faria a guarda do §5.1 recusar a edição de
+        // qualquer outro campo — a sessão ficaria ineditável pela interface.
+        ...(formEdit.upstream_id === null
+          ? { default_route_advertise: formEdit.default_route_advertise }
+          : {}),
         import_route_policy: formEdit.import_route_policy.trim() || null,
         export_route_policy: formEdit.export_route_policy.trim() || null,
       });

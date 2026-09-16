@@ -1102,6 +1102,7 @@ def _ensaio(
     autorizacoes: list[tuple[str, str]] | None = None,
     velocidade_mbps: int | None = None,
     upstream: dict | None = None,
+    anuncios: dict[str, bool] | None = None,
 ) -> dict:
     """Objetos transitórios com a forma do que a adoção criaria.
 
@@ -1144,6 +1145,14 @@ def _ensaio(
     circuito e roda a mesma propagação que a escrita roda no passo 8 — é ela que
     preenche o perfil de importação pelo produto e recalcula o maximum-prefix, e
     um ensaio que não a rodasse compararia um estado que a escrita não produz.
+
+    `anuncios` é o mapa {afi: bool} em que a revisão decidiu o anúncio da default
+    (§5.1). A família AUSENTE do mapa é "o operador não mexeu no controle", e
+    nela vale o valor lido da configuração — o mesmo que a escrita grava. Com o
+    operador desligando o anúncio, o ensaio tem de renderizar sem ele: é o que
+    faz a diferença contra o equipamento aparecer no diff (o peer que anuncia não
+    reproduzido pelo ensaio) e gatear o `ciente`, em vez de a escolha ficar
+    escondida atrás de uma conferência que ainda emite a linha.
     """
     device = get_device(session, proposta.device_id)
     # O nome da revisão vence a organização que a proposta casou por ASN: é a
@@ -1269,6 +1278,12 @@ def _ensaio(
             for nome, valor in (perfis or {}).get(dados.get("afi"), {}).items()
             if nome in ("import_profile_id", "export_profile_id")
         })
+        # A decisão da revisão sobre o anúncio da default (§5.1) vence o valor
+        # lido, como na escrita: a família fora do mapa segue com o que a
+        # configuração tem, que é o que o `_sessao_da_proposta` grava.
+        anuncio = (anuncios or {}).get(dados.get("afi"))
+        if anuncio is not None:
+            campos["default_route_advertise"] = anuncio
         sessao = models.BgpSession(circuit_id=circ.id, device_id=device.id, **campos)
         session.add(sessao)
         sessoes.append(sessao)
@@ -1318,6 +1333,7 @@ def conferir_fidelidade(
     autorizacoes: list[tuple[str, str]] | None = None,
     velocidade_mbps: int | None = None,
     upstream: dict | None = None,
+    anuncios: dict[str, bool] | None = None,
 ) -> list[Diferenca]:
     """O que a SoT reproduziria × o que a configuração tem (spec §9).
 
@@ -1356,6 +1372,15 @@ def conferir_fidelidade(
     adoção grava como upstream — diferença em toda linha. Com o bloco, o ensaio
     vincula o circuito e roda a propagação do §5.3, que é quem preenche o perfil
     de importação pelo produto.
+
+    `anuncios` é o mapa {afi: bool} do anúncio da default que a revisão decidiu
+    (§5.1), e entra pelo princípio dos demais: o ensaio tem de ter a forma exata
+    do que a escrita produz. A família ausente do mapa é "o operador não mexeu no
+    controle", e nela vale o valor lido da configuração. Com o anúncio desligado
+    na revisão, o ensaio renderiza o peer SEM o `default-route-advertise` que o
+    equipamento tem, e a linha aparece no `faltando` — a diferença que a escolha
+    cria fica VISÍVEL e gateia o `ciente`, que é o que impede a adoção de
+    esconder do operador o que ela deixou de escrever.
 
     O ensaio roda o render de verdade, e não uma reimplementação da montagem
     dos comandos: é o mesmo código que a adoção usaria, então a conferência não
@@ -1422,7 +1447,7 @@ def conferir_fidelidade(
                 circuit_code=circuit_code, organizacao_id=organizacao_id,
                 organizacao_nome=organizacao_nome, organizacao_kind=organizacao_kind,
                 autorizacoes=autorizacoes, velocidade_mbps=velocidade_mbps,
-                upstream=upstream,
+                upstream=upstream, anuncios=anuncios,
             )
         except IntegrityError:
             # Uma restrição de unicidade recusou o ensaio (a reserva que a

@@ -1185,6 +1185,13 @@ class AdocaoSessaoIn(BaseModel):
     import_profile_id: int | None = None
     export_profile_id: int | None = None
     password_ref: str | None = Field(default=None, max_length=255)
+    # §5.1: o anúncio da default é decisão da revisão — o valor LIDO na
+    # configuração é o default, e só ele. Sem isto a adoção de um enlace de
+    # operadora que anuncia (`peer X default-route-advertise` na config) não tem
+    # saída: o valor lido entra na sessão, o circuito já nasce com o vínculo, a
+    # guarda `_recusa_anuncio_em_upstream` recusa e a transação inteira volta —
+    # o operador ficaria sem poder desligar o anúncio que ele vê no diff.
+    default_route_advertise: bool | None = None
     # §4.3: o nome lido no equipamento, importado quando o operador quiser. Em
     # `_DO_OPERADOR` porque é ele que decide entre manter e limpar — o valor da
     # proposta é sugestão, e limpar devolve os nomes do §25.4.

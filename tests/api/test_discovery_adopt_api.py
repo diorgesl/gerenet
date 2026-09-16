@@ -82,6 +82,25 @@ def _payload(ambiente) -> dict:
     }
 
 
+def _payload_anunciante(ambiente) -> dict:
+    """A revisão do enlace do BETA (o vid 2001 da fixture) como enlace de OPERADORA.
+
+    É o peer que a configuração ANUNCIA a default (`peer 100.64.10.4
+    default-route-advertise` no `ipv4-family unicast`) e o caso do §5.1: o
+    circuito nasce vinculado no passo 6 e a guarda recusa a sessão que anuncia,
+    então sem poder desligar o anúncio lido na revisão a adoção não tem saída.
+    """
+    return {
+        "device_id": ambiente["dev"].id, "vrf": None, "subinterface": "Eth-Trunk127.2001",
+        "circuit_code": "ADOC-API-2001", "access_device_id": ambiente["dev"].id,
+        "access_port": "GE0/0/1", "edge_trunk": "Eth-Trunk127",
+        "organizacao_nova": {"name": "Operadora Beta", "kind": "operadora", "asn": 64514},
+        "upstream": {"name": "up-beta-adoc", "tipo": "transito", "papel": "principal"},
+        "sessoes": [{"afi": "ipv4"}],
+        "ciente": True,
+    }
+
+
 def test_fidelidade_sob_demanda(client, db_session, tmp_path) -> None:
     """A conferência de UMA proposta, sob demanda, com os parâmetros que a revisão
     escolheu: a lista não a traz embutida, porque cada conferência roda um ensaio
@@ -496,3 +515,89 @@ def test_a_conferencia_de_upstream_recebe_o_bloco_por_query(client: TestClient, 
     # produto), e o grupo do peer sai de outro caminho — as duas respostas não
     # podem ser iguais.
     assert com_bloco.json()["diferencas"] != sem_bloco.json()["diferencas"]
+
+
+# ---- o anúncio da default na revisão (o §5.1 nos dois sentidos) ----
+
+def test_desliga_o_anuncio_e_adota_o_enlace_de_operadora(client: TestClient, db_session,
+                                                         tmp_path: Path) -> None:
+    """O outro lado do §5.1: o enlace anunciante ADOTADO como operadora.
+
+    O anúncio lido na configuração entra na sessão e o vínculo nasce antes dela,
+    então sem a decisão da revisão a guarda derruba a adoção inteira. Com o
+    operador desligando o anúncio, a cadeia fecha e o que a SoT grava é a
+    escolha — e não o valor do equipamento.
+    """
+    ambiente = _ambiente(db_session, tmp_path)
+    corpo = _payload_anunciante(ambiente)
+    corpo["sessoes"] = [{"afi": "ipv4", "default_route_advertise": False}]
+
+    resposta = client.post("/api/v1/discovery/adopt", json=corpo, headers=_auth())
+
+    assert resposta.status_code == 201, resposta.text
+    circ_id = resposta.json()["circuit_id"]
+    sessao = db_session.scalar(select(models.BgpSession).where(
+        models.BgpSession.circuit_id == circ_id
+    ))
+    # `False` e não `None`: a sobreposição venceu o que a configuração anuncia.
+    assert sessao.default_route_advertise is False
+    # A cadeia inteira nasceu: o vínculo é o que faz a guarda do §3.5 ter o que
+    # recusar, e sem ele o teste passaria por outro caminho de render.
+    assert db_session.scalar(select(models.UpstreamCircuit).where(
+        models.UpstreamCircuit.circuit_id == circ_id
+    )) is not None
+
+
+def test_sem_desligar_o_anuncio_a_adocao_de_operadora_e_422(client: TestClient, db_session,
+                                                            tmp_path: Path) -> None:
+    """A mesma revisão sem a sobreposição do anúncio: é o que um cliente da API
+    (ou do `--json` do CLI) que não conhece o campo manda, e é o estado em que o
+    §3.5 recusa — o anúncio lido seria gravado numa sessão de upstream."""
+    ambiente = _ambiente(db_session, tmp_path)
+    corpo = _payload_anunciante(ambiente)
+
+    resposta = client.post("/api/v1/discovery/adopt", json=corpo, headers=_auth())
+
+    assert resposta.status_code == 422, resposta.text
+    # A frase do domínio: sem ela o 422 passaria com qualquer recusa, inclusive a
+    # do `ciente` (que aqui está marcado) ou a de um campo torto.
+    assert "default-route-advertise" in resposta.json()["detail"]
+    # A transação única derruba tudo: nem circuito, nem sessão, nem upstream.
+    assert db_session.query(models.Circuit).count() == 0
+    assert db_session.query(models.BgpSession).count() == 0
+    assert db_session.query(models.Upstream).count() == 0
+
+
+def test_a_conferencia_reflete_a_decisao_do_anuncio(client: TestClient, db_session,
+                                                    tmp_path: Path) -> None:
+    """A conferência tem de refletir a escolha do anúncio (§5.1): desligado, o
+    ensaio perde a linha e a diferença contra o equipamento APARECE no diff — é
+    ela que gateia o `ciente`.
+
+    Sem o parâmetro, o ensaio ainda emite o `default-route-advertise` que o
+    equipamento tem, o peer sai fiel e o diff esconderia justamente a linha que a
+    adoção deixa de escrever. É o par lido × desligado que prende os dois lados.
+    """
+    ambiente = _ambiente(db_session, tmp_path)
+    url = (f"/api/v1/discovery/fidelidade?device_id={ambiente['dev'].id}"
+           "&subinterface=Eth-Trunk127.2001&edge_trunk=Eth-Trunk127")
+    linha = "peer 100.64.10.4 default-route-advertise"
+
+    lido = client.get(url, headers=_auth())
+    desligado = client.get(f"{url}&default_route_advertise_ipv4=false", headers=_auth())
+    assert lido.status_code == desligado.status_code == 200
+
+    def contexto_peer(resposta) -> dict:
+        return next(d for d in resposta.json()["diferencas"] if d["contexto"] == "peer")
+
+    # Premissa: o equipamento TEM a linha (é ela que o parser leu para a sessão da
+    # proposta), e sem decisão nenhuma o ensaio a reproduz — nada a acusar.
+    assert linha not in contexto_peer(lido)["faltando"]
+    assert linha not in contexto_peer(lido)["sobrando"]
+    # Com o operador desligando, a linha sobra no equipamento e o diff a mostra, no
+    # grupo que exige o aceite (a asserção é sobre o `exige_ciente` do contexto do
+    # peer, e não sobre a resposta inteira: outras diferenças do enlace não podem
+    # responder por esta).
+    peer = contexto_peer(desligado)
+    assert linha in peer["faltando"]
+    assert peer["exige_ciente"] is True

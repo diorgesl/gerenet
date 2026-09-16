@@ -128,9 +128,13 @@ def esquecer_ignorado(
 # Campos que o operador decide na revisão: saem do que a proposta leu, porque
 # quem manda neles é a revisão (o `**base` repetiria o argumento e estouraria o
 # construtor). `circuit_id` e `device_id` são do circuito que nasce na adoção.
+# O `default_route_advertise` está aqui pela mesma razão dos nomes de política —
+# a revisão decide o anúncio (§5.1) —, com a diferença de que ele não é campo
+# obrigatório nenhum: quem o resolve, mantendo o valor lido quando a revisão não
+# disse nada, é o `_sessao_da_proposta`.
 _DO_OPERADOR = (
     "circuit_id", "device_id", "import_profile_id", "export_profile_id", "password_ref",
-    "import_route_policy", "export_route_policy",
+    "import_route_policy", "export_route_policy", "default_route_advertise",
 )
 
 
@@ -155,10 +159,19 @@ def _sessao_da_proposta(
         )
     campos = set(schemas.BgpSessionCreate.model_fields)
     base = {k: v for k, v in dados.items() if k in campos and k not in _DO_OPERADOR}
+    # O anúncio da default (§5.1): a revisão manda quando o operador mexeu no
+    # controle, e o valor LIDO na configuração vale quando ela não disse nada —
+    # `None` é "não decidiu", e não "desligar". Um `False` da revisão é decisão
+    # de desligar e vence o que a leitura achou: é o que torna adotável um enlace
+    # de operadora que anuncia, cujo circuito já nasce vinculado e cuja guarda
+    # recusaria o anúncio vindo do equipamento.
+    lido = bool(dados.get("default_route_advertise", False))
+    anuncio = lido if overrides.default_route_advertise is None else overrides.default_route_advertise
     return schemas.BgpSessionCreate(
         **base,
         circuit_id=circuit_id,
         device_id=device_id,
+        default_route_advertise=anuncio,
         import_profile_id=overrides.import_profile_id,
         export_profile_id=overrides.export_profile_id,
         password_ref=overrides.password_ref,
@@ -180,6 +193,25 @@ def perfis_da_revisao(revisao: schemas.AdocaoIn) -> dict[str, dict[str, int | No
         s.afi: {"import_profile_id": s.import_profile_id,
                 "export_profile_id": s.export_profile_id}
         for s in revisao.sessoes
+    }
+
+
+def anuncios_da_revisao(revisao: schemas.AdocaoIn) -> dict[str, bool]:
+    """O anúncio da default que a revisão decidiu, por família (§5.1).
+
+    Só as famílias em que o operador mexeu no controle entram: a ausente é "não
+    decidiu", e nela o ensaio segue com o valor lido da configuração — que é o
+    que a escrita grava. Pela mesma razão do `perfis_da_revisao`, quem mostra o
+    diff monta este mapa com os MESMOS valores do corpo da adoção: com o anúncio
+    desligado, o ensaio perde a linha `peer X default-route-advertise` que o
+    equipamento tem, e é isso que faz a diferença APARECER no diff (e gatear o
+    `ciente`) em vez de a escolha ficar escondida atrás de um ensaio que ainda
+    anuncia.
+    """
+    return {
+        s.afi: s.default_route_advertise
+        for s in revisao.sessoes
+        if s.default_route_advertise is not None
     }
 
 
@@ -379,7 +411,10 @@ def adotar_proposta(session: Session, *, proposta, revisao: schemas.AdocaoIn, ac
     # toda adoção. As autorizações entram porque são elas que fazem o ensaio
     # emitir o filtro de importação: sem elas, o `import route-policy` que o
     # equipamento tem apareceria como diferença e o `ciente` seria cobrado sobre
-    # a linha que esta mesma escrita cria.
+    # a linha que esta mesma escrita cria. O anúncio da default (§5.1) entra pelo
+    # mesmo princípio: com o operador desligando-o, o ensaio tem de renderizar
+    # sem a linha, senão a escolha ficaria escondida atrás de uma conferência que
+    # ainda anuncia e o diff não mostraria a diferença que ela cria.
     perfis = perfis_da_revisao(revisao)
     bloco_up = bloco_do_upstream(
         session,
@@ -410,6 +445,7 @@ def adotar_proposta(session: Session, *, proposta, revisao: schemas.AdocaoIn, ac
         autorizacoes=[(b.prefix, b.family) for b in revisao.autorizacoes],
         velocidade_mbps=revisao.velocidade_mbps,
         upstream=bloco_up,
+        anuncios=anuncios_da_revisao(revisao),
     )
     ensaio = [d for d in difs if d.contexto == "ensaio"]
     if ensaio:

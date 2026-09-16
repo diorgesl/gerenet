@@ -158,6 +158,7 @@ export const HELP = {
   "adocao.produto_import": "Tipo de rota que a operadora envia: full, parcial ou default. É o que descreve o enlace de upstream — a operadora não tem prefix-list própria.",
   "adocao.politica_import": "Nome da route-policy de importação como está no equipamento. Importar significa que o gerenet passa a gerenciar o corpo dela sob esse nome; limpar devolve o nome padrão do gerenet.",
   "adocao.politica_export": "Idem para a route-policy de exportação.",
+  "adocao.anuncio_default": "Anunciar a rota default ao par, por família. A caixa abre com o que a configuração tem: desmarcada, a sessão é gravada sem a linha `default-route-advertise`. É o caminho de saída do enlace de operadora que anuncia — a sessão de upstream aceita a default do provedor, não a anuncia — e a diferença contra o equipamento continua no diff, sem ser escondida.",
   "adocao.razao_social": "Razão social do cliente, como no registro (opcional).",
   "adocao.documento": "CNPJ/ownerid do registro (até 32 caracteres); é o que a consulta ao registro preenche quando encontra.",
   "adocao.as_set": "AS-SET do IRR (ex.: AS-64512) — o conjunto de onde as rotas do cliente são validadas.",

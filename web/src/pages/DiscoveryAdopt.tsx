@@ -269,8 +269,17 @@ export function AdocaoDialog({
         ]),
       ),
   );
+  // O anúncio da default (§5.1) é o outro campo que a revisão decide, e o mapa
+  // guarda só o que o operador MEXEU, por família. A família ausente é o "não
+  // decidiu": a adoção mantém o valor lido, como o `None` do serviço. É o
+  // caminho de saída do enlace de operadora que anuncia — o circuito nasce
+  // vinculado, a guarda do §5.1 recusaria o anúncio vindo da leitura, e sem esta
+  // caixa o operador não teria como desligá-lo na revisão (a transação inteira
+  // voltaria com 422, e não existe adoção parcial).
+  const [anuncios, setAnuncios] = useState<Record<string, boolean>>({});
   const { data: fidelidade, error: erroDaConferencia } = useFidelidade(
     proposta.device_id, proposta.vrf, proposta.subinterface, perfis, identidadeDaConferencia,
+    anuncios,
   );
 
   // A identidade digitada só entra na consulta depois da última tecla.
@@ -294,6 +303,14 @@ export function AdocaoDialog({
   /** O botão de limpar: o campo volta ao nome padrão do gerenet. */
   const limparPolitica = (afi: string, campo: "import" | "export") =>
     setPolitica(afi, campo, "");
+  /** O que a caixa do anúncio mostra: a decisão do operador quando há uma, e o
+   * que a configuração tem quando ele ainda não mexeu — a caixa abre marcada com
+   * o estado do equipamento, e é a diferença contra ele que o aceite assume. */
+  const anuncioDaFamilia = (afi: string) =>
+    anuncios[afi] ??
+    (proposta.sessoes.find((s) => s.afi === afi)?.default_route_advertise ?? false);
+  const setAnuncio = (afi: string, valor: boolean) =>
+    setAnuncios((atual) => ({ ...atual, [afi]: valor }));
 
   const diferencas = fidelidade?.diferencas ?? [];
   const mudam = diferencas.filter((d) => d.exige_ciente);
@@ -512,6 +529,12 @@ export function AdocaoDialog({
             // outra coisa, e a chave só aparece quando há o que gravar.
             ...(importada === "" ? {} : { import_route_policy: importada }),
             ...(exportada === "" ? {} : { export_route_policy: exportada }),
+            // O anúncio viaja só quando o operador o decidiu, pela mesma razão
+            // dos nomes acima: ausente, o serviço mantém o valor LIDO (§5.1) —
+            // que é o que a caixa mostrava quando ele não a tocou.
+            ...(anuncios[s.afi] === undefined
+              ? {}
+              : { default_route_advertise: anuncios[s.afi] }),
           };
         }),
         ciente,
@@ -827,6 +850,24 @@ export function AdocaoDialog({
               ))}
             </select>
           </FormField>
+          {/* O anúncio da default (§5.1): a caixa abre com o que a configuração
+              tem e desmarcá-la é a decisão — o enlace de operadora que anuncia
+              não tem outro caminho de adoção, porque a guarda recusa o anúncio
+              no vínculo de upstream. Só existe onde há sessão a criar: a família
+              sem sessão (a `ponta_incoerente` do motor) não grava nada, e uma
+              caixa ali decidiria sobre o que ninguém escreve. */}
+          {proposta.sessoes.some((s) => s.afi === c.afi) && (
+            <FormField
+              label={`Anunciar rota default (${c.afi})`}
+              help={help("adocao.anuncio_default")}
+            >
+              <input
+                type="checkbox"
+                checked={anuncioDaFamilia(c.afi)}
+                onChange={(e) => setAnuncio(c.afi, e.target.checked)}
+              />
+            </FormField>
+          )}
           {/* O nome que a leitura achou no equipamento, por família (§4.3): o
               campo nasce com ele, e o botão ao lado o limpa — adotar é decidir
               manter o nome ou devolver o padrão do gerenet (§25.4). O nome não

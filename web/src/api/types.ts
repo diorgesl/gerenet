@@ -756,6 +756,12 @@ export interface DiscoveryAdocaoIn {
     // sessão nasce com o nome padrão do gerenet (§25.4).
     import_route_policy?: string | null;
     export_route_policy?: string | null;
+    // O anúncio da default (§5.1) é decisão da revisão: `null`/ausente é "não
+    // decidiu", e aí vale o que a configuração tem. `false` desliga o anúncio
+    // que o equipamento faz — o que torna adotável um enlace de operadora que
+    // anuncia, cujo circuito já nasce vinculado e cuja guarda recusaria o
+    // anúncio vindo da leitura.
+    default_route_advertise?: boolean | null;
   }[];
   ciente: boolean;
 }

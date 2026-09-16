@@ -889,16 +889,23 @@ export type IdentidadeDaConferencia = {
 };
 
 /** Os perfis entram na chave de propósito: trocar um `select` de perfil refaz a
- * conferência, porque o corpo da política de exportação muda com ele. */
+ * conferência, porque o corpo da política de exportação muda com ele.
+ *
+ * O `anuncios` (§5.1) entra pela mesma razão: desligar o anúncio tira a linha
+ * `peer X default-route-advertise` do ensaio, e a linha do equipamento passa a
+ * sobrar como `faltando`. A família AUSENTE do mapa é a que o operador não
+ * mexeu — sem parâmetro o ensaio segue com o valor lido da configuração, que é
+ * o que a adoção grava. */
 export const useFidelidade = (
   deviceId: number,
   vrf: string | null,
   subinterface: string | null,
   perfis: Record<string, { import?: number; export?: number }> = {},
   identidade: IdentidadeDaConferencia | null = null,
+  anuncios: Record<string, boolean> = {},
 ) =>
   useQuery({
-    queryKey: ["fidelidade", deviceId, vrf, subinterface, perfis, identidade],
+    queryKey: ["fidelidade", deviceId, vrf, subinterface, perfis, identidade, anuncios],
     queryFn: () => {
       const qs = new URLSearchParams({ device_id: String(deviceId) });
       if (vrf) qs.set("vrf", vrf);
@@ -937,6 +944,13 @@ export const useFidelidade = (
       for (const [afi, p] of Object.entries(perfis)) {
         if (p.import) qs.set(`import_${afi}`, String(p.import));
         if (p.export) qs.set(`export_${afi}`, String(p.export));
+      }
+      // Só as famílias que a revisão DECIDIU: a ausência do parâmetro é o "não
+      // decidiu" do serviço, e é ela que faz o ensaio seguir com o valor lido.
+      // Um `set` por família, e não um mapa só: o parâmetro é por família, como
+      // os quatro de perfil acima.
+      for (const [afi, valor] of Object.entries(anuncios)) {
+        qs.set(`default_route_advertise_${afi}`, String(valor));
       }
       return apiFetch<DiscoveryFidelidadeOut>(`/api/v1/discovery/fidelidade?${qs.toString()}`);
     },

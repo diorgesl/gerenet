@@ -21,6 +21,7 @@ from gerenet.domain import schemas
 from gerenet.domain.services import devices as dev_svc
 from gerenet.domain.services.discovery import (
     adotar_proposta,
+    anuncios_da_revisao,
     esquecer_ignorado,
     ignorar_candidato,
     listar_ignorados,
@@ -300,6 +301,11 @@ def adotar(
                                   if revisao.organizacao_nova else None),
                 autorizacoes=[(b.prefix, b.family) for b in revisao.autorizacoes],
                 velocidade_mbps=revisao.velocidade_mbps,
+                # O anúncio que a revisão decidiu (§5.1): o ensaio tem de
+                # renderizar o que a escrita grava — com o anúncio desligado no
+                # JSON, a linha que o equipamento tem sai no diff impresso, e é
+                # sobre ela que o `--ciente` está sendo pedido.
+                anuncios=anuncios_da_revisao(revisao),
             ))
             circuit_id = adotar_proposta(session, proposta=proposta, revisao=revisao,
                                          actor="cli")

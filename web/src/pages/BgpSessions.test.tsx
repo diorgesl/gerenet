@@ -287,4 +287,34 @@ describe("BgpSessions", () => {
       });
     });
   });
+
+  // A outra face do mesmo campo: na sessão vinculada o checkbox do anúncio não
+  // existe, então o PATCH não pode carregar o valor lido da entidade — a guarda
+  // do §5.1 recusa o anúncio mesclado e a edição de qualquer outro campo
+  // morreria em 422 (a sessão ficaria ineditável pela interface).
+  it("a edição em escopo de upstream não manda o anúncio, e manda o que a tela exibe", async () => {
+    sessao.upstream_id = 7;
+    sessao.default_route_advertise = true; // lido do equipamento e gravado na SoT
+    sessao.allow_default_route = true;
+    sessao.description = null;
+    renderList();
+    await screen.findByText("100.64.40.1 ↔ 100.64.40.2");
+    await userEvent.click(screen.getByRole("button", { name: "Editar" }));
+    const dialog = screen.getByRole("dialog");
+    // A premissa do teste: aqui não há controle de anúncio, só o do aceite.
+    expect(within(dialog).queryByLabelText(/^Anunciar rota default ao cliente/)).not.toBeInTheDocument();
+    expect(within(dialog).getByLabelText(/^Aceitar rota default do provedor/)).toBeInTheDocument();
+    // O campo de texto do escopo: o rótulo "Descrição" também casa o tooltip
+    // do FormField (que carrega o texto de ajuda em `aria-label`), então a
+    // busca é pelo papel do campo.
+    await userEvent.type(within(dialog).getByRole("textbox", { name: /^Descrição/ }), "trocado");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Salvar" }));
+    await waitFor(() => {
+      const corpo = corpoDaChamada("PATCH", "/api/v1/bgp-sessions/1");
+      // O PATCH levou os valores da tela (não é uma asserção vazia)...
+      expect(corpo).toMatchObject({ description: "trocado", allow_default_route: true });
+      // ...e não levou o campo cujo controle não é exibido.
+      expect(corpo).not.toHaveProperty("default_route_advertise");
+    });
+  });
 });

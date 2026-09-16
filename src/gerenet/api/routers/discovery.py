@@ -204,6 +204,8 @@ def fidelidade(
     autorizacoes: Annotated[list[str] | None, Query()] = None,
     import_ipv4: int | None = None, export_ipv4: int | None = None,
     import_ipv6: int | None = None, export_ipv6: int | None = None,
+    default_route_advertise_ipv4: bool | None = None,
+    default_route_advertise_ipv6: bool | None = None,
 ) -> schemas.FidelidadeOut:
     """O diff de UMA proposta, sob demanda: cada conferência roda o render do
     equipamento inteiro num ensaio, então ela não vai embutida na lista (design §7).
@@ -211,6 +213,13 @@ def fidelidade(
     Os quatro parâmetros de perfil são os que o operador escolheu na revisão: sem
     eles o ensaio não renderiza o corpo da política de exportação, e a conferência
     estaria comparando algo diferente do que a adoção vai gravar.
+
+    Os dois `default_route_advertise_*` são a decisão da revisão sobre o anúncio
+    da default (§5.1), por família. Omitidos, valem o que a configuração tem —
+    que é justamente o "não decidiu" —, e o ensaio segue anunciando: a escolha só
+    muda o diff quando o operador de fato desliga o anúncio, e aí a linha
+    `peer X default-route-advertise` do equipamento aparece como `faltando` e
+    exige o `ciente` (é o mesmo valor que a adoção vai gravar).
 
     Os parâmetros de identidade (`edge_trunk`, `circuit_code`,
     `organizacao_id`/`organizacao_nome`, `organizacao_kind`, `velocidade_mbps`)
@@ -238,6 +247,17 @@ def fidelidade(
             "ipv4": {"import_profile_id": import_ipv4, "export_profile_id": export_ipv4},
             "ipv6": {"import_profile_id": import_ipv6, "export_profile_id": export_ipv6},
         }
+        # A família que não veio na query fica FORA do mapa, e não com `None`
+        # dentro dele: a ausência é "o operador não mexeu no controle", e é ela
+        # que faz o ensaio seguir com o valor lido da configuração.
+        anuncios = {
+            afi: valor
+            for afi, valor in (
+                ("ipv4", default_route_advertise_ipv4),
+                ("ipv6", default_route_advertise_ipv6),
+            )
+            if valor is not None
+        }
         diferencas = conferir_fidelidade(
             session, proposta, perfis=perfis, edge_trunk=edge_trunk,
             circuit_code=circuit_code, organizacao_id=organizacao_id,
@@ -251,6 +271,7 @@ def fidelidade(
                 max_prefix_margin_pct=upstream_margem,
             ),
             autorizacoes=_blocos_do_query(autorizacoes),
+            anuncios=anuncios,
         )
     except NotFoundError as exc:
         # O `try` cobre a conferência inteira, e não só a busca: o ensaio lê o

@@ -291,6 +291,16 @@ function propostaComPolitica(importRoutePolicy: string) {
   };
 }
 
+/** A proposta cujo enlace ANUNCIA a default (§5.1): o anúncio lido entra na
+ * sessão, e é ele que a caixa da revisão abre marcada — desmarcá-la é a decisão
+ * de gravar a sessão sem a linha. */
+function propostaQueAnuncia() {
+  return {
+    ...PROPOSTA,
+    sessoes: [{ ...PROPOSTA.sessoes[0], default_route_advertise: true }],
+  };
+}
+
 function mockFetch(
   opts: {
     descoberta?: unknown;
@@ -1090,6 +1100,59 @@ describe("Discovery", () => {
     await waitFor(() =>
       expect(corpoDoPost().sessoes).toEqual([
         { afi: "ipv4", import_profile_id: null, export_profile_id: null, password_ref: null },
+      ]),
+    );
+  });
+
+  it("desligar o anúncio da default refaz a conferência e viaja no corpo", async () => {
+    // O enlace da proposta anuncia, e a caixa abre marcada com isso: desmarcar é
+    // a decisão do operador. É o caminho de saída do enlace de operadora (§5.1) —
+    // a sessão de upstream não anuncia, e sem o desligar a adoção morreria no 422
+    // da guarda, com a transação inteira desfeita.
+    mockFetch({
+      descoberta: { ...DISCOVERY, propostas: [propostaQueAnuncia()] },
+      diferencas: [DIFERENCA_MUDA],
+    });
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+
+    // O papel, e não o `getByLabelText` do texto: a dica do campo entra no nome
+    // acessível do `FormField`, e o rótulo do anúncio também abre a frase dela.
+    const caixa = within(dialog).getByRole("checkbox", { name: /^Anunciar rota default \(ipv4\)/ });
+    expect(caixa).toBeChecked();
+    // Nada decidido, nada no parâmetro: o ensaio segue com o anúncio lido.
+    expect(new URL(conferencias().at(-1) ?? "", "http://local").searchParams.get(
+      "default_route_advertise_ipv4",
+    )).toBeNull();
+
+    const antes = conferencias().length;
+    await userEvent.click(caixa);
+    await esperaConferenciaNova(antes);
+    // A decisão chega à conferência: sem o parâmetro o ensaio seguiria com o
+    // anúncio lido, e o diff da tela deixaria de ser o da escrita — o aceite
+    // viajaria sobre uma diferença que o operador não viu.
+    expect(new URL(conferencias().at(-1) ?? "", "http://local").searchParams.get(
+      "default_route_advertise_ipv4",
+    )).toBe("false");
+
+    await preencheAcesso(dialog);
+    await userEvent.click(within(dialog).getByLabelText(/ciente/i));
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeEnabled(),
+    );
+    await userEvent.click(within(dialog).getByRole("button", { name: "Adotar" }));
+
+    // O corpo leva o desligamento na sessão da família — e só ele a mais.
+    await waitFor(() =>
+      expect(corpoDoPost().sessoes).toEqual([
+        {
+          afi: "ipv4",
+          import_profile_id: null,
+          export_profile_id: null,
+          password_ref: null,
+          default_route_advertise: false,
+        },
       ]),
     );
   });
