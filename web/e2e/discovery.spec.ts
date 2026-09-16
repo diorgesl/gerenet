@@ -116,19 +116,32 @@ test("adotar a proposta da configuração e conferir o circuito na lista", async
   await expect(dialogo.getByLabel(`Incluir ${blocoA}`)).toBeChecked();
   await expect(dialogo.getByLabel(`Incluir ${blocoB}`)).toBeChecked();
 
+  // A conferência é refeita quando a identidade muda, e o aceite caduca junto:
+  // um `ciente` marcado contra um diff volta a falso quando chega outro. O
+  // "Buscar no registro" acima mexeu no nome da organização, que é identidade —
+  // então a consulta nova ainda está no ar, e o diff na tela ainda é o da
+  // anterior. A descrição da subinterface passou a ser gerenciada nesta frente
+  // (o render a deriva do código, do nome da organização e da velocidade), e
+  // esperar pela linha derivada do nome que o REGISTRO devolveu é o que garante
+  // que a conferência parou neste nome. Sem isso o `ciente` era marcado contra o
+  // diff velho, desmarcado pelo novo, e o "Adotar" ficava desabilitado sem que
+  // nada falhasse.
+  await expect(
+    dialogo.getByText(`description ${codigo} ${nomeDoRegistro.toUpperCase()}`),
+  ).toBeVisible();
+
   await dialogo.getByLabel("Equipamento de acesso *").selectOption({ label: "ne8000-disco-01" });
   await dialogo.getByLabel("Porta de acesso *").fill("GE0/0/1");
 
-  // Os dois grupos do diff. A fixture deixa a SoT sem gerar o `description` da
-  // subinterface: grupo de informação, que não gateia nada. O `ciente` aparece
-  // só quando há diferença que MUDARIA o equipamento (esta não tem) — a
-  // marcação fica aqui porque é o passo do runbook, e a página o exige quando
-  // ele aparece.
-  await expect(dialogo.getByText("O que a SoT não gerencia")).toBeVisible();
+  // O diff cai no grupo que MUDA o equipamento, e é o único grupo desenhado
+  // aqui: o que a SoT não gerencia ficou vazio quando o `description` passou a
+  // ser dela, e a página não desenha cabeçalho de grupo vazio.
+  await expect(dialogo.getByText("Diferenças que mudariam o equipamento")).toBeVisible();
+  // O `ciente` é exigido, e não "se aparecer": é o aceite desta frente, e
+  // deixá-lo condicional era o que permitia ao fumo fechar verde por um caminho
+  // que nunca exercitava o gate.
   const ciente = dialogo.getByLabel("Estou ciente destas diferenças");
-  if ((await ciente.count()) > 0) {
-    await ciente.check();
-  }
+  await ciente.check();
 
   await dialogo.getByRole("button", { name: "Adotar", exact: true }).click();
 
