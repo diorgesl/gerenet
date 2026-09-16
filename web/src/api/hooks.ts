@@ -273,6 +273,7 @@ export type CircuitCreateIn = {
   vrf?: string | null;
   mtu?: number | null;
   bandwidth?: string | null;
+  velocidade_mbps?: number | null;
   bfd?: boolean;
   p2p_v4_len?: 30 | 31;
   description?: string | null;

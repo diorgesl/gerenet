@@ -27,6 +27,7 @@ const FORM_VAZIO = {
   vrf: "",
   mtu: "",
   bandwidth: "",
+  velocidade_mbps: "",
   bfd: false,
   p2p_v4_len: "31" as "30" | "31",
   description: "",
@@ -47,6 +48,7 @@ const FORM_EDIT_VAZIO = {
   vrf: "",
   mtu: "",
   bandwidth: "",
+  velocidade_mbps: "",
   bfd: false,
   p2p_v4_len: "31" as "30" | "31",
   description: "",
@@ -87,6 +89,7 @@ export default function Circuits() {
       vrf: c.vrf ?? "",
       mtu: c.mtu === null ? "" : String(c.mtu),
       bandwidth: c.bandwidth ?? "",
+      velocidade_mbps: c.velocidade_mbps === null ? "" : String(c.velocidade_mbps),
       bfd: c.bfd,
       p2p_v4_len: String(c.p2p_v4_len) as "30" | "31",
       description: c.description ?? "",
@@ -116,6 +119,7 @@ export default function Circuits() {
         vrf: formEdit.vrf || null,
         mtu: num(formEdit.mtu),
         bandwidth: formEdit.bandwidth || null,
+        velocidade_mbps: num(formEdit.velocidade_mbps),
         bfd: formEdit.bfd,
         p2p_v4_len: Number(formEdit.p2p_v4_len) as 30 | 31,
         description: formEdit.description || null,
@@ -146,6 +150,7 @@ export default function Circuits() {
         vrf: form.vrf || null,
         mtu: num(form.mtu),
         bandwidth: form.bandwidth || null,
+        velocidade_mbps: num(form.velocidade_mbps),
         bfd: form.bfd,
         p2p_v4_len: Number(form.p2p_v4_len) as 30 | 31,
         description: form.description || null,
@@ -241,6 +246,15 @@ export default function Circuits() {
           </FormField>
           <FormField label="Banda" help={help("circuit.bandwidth")}>
             <input value={form.bandwidth} onChange={(e) => setForm({ ...form, bandwidth: e.target.value })} />
+          </FormField>
+          <FormField label="Velocidade (Mbps)" help={help("circuit.velocidade_mbps")}>
+            <input
+              type="number"
+              min={1}
+              max={100000}
+              value={form.velocidade_mbps}
+              onChange={(e) => setForm({ ...form, velocidade_mbps: e.target.value })}
+            />
           </FormField>
           <FormField label="BFD" help={help("circuit.bfd")}>
             <input type="checkbox" checked={form.bfd} onChange={(e) => setForm({ ...form, bfd: e.target.checked })} />
@@ -409,6 +423,15 @@ export default function Circuits() {
             </FormField>
             <FormField label="Banda" help={help("circuit.bandwidth")}>
               <input value={formEdit.bandwidth} onChange={(e) => setFormEdit({ ...formEdit, bandwidth: e.target.value })} />
+            </FormField>
+            <FormField label="Velocidade (Mbps)" help={help("circuit.velocidade_mbps")}>
+              <input
+                type="number"
+                min={1}
+                max={100000}
+                value={formEdit.velocidade_mbps}
+                onChange={(e) => setFormEdit({ ...formEdit, velocidade_mbps: e.target.value })}
+              />
             </FormField>
             <FormField label="BFD" help={help("circuit.bfd")}>
               <input type="checkbox" checked={formEdit.bfd} onChange={(e) => setFormEdit({ ...formEdit, bfd: e.target.checked })} />

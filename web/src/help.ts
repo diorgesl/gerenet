@@ -56,6 +56,7 @@ export const HELP = {
   "circuit.vrf": "Nome do VRF/VS do circuito; vazio = instância pública/global.",
   "circuit.mtu": "MTU do enlace (576–9600); coerente fim a fim no caminho do serviço.",
   "circuit.bandwidth": "Banda contratada (ex.: 1G, 10G, 500M).",
+  "circuit.velocidade_mbps": "Velocidade contratada em Mbps (ex.: 1024 = 1 Gbps). Entra na descrição da subinterface e no limitador de taxa (qos car). Uma taxa fora de 1–100000 Mbps é recusada.",
   "circuit.bfd": "BFD de intenção do enlace; no MVP o BFD efetivo vem da sessão BGP (bfd_enabled).",
   "circuit.p2p_v4_len": "Tamanho do enlace v4: /31 (padrão) ou /30, no bloco privado do site.",
   "circuit.edge_trunk": "Eth-Trunk de borda (opcional) que agrega o acesso do cliente.",
