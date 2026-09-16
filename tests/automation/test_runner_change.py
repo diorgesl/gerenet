@@ -542,7 +542,18 @@ def test_run_change_create_misto_consta_ausente_aborta(db_session: Session, tmp_
     assert resultado["status"] == "erro"
     db_session.refresh(cr)
     assert cr.steps[0].status == "falhou"
-    assert "divergente" in (cr.steps[0].erro or "")
+    # As DUAS mensagens de `_re_diff` começam com "Estado divergente" — a outra é
+    # a da identidade que não confere (§5.3) —, então o assert antigo
+    # (`"divergente" in ...`) casava com qualquer uma delas e uma regressão que
+    # trocasse o motivo do abort passava despercebida (item 5). A frase inteira
+    # do plano misto, com o `subinterface` que `constam[0]` nomeia: o id fica de
+    # fora porque é do plano congelado.
+    erro = cr.steps[0].erro or ""
+    assert erro.startswith("Estado divergente no objeto subinterface (#")
+    assert erro.endswith(
+        "apenas parte do plano consta do encontrado (config inalterada? §12.2) — "
+        "reexecute com plano atualizado."
+    )
     assert db_session.query(models.AuditEvent).filter_by(type="change.step_failed").count() == 1
 
 
