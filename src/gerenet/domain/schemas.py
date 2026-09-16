@@ -1175,6 +1175,57 @@ class AdocaoAutorizacaoIn(BaseModel):
     family: Literal["ipv4", "ipv6"]
 
 
+class AdocaoUpstreamIn(BaseModel):
+    """O bloco do upstream da revisão (design §5.2), em duas formas.
+
+    Por vínculo (`upstream_id`) ou por criação (o resto dos campos, com `name` e
+    `tipo` obrigatórios). `extra="forbid"` como os irmãos: o corpo vem de um
+    `--json` e a chave digitada errado passaria calada. `produto_import` entra
+    aqui porque a operadora não tem prefix-list própria (§7): o que a descreve é
+    o produto, e é ele que o ensaio da conferência precisa ter em mãos.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    upstream_id: int | None = None
+    name: str | None = Field(default=None, min_length=2, max_length=128)
+    tipo: Literal["transito", "ix", "pni", "contingencia"] | None = None
+    capacity: str | None = Field(default=None, max_length=32)
+    priority: int | None = None
+    cost: str | None = Field(default=None, max_length=32)
+    expected_prefixes_v4: int | None = None
+    expected_prefixes_v6: int | None = None
+    max_prefix_margin_pct: int = Field(default=20, ge=0, le=100)
+    rpki_enabled: bool = True
+    entrada_local_preference: int | None = None
+    produto_import: Literal["full", "parcial", "default"] | None = None
+    # `contingencia_*` não estão na lista do §5.2 e entram por uma razão só: sem
+    # eles, o ensaio de um upstream NOVO com papel de contingência não teria o LP
+    # e o prepend que a escrita vai gravar e acusaria diferença que não existe.
+    contingencia_local_preference: int | None = None
+    contingencia_prepend: int | None = Field(default=None, ge=0, le=10)
+    papel: Literal["principal", "contingencia"] = "principal"
+    ordem: int = 1
+
+    @model_validator(mode="after")
+    def _uma_das_formas(self) -> "AdocaoUpstreamIn":
+        """Ou o vínculo, ou a criação — não os dois e não nenhum."""
+        criacao = self.name is not None or self.tipo is not None
+        if self.upstream_id is not None:
+            if criacao:
+                raise ValueError(
+                    "O bloco do upstream é por vínculo (upstream_id) ou por criação "
+                    "(name e tipo), não os dois."
+                )
+            return self
+        if self.name is None or self.tipo is None:
+            raise ValueError(
+                "Informe o `upstream_id` ou os campos de criação do upstream "
+                "(`name` e `tipo`)."
+            )
+        return self
+
+
 class AdocaoIn(BaseModel):
     """A revisão de uma proposta (design §6).
 
@@ -1205,6 +1256,8 @@ class AdocaoIn(BaseModel):
     organizacao_nova: OrganizationCreate | None = None
     autorizacoes: list[AdocaoAutorizacaoIn] = Field(default_factory=list)
     sessoes: list[AdocaoSessaoIn] = Field(default_factory=list)
+    # §5.1: organização operadora e bloco de upstream andam juntos.
+    upstream: AdocaoUpstreamIn | None = None
     ciente: bool = False
 
     @field_validator("edge_trunk", mode="before")

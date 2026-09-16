@@ -25,6 +25,7 @@ from gerenet.domain.services.bgp_sessions import list_sessions
 from gerenet.domain.services.devices import get_device
 from gerenet.domain.services.discovery import listar_ignorados
 from gerenet.domain.services.ipam import pontas_v4, pontas_v6
+from gerenet.domain.services.upstreams import propagar_defaults
 from gerenet.domain.validators import endereco_canonico
 
 AVISO_SEM_CONFIG = (
@@ -1100,6 +1101,7 @@ def _ensaio(
     organizacao_kind: str | None = None,
     autorizacoes: list[tuple[str, str]] | None = None,
     velocidade_mbps: int | None = None,
+    upstream: dict | None = None,
 ) -> dict:
     """Objetos transitórios com a forma do que a adoção criaria.
 
@@ -1134,6 +1136,14 @@ def _ensaio(
     o `import route-policy` que o equipamento tem, e a linha do próprio
     equipamento aparece como `faltando` — o `ciente` sobre a linha que esta
     adoção escreve.
+
+    `upstream` é o bloco do §5.4 — tipo, produto e papel, mais os números de que
+    `propagar_defaults` precisa. Sem ele o ensaio de um enlace de operadora
+    renderiza pelo caminho de cliente (o despacho do render é o vínculo) e acusa
+    diferença em tudo. Com ele, o ensaio monta o upstream descartável, vincula o
+    circuito e roda a mesma propagação que a escrita roda no passo 8 — é ela que
+    preenche o perfil de importação pelo produto e recalcula o maximum-prefix, e
+    um ensaio que não a rodasse compararia um estado que a escrita não produz.
     """
     device = get_device(session, proposta.device_id)
     # O nome da revisão vence a organização que a proposta casou por ASN: é a
@@ -1220,6 +1230,30 @@ def _ensaio(
                                     kind="p2p", circuit_id=circ.id,
                                     ponta_local=prefixo["ponta_local"]))
     session.flush()
+    up_ensaio: models.Upstream | None = None
+    if upstream is not None:
+        up_ensaio = models.Upstream(
+            # Nome de descartável, como o da organização: o upstream real da
+            # revisão ainda não existe (ou é outro, quando a revisão vinculou um
+            # existente, e aí o ensaio não pode tocar nele).
+            name=f"ENSAIO-UP-{device.name}-{proposta.vid}",
+            organization_id=org_id, tipo=upstream["tipo"],
+            produto_import=upstream.get("produto"),
+            expected_prefixes_v4=upstream.get("expected_prefixes_v4"),
+            expected_prefixes_v6=upstream.get("expected_prefixes_v6"),
+            max_prefix_margin_pct=upstream.get("max_prefix_margin_pct", 20),
+            entrada_local_preference=upstream.get("entrada_local_preference"),
+            contingencia_local_preference=upstream.get("contingencia_local_preference"),
+            contingencia_prepend=upstream.get("contingencia_prepend"),
+            admin_status=True,
+        )
+        session.add(up_ensaio)
+        session.flush()
+        session.add(models.UpstreamCircuit(
+            upstream_id=up_ensaio.id, circuit_id=circ.id,
+            papel=upstream.get("papel", "principal"), ordem=1,
+        ))
+        session.flush()
     sessoes = []
     for dados in proposta.sessoes:
         # `asn_remote` é NOT NULL em `bgp_sessions`, e a adoção também não
@@ -1239,6 +1273,14 @@ def _ensaio(
         session.add(sessao)
         sessoes.append(sessao)
     session.flush()
+    if up_ensaio is not None:
+        # A MESMA propagação que a escrita roda no passo 8 (§5.3), e não uma
+        # reimplementação: sem ela o ensaio deixa o perfil de importação nulo (o
+        # render cai no fail-safe deny-all) e o maximum-prefix como veio do
+        # equipamento — nos dois casos, um estado que a escrita não produz.
+        session.refresh(up_ensaio, ["circuitos"])
+        propagar_defaults(session, up_ensaio)
+        session.flush()
     return {"circuito": circ, "sessoes": sessoes}
 
 
@@ -1275,6 +1317,7 @@ def conferir_fidelidade(
     organizacao_kind: str | None = None,
     autorizacoes: list[tuple[str, str]] | None = None,
     velocidade_mbps: int | None = None,
+    upstream: dict | None = None,
 ) -> list[Diferenca]:
     """O que a SoT reproduziria × o que a configuração tem (spec §9).
 
@@ -1306,6 +1349,13 @@ def conferir_fidelidade(
     sem elas o ensaio renderiza o peer SEM o `import route-policy` que o
     equipamento tem, e a linha do equipamento aparece como `faltando` — o
     `ciente` cobrado sobre a linha que a própria adoção cria.
+
+    `upstream` é o bloco do §5.4 (`bloco_do_upstream`), e o ensaio o usa para
+    montar o enlace pelo caminho de operadora: o render despacha pelo vínculo, e
+    sem ele a conferência compararia um peer de cliente com um enlace que a
+    adoção grava como upstream — diferença em toda linha. Com o bloco, o ensaio
+    vincula o circuito e roda a propagação do §5.3, que é quem preenche o perfil
+    de importação pelo produto.
 
     O ensaio roda o render de verdade, e não uma reimplementação da montagem
     dos comandos: é o mesmo código que a adoção usaria, então a conferência não
@@ -1372,6 +1422,7 @@ def conferir_fidelidade(
                 circuit_code=circuit_code, organizacao_id=organizacao_id,
                 organizacao_nome=organizacao_nome, organizacao_kind=organizacao_kind,
                 autorizacoes=autorizacoes, velocidade_mbps=velocidade_mbps,
+                upstream=upstream,
             )
         except IntegrityError:
             # Uma restrição de unicidade recusou o ensaio (a reserva que a

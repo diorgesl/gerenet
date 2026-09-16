@@ -10,11 +10,14 @@ from gerenet.domain.schemas import (
     AdocaoAutorizacaoIn,
     AdocaoIn,
     AdocaoSessaoIn,
+    AdocaoUpstreamIn,
+    CircuitCreate,
     DeviceCreate,
     OrganizationCreate,
     PrefixAuthorizationCreate,
     SiteCreate,
 )
+from gerenet.domain.services.circuits import create_circuit
 from gerenet.domain.services.devices import create_device
 from gerenet.domain.services.discovery import adotar_proposta
 from gerenet.domain.services.errors import ConflictError, ValidationError
@@ -504,6 +507,7 @@ def test_operadora_nao_recebe_as_autorizacoes_da_adoção(db_session, tmp_path) 
         AdocaoAutorizacaoIn(prefix="138.121.28.0/22", family="ipv4"),
     ])
     revisao.organizacao_nova.kind = "operadora"
+    revisao.upstream = AdocaoUpstreamIn(name="up-do-teste", tipo="transito")
 
     with pytest.raises(ValidationError, match="operadora"):
         adotar_proposta(db_session, proposta=_proposta(db_session, dev), revisao=revisao,
@@ -896,3 +900,178 @@ def test_a_revisao_importa_os_nomes_que_trouxe(db_session, tmp_path) -> None:
     ))
     assert (v4.import_route_policy, v4.export_route_policy) == ("RP-OPERADOR-IN", "RP-OPERADOR-OUT")
     assert (v6.import_route_policy, v6.export_route_policy) == (None, None)
+
+
+# ---- o bloco do upstream na adoção (design §5) ----
+
+def test_operadora_sem_bloco_de_upstream_e_recusada(db_session, tmp_path) -> None:
+    """§5.1: o render despacha pelo vínculo e `_autorizadas_clientes` filtra pelo
+    `kind`. Operadora sem vínculo é o único estado em que os dois discordam."""
+    _site, dev = _ambiente(db_session, tmp_path)
+    revisao = _revisao(dev)
+    revisao.organizacao_nova.kind = "operadora"
+    with pytest.raises(ValidationError, match="bloco `upstream`"):
+        adotar_proposta(db_session, proposta=_proposta(db_session, dev), revisao=revisao,
+                        actor="cli")
+    assert db_session.scalars(select(models.Organization)).all() == []
+
+
+def test_bloco_de_upstream_com_organizacao_downstream_e_recusado(db_session, tmp_path) -> None:
+    _site, dev = _ambiente(db_session, tmp_path)
+    revisao = _revisao(dev)
+    revisao.upstream = AdocaoUpstreamIn(name="up-x", tipo="transito")
+    with pytest.raises(ValidationError, match="operadora"):
+        adotar_proposta(db_session, proposta=_proposta(db_session, dev), revisao=revisao,
+                        actor="cli")
+
+
+def test_adota_o_enlace_de_upstream_com_a_cadeia_inteira(db_session, tmp_path) -> None:
+    """§5.3: organização, upstream, circuito, vínculo e sessões numa transação,
+    e a sessão nasce com o perfil do produto."""
+    _site, dev = _ambiente(db_session, tmp_path)
+    revisao = _revisao(dev, sessoes=[
+        AdocaoSessaoIn(afi="ipv4", password_ref=CAMINHO_SENHA),
+        AdocaoSessaoIn(afi="ipv6"),
+    ])
+    revisao.organizacao_nova.kind = "operadora"
+    # O produto vai de propósito contra o tipo: `pni` sozinho daria `up-parcial`
+    # (§7, `PRODUTO_IMPORT_POR_TIPO`), e o que o teste prende é o campo vencer.
+    revisao.upstream = AdocaoUpstreamIn(
+        name="up-adoc", tipo="pni", produto_import="full", papel="principal",
+    )
+    circ_id = adotar_proposta(db_session, proposta=_proposta(db_session, dev), revisao=revisao,
+                              actor="cli")
+
+    org = db_session.scalar(select(models.Organization).where(
+        models.Organization.name == "Cliente Alfa"
+    ))
+    up = db_session.scalar(select(models.Upstream).where(models.Upstream.name == "up-adoc"))
+    assert (up.organization_id, up.produto_import, up.tipo) == (org.id, "full", "pni")
+    vinculo = db_session.scalar(select(models.UpstreamCircuit).where(
+        models.UpstreamCircuit.circuit_id == circ_id
+    ))
+    assert (vinculo.upstream_id, vinculo.papel, vinculo.ordem) == (up.id, "principal", 1)
+    # A propagação rodou DENTRO da adoção (passo 8 do §5.3) e leu o produto da
+    # revisão: `up-full` só sai daqui se o campo venceu o tipo.
+    full = db_session.scalar(select(models.PolicyProfile.id).where(
+        models.PolicyProfile.name == "up-full",
+        models.PolicyProfile.direction == "import",
+    ))
+    assert all(s.import_profile_id == full for s in db_session.scalars(
+        select(models.BgpSession).where(models.BgpSession.circuit_id == circ_id)
+    ))
+    evento = db_session.scalar(select(models.AuditEvent).where(
+        models.AuditEvent.type == "discovery.adopt"
+    ))
+    assert evento.details["depois"]["upstream"] == {
+        "upstream_id": up.id, "papel": "principal", "ordem": 1,
+        "criado": True, "tipo": "pni", "produto_import": "full",
+    }
+
+
+def test_o_upstream_novo_nao_sobrevive_a_recusa_da_transacao(db_session, tmp_path) -> None:
+    """A transação única vale para o upstream também: o circuito de código já
+    usado derruba a adoção inteira e o upstream não fica órfão."""
+    _site, dev = _ambiente(db_session, tmp_path)
+    # O código que `_revisao` gera ("ADOC-64512-1001") já está em uso: a recusa
+    # acontece no passo 4, DEPOIS do upstream ter sido criado no passo 3 — que é
+    # exatamente o que este teste quer derrubar junto.
+    site = db_session.scalar(select(models.Site))
+    org = create_organization(db_session, OrganizationCreate(name="Dono do Código", asn=64998),
+                              actor="cli")
+    create_circuit(db_session, CircuitCreate(
+        code="ADOC-64512-1001", organization_id=org.id, site_id=site.id,
+        access_device_id=dev.id, access_port="GE0/0/9", edge_device_id=dev.id,
+    ), actor="cli")
+
+    revisao = _revisao(dev)
+    revisao.organizacao_nova.kind = "operadora"
+    revisao.upstream = AdocaoUpstreamIn(name="up-orfao", tipo="transito")
+
+    with pytest.raises(ConflictError):
+        adotar_proposta(db_session, proposta=_proposta(db_session, dev), revisao=revisao,
+                        actor="cli")
+    assert db_session.scalars(select(models.Upstream).where(
+        models.Upstream.name == "up-orfao"
+    )).all() == []
+    assert "discovery.adopt" not in _tipos_auditados(db_session)
+
+
+def test_o_maximum_prefix_lido_sobrevive_sem_esperado(db_session, tmp_path) -> None:
+    """§5.3: sem `expected_prefixes` a propagação não inventa número — o que o
+    equipamento tem é o que a SoT grava. A fixture traz 100 no peer do ALFA."""
+    _site, dev = _ambiente(db_session, tmp_path)
+    revisao = _revisao(dev)
+    revisao.organizacao_nova.kind = "operadora"
+    revisao.upstream = AdocaoUpstreamIn(name="up-sem-esperado", tipo="transito")
+
+    circ_id = adotar_proposta(db_session, proposta=_proposta(db_session, dev), revisao=revisao,
+                              actor="cli")
+    v4 = db_session.scalar(select(models.BgpSession).where(
+        models.BgpSession.circuit_id == circ_id, models.BgpSession.afi == "ipv4"
+    ))
+    v6 = db_session.scalar(select(models.BgpSession).where(
+        models.BgpSession.circuit_id == circ_id, models.BgpSession.afi == "ipv6"
+    ))
+    assert (v4.maximum_prefix, v4.maximum_prefix_threshold) == (100, 80)
+    assert (v6.maximum_prefix, v6.maximum_prefix_threshold) == (50, 80)
+
+
+def test_com_esperado_a_adocao_recalcula_o_maximum_prefix(db_session, tmp_path) -> None:
+    """O outro lado: com `expected_prefixes_v4` o número do equipamento é
+    substituído por esperado × (1 + margem) — a mesma conta do vínculo manual."""
+    _site, dev = _ambiente(db_session, tmp_path)
+    revisao = _revisao(dev)
+    revisao.organizacao_nova.kind = "operadora"
+    revisao.upstream = AdocaoUpstreamIn(
+        name="up-com-esperado", tipo="transito",
+        expected_prefixes_v4=1000, max_prefix_margin_pct=10,
+    )
+
+    circ_id = adotar_proposta(db_session, proposta=_proposta(db_session, dev), revisao=revisao,
+                              actor="cli")
+    v4 = db_session.scalar(select(models.BgpSession).where(
+        models.BgpSession.circuit_id == circ_id, models.BgpSession.afi == "ipv4"
+    ))
+    assert v4.maximum_prefix == 1100
+
+
+def test_nome_de_politica_repetido_recusa_a_adocao(db_session, tmp_path) -> None:
+    """§4.4 no lado da escrita: a revisão pode editar o nome, e o que ela
+    trouxer tem de valer contra o mesmo índice que a proposta consultou."""
+    _site, dev = _ambiente(db_session, tmp_path)
+    site = db_session.scalar(select(models.Site))
+    org = create_organization(db_session, OrganizationCreate(name="Dono do Nome", asn=64997),
+                              actor="cli")
+    outro = create_circuit(db_session, CircuitCreate(
+        code="CIRC-DONO-DO-NOME-ADOC", organization_id=org.id, site_id=site.id,
+        access_device_id=dev.id, access_port="GE0/0/8", edge_device_id=dev.id,
+    ), actor="cli")
+    db_session.add(models.BgpSession(
+        circuit_id=outro.id, device_id=dev.id, afi="ipv4",
+        local_address="100.64.10.30", remote_address="100.64.10.31",
+        asn_local=65001, asn_remote=64997, import_route_policy="RP-EM-USO",
+    ))
+    db_session.commit()
+
+    revisao = _revisao(dev, sessoes=[
+        AdocaoSessaoIn(afi="ipv4", password_ref=CAMINHO_SENHA,
+                       import_route_policy="RP-EM-USO"),
+        AdocaoSessaoIn(afi="ipv6"),
+    ])
+    with pytest.raises(ConflictError, match="mesmo nome de política"):
+        adotar_proposta(db_session, proposta=_proposta(db_session, dev), revisao=revisao,
+                        actor="cli")
+
+
+def test_o_mesmo_nome_nas_duas_familias_recusa_a_adocao(db_session, tmp_path) -> None:
+    """A repetição dentro da própria revisão também é recusada."""
+    _site, dev = _ambiente(db_session, tmp_path)
+    revisao = _revisao(dev, sessoes=[
+        AdocaoSessaoIn(afi="ipv4", password_ref=CAMINHO_SENHA,
+                       import_route_policy="RP-DUAS-VEZES"),
+        AdocaoSessaoIn(afi="ipv6", import_route_policy="RP-DUAS-VEZES"),
+    ])
+    with pytest.raises(ConflictError, match="mesmo nome de política"):
+        adotar_proposta(db_session, proposta=_proposta(db_session, dev), revisao=revisao,
+                        actor="cli")

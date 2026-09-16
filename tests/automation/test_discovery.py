@@ -1728,3 +1728,37 @@ def test_o_texto_da_politica_fora_do_padrao_diz_o_que_a_importacao_faz(db_sessio
     pendencia = next(p for p in proposta.pendencias if p.tipo == "politica_fora_do_padrao")
     assert "gerenciar o corpo" in pendencia.descricao
     assert "RP-LIDA-IMPORT" in pendencia.descricao
+
+
+BLOCO_UPSTREAM = {
+    "tipo": "transito", "produto": "full", "papel": "principal",
+    "expected_prefixes_v4": None, "expected_prefixes_v6": None,
+    "max_prefix_margin_pct": 20, "entrada_local_preference": None,
+    "contingencia_local_preference": None, "contingencia_prepend": None,
+}
+
+
+def test_a_conferencia_do_enlace_de_operadora_monta_o_vinculo(db_session, tmp_path) -> None:
+    """§5.4: o bloco muda o que a conferência compara.
+
+    O que este teste prende é o `upstream` ser consumido: sem ele o ensaio
+    renderiza o enlace pelo caminho de cliente (o despacho do render é o
+    vínculo, e sem vínculo não há outro caminho), e o grupo do peer sai de
+    outras definições. Se o parâmetro fosse ignorado em silêncio, as duas
+    conferências devolveriam a mesma lista. A afirmação mais forte — que o
+    enlace de upstream sai SEM diferença que exija `ciente` — pede uma
+    configuração reproduzível inteira do caminho de upstream, e quem a tem é
+    `tests/automation/test_render_upstream.py`; repeti-la aqui seria uma
+    segunda cópia da mesma fixture.
+    """
+    dev = _ambiente(db_session)
+    _com_config(db_session, dev, tmp_path)
+    proposta = next(iter(_propostas(db_session, dev).values()))
+    perfis = {"ipv4": {"import_profile_id": None, "export_profile_id": None},
+              "ipv6": {"import_profile_id": None, "export_profile_id": None}}
+
+    sem_bloco = conferir_fidelidade(db_session, proposta, perfis=perfis)
+    com_bloco = conferir_fidelidade(db_session, proposta, perfis=perfis,
+                                    upstream=BLOCO_UPSTREAM)
+
+    assert com_bloco != sem_bloco

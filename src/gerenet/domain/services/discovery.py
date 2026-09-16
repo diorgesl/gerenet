@@ -14,8 +14,18 @@ from gerenet.domain.services.bgp_sessions import create_session
 from gerenet.domain.services.circuits import create_circuit
 from gerenet.domain.services.errors import ConflictError, ValidationError
 from gerenet.domain.services.ipam import reservar_adocao
-from gerenet.domain.services.organizations import _confere_nome_livre, create_organization
+from gerenet.domain.services.organizations import (
+    _confere_nome_livre,
+    create_organization,
+    get_organization,
+)
 from gerenet.domain.services.prefix_authorizations import create_authorization
+from gerenet.domain.services.upstreams import (
+    create_upstream,
+    get_upstream,
+    propagar_defaults,
+    vincular_circuito,
+)
 from gerenet.domain.validators import endereco_canonico
 
 
@@ -173,6 +183,87 @@ def perfis_da_revisao(revisao: schemas.AdocaoIn) -> dict[str, dict[str, int | No
     }
 
 
+def bloco_do_upstream(
+    session: Session, *, upstream_id: int | None = None, tipo: str | None = None,
+    produto_import: str | None = None, papel: str = "principal",
+    expected_prefixes_v4: int | None = None, expected_prefixes_v6: int | None = None,
+    max_prefix_margin_pct: int = 20,
+    entrada_local_preference: int | None = None,
+    contingencia_local_preference: int | None = None,
+    contingencia_prepend: int | None = None,
+) -> dict | None:
+    """O bloco do upstream na forma que o ensaio lê (design §5.4).
+
+    Com `upstream_id` os valores saem do upstream da SoT — é ele que o vínculo
+    vai usar, e um ensaio com outros valores compararia outra coisa. Sem id,
+    saem dos argumentos, que é a criação da revisão. Sem tipo e sem id não há
+    bloco: o enlace é de cliente.
+    """
+    if upstream_id is not None:
+        from gerenet.domain.services.upstreams import get_upstream
+
+        up = get_upstream(session, upstream_id)
+        return {
+            "tipo": up.tipo, "produto": up.produto_import, "papel": papel,
+            "expected_prefixes_v4": up.expected_prefixes_v4,
+            "expected_prefixes_v6": up.expected_prefixes_v6,
+            "max_prefix_margin_pct": up.max_prefix_margin_pct,
+            "entrada_local_preference": up.entrada_local_preference,
+            "contingencia_local_preference": up.contingencia_local_preference,
+            "contingencia_prepend": up.contingencia_prepend,
+        }
+    if tipo is None:
+        return None
+    return {
+        "tipo": tipo, "produto": produto_import, "papel": papel,
+        "expected_prefixes_v4": expected_prefixes_v4,
+        "expected_prefixes_v6": expected_prefixes_v6,
+        "max_prefix_margin_pct": max_prefix_margin_pct,
+        "entrada_local_preference": entrada_local_preference,
+        "contingencia_local_preference": contingencia_local_preference,
+        "contingencia_prepend": contingencia_prepend,
+    }
+
+
+def _kind_da_revisao(session: Session, revisao: schemas.AdocaoIn) -> str | None:
+    """O `kind` que a organização da revisão tem ou terá (a nova vence).
+
+    `None` quando a revisão não traz organização nenhuma: aí quem recusa é a
+    guarda do "Informe a organização", mais adiante, e a coerência do §5.1 não
+    tem com o que comparar.
+    """
+    if revisao.organizacao_nova is not None:
+        return revisao.organizacao_nova.kind
+    if revisao.organizacao_id is not None:
+        return get_organization(session, revisao.organizacao_id).kind
+    return None
+
+
+def _recusa_nome_de_politica_repetido(
+    session: Session, revisao: schemas.AdocaoIn, from_discovery
+) -> None:
+    """§4.4 no lado da escrita: a revisão pode editar os nomes, e o que ela
+    trouxer tem de valer contra o mesmo índice que a proposta consultou."""
+    nomes: dict[str, list[str]] = {}
+    for s in revisao.sessoes:
+        for nome in (s.import_route_policy, s.export_route_policy):
+            if nome:
+                nomes.setdefault(nome, []).append(s.afi)
+    em_uso = from_discovery._politicas_em_uso(session, revisao.device_id)
+    repetidos = sorted(n for n, afis in nomes.items() if len(afis) > 1 or n in em_uso)
+    if not repetidos:
+        return
+    onde = "; ".join(
+        f"{n} ({'duas famílias da revisão' if len(nomes[n]) > 1 else em_uso[n]})"
+        for n in repetidos
+    )
+    raise ConflictError(
+        f"A política {onde} já tem dono no mesmo equipamento: dois peers com o mesmo "
+        "nome de política conviveriam sob um cabeçalho só. Adote sem importar o nome, "
+        "ou cadastre a política compartilhada à mão."
+    )
+
+
 def adotar_proposta(session: Session, *, proposta, revisao: schemas.AdocaoIn, actor: str) -> int:
     """Grava a cadeia de uma proposta na SoT, numa transação (design §5).
 
@@ -193,6 +284,7 @@ def adotar_proposta(session: Session, *, proposta, revisao: schemas.AdocaoIn, ac
     """
     # Import tardio: `automation.discovery` importa este módulo (a lista de
     # ignorados), e no topo o ciclo derruba quem importa este módulo primeiro.
+    from gerenet.automation import discovery as from_discovery
     from gerenet.automation.discovery import _trunk_da_subinterface, conferir_fidelidade
 
     for campo, do_arquivo, da_proposta in (
@@ -247,6 +339,25 @@ def adotar_proposta(session: Session, *, proposta, revisao: schemas.AdocaoIn, ac
     # conferência, então a checagem é feita por ela.
     if revisao.organizacao_id is None and revisao.organizacao_nova is not None:
         _confere_nome_livre(session, revisao.organizacao_nova.name)
+    # §5.1: o `kind` e o bloco do upstream andam juntos. O render despacha o
+    # enlace pelo vínculo (`upstream_do_circuito`) e `_autorizadas_clientes`
+    # filtra pelo `kind`: organização operadora sem vínculo é o único estado em
+    # que os dois critérios discordam, e ele não deve nascer pela adoção.
+    kind = _kind_da_revisao(session, revisao)
+    if kind is not None and (kind == "operadora") != (revisao.upstream is not None):
+        if kind == "operadora":
+            raise ValidationError(
+                "A organização é operadora e a revisão não traz o bloco `upstream`: "
+                "sem o vínculo o render trata o enlace como cliente e o conjunto de "
+                "autorizações sai de outro caminho. Vincule um upstream existente ou "
+                "crie o novo no bloco `upstream`."
+            )
+        raise ValidationError(
+            f"O bloco `upstream` exige organização operadora, e a revisão traz "
+            f"{kind}: o enlace de upstream tem o conjunto de autorizações da "
+            "operadora, e essa organização não. Escolha uma operadora ou retire o "
+            "bloco."
+        )
     # O mesmo movimento do `_confere_nome_livre`, um passo adiante: o input
     # contraditório (blocos de prefixo + organização EXISTENTE) era recusado na
     # escrita, e só depois da conferência — o operador via a mensagem do
@@ -258,6 +369,7 @@ def adotar_proposta(session: Session, *, proposta, revisao: schemas.AdocaoIn, ac
             "As autorizações de prefixo só entram com a organização nova: para uma "
             "organização existente, cadastre os blocos na página dela."
         )
+    _recusa_nome_de_politica_repetido(session, revisao, from_discovery)
     # O que o operador escolheu entra na conferência: sem os perfis o ensaio não
     # renderiza o corpo da política de exportação, que é justamente o que ele
     # escolhe errado; sem o trunk, a comparação não vale para o que vai gravar.
@@ -269,6 +381,27 @@ def adotar_proposta(session: Session, *, proposta, revisao: schemas.AdocaoIn, ac
     # equipamento tem apareceria como diferença e o `ciente` seria cobrado sobre
     # a linha que esta mesma escrita cria.
     perfis = perfis_da_revisao(revisao)
+    bloco_up = bloco_do_upstream(
+        session,
+        upstream_id=revisao.upstream.upstream_id if revisao.upstream else None,
+        tipo=revisao.upstream.tipo if revisao.upstream else None,
+        produto_import=revisao.upstream.produto_import if revisao.upstream else None,
+        papel=revisao.upstream.papel if revisao.upstream else "principal",
+        expected_prefixes_v4=revisao.upstream.expected_prefixes_v4 if revisao.upstream else None,
+        expected_prefixes_v6=revisao.upstream.expected_prefixes_v6 if revisao.upstream else None,
+        max_prefix_margin_pct=(
+            revisao.upstream.max_prefix_margin_pct if revisao.upstream else 20
+        ),
+        entrada_local_preference=(
+            revisao.upstream.entrada_local_preference if revisao.upstream else None
+        ),
+        contingencia_local_preference=(
+            revisao.upstream.contingencia_local_preference if revisao.upstream else None
+        ),
+        contingencia_prepend=(
+            revisao.upstream.contingencia_prepend if revisao.upstream else None
+        ),
+    )
     difs = conferir_fidelidade(
         session, proposta, perfis=perfis, edge_trunk=revisao.edge_trunk,
         circuit_code=revisao.circuit_code, organizacao_id=revisao.organizacao_id,
@@ -276,6 +409,7 @@ def adotar_proposta(session: Session, *, proposta, revisao: schemas.AdocaoIn, ac
         organizacao_kind=revisao.organizacao_nova.kind if revisao.organizacao_nova else None,
         autorizacoes=[(b.prefix, b.family) for b in revisao.autorizacoes],
         velocidade_mbps=revisao.velocidade_mbps,
+        upstream=bloco_up,
     )
     ensaio = [d for d in difs if d.contexto == "ensaio"]
     if ensaio:
@@ -346,6 +480,45 @@ def adotar_proposta(session: Session, *, proposta, revisao: schemas.AdocaoIn, ac
                 commit=False,
             )
 
+        up: models.Upstream | None = None
+        if revisao.upstream is not None:
+            if revisao.upstream.upstream_id is not None:
+                up = get_upstream(session, revisao.upstream.upstream_id)
+                if up.organization_id != organizacao_id:
+                    raise ValidationError(
+                        f"O upstream {up.name} é de outra organização: vincule um "
+                        "upstream da operadora da revisão, ou crie o novo no bloco."
+                    )
+                if up.admin_status is False:
+                    raise ConflictError(
+                        f"O upstream {up.name} está desativado: reative antes de adotar."
+                    )
+                # Vinculado é vinculado: os campos de criação não se aplicam, e o
+                # upstream não muda — a revisão só escolheu qual é. O vínculo sai
+                # no bloco de baixo, junto com o do caminho de criação.
+            else:
+                up = create_upstream(
+                    session,
+                    schemas.UpstreamCreate(
+                        name=revisao.upstream.name, tipo=revisao.upstream.tipo,
+                        organization_id=organizacao_id,
+                        capacity=revisao.upstream.capacity,
+                        priority=revisao.upstream.priority,
+                        cost=revisao.upstream.cost,
+                        expected_prefixes_v4=revisao.upstream.expected_prefixes_v4,
+                        expected_prefixes_v6=revisao.upstream.expected_prefixes_v6,
+                        max_prefix_margin_pct=revisao.upstream.max_prefix_margin_pct,
+                        rpki_enabled=revisao.upstream.rpki_enabled,
+                        entrada_local_preference=revisao.upstream.entrada_local_preference,
+                        contingencia_local_preference=(
+                            revisao.upstream.contingencia_local_preference
+                        ),
+                        contingencia_prepend=revisao.upstream.contingencia_prepend,
+                        produto_import=revisao.upstream.produto_import,
+                    ),
+                    actor=actor, commit=False,
+                )
+
         circuito = create_circuit(
             session,
             schemas.CircuitCreate(
@@ -363,6 +536,13 @@ def adotar_proposta(session: Session, *, proposta, revisao: schemas.AdocaoIn, ac
             session, circuito.id, vlans=proposta.vlans, prefixos=proposta.prefixos,
             actor=actor, origem_snapshot_id=proposta.candidatos[0].snapshot_id, commit=False,
         )
+        # Passo 5 do §5.3: o vínculo é depois do circuito, pelos dois caminhos —
+        # o `up` já veio resolvido do passo 3 (buscado ou criado).
+        if up is not None:
+            vincular_circuito(
+                session, up.id, circuito.id, papel=revisao.upstream.papel,
+                ordem=revisao.upstream.ordem, actor=actor, commit=False,
+            )
         for overrides in revisao.sessoes:
             create_session(
                 session,
@@ -370,6 +550,8 @@ def adotar_proposta(session: Session, *, proposta, revisao: schemas.AdocaoIn, ac
                                     device_id=proposta.device_id),
                 actor=actor, commit=False,
             )
+        if up is not None:
+            propagar_defaults(session, up)
         registrar(
             session, tipo="discovery.adopt", ator=actor, objeto="circuit", objeto_id=circuito.id,
             antes=None,
@@ -386,6 +568,17 @@ def adotar_proposta(session: Session, *, proposta, revisao: schemas.AdocaoIn, ac
                 "autorizacoes": [
                     {"prefix": b.prefix, "family": b.family} for b in revisao.autorizacoes
                 ],
+                "upstream": (
+                    {
+                        "upstream_id": up.id,
+                        "papel": revisao.upstream.papel,
+                        "ordem": revisao.upstream.ordem,
+                        "criado": revisao.upstream.upstream_id is None,
+                        "tipo": up.tipo,
+                        "produto_import": up.produto_import,
+                    }
+                    if up is not None else None
+                ),
                 # Todas as diferenças, e não só as que o `ciente` assumiu: o grupo
                 # que a SoT não gerencia é o que o operador viu e não precisou
                 # aceitar, e o payload é trilha, não decisão (design §17.1). Quem
