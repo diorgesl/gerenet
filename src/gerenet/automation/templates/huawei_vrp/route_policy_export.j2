@@ -1,16 +1,16 @@
 route-policy {{ nome }} permit node 10
 {% if lista %}
 {% if afi == 'ipv6' %}
-if-match ipv6 address prefix-list {{ lista }}
+ if-match ipv6 address prefix-list {{ lista }}
 {% else %}
-if-match ip-prefix {{ lista }}
+ if-match ip-prefix {{ lista }}
 {% endif %}
 {% endif %}
 {% if med %}
-apply med {{ med }}
+ apply med {{ med }}
 {% endif %}
 {% if prepend %}
-apply as-path{% for _ in range(prepend) %} {{ asn_local }}{% endfor %} additive
+ apply as-path{% for _ in range(prepend) %} {{ asn_local }}{% endfor %} additive
 {% endif %}
 {% for a in aplicacoes|default([]) %}
 {% if a.regiao %}
@@ -20,5 +20,5 @@ apply as-path{% for _ in range(prepend) %} {{ asn_local }}{% endfor %} additive
 {% endif %}
 {% endfor %}
 {% if aplicacoes %}
-apply community {{ aplicacoes|map(attribute='valor')|join(' ') }}
+ apply community {{ aplicacoes|map(attribute='valor')|join(' ') }}
 {% endif %}

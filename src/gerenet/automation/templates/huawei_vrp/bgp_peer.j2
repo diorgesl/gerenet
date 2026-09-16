@@ -1,27 +1,27 @@
 bgp {{ asn_local }}
-peer {{ peer }} as-number {{ asn_remote }}
+ peer {{ peer }} as-number {{ asn_remote }}
 {% if descricao %}
-peer {{ peer }} description {{ descricao }}
+ peer {{ peer }} description {{ descricao }}
 {% endif %}
 {% if has_password %}
 # password no Vault ({{ password_path }})
 {% endif %}
 {% if keepalive and holdtime %}
-peer {{ peer }} timer keepalive {{ keepalive }} hold {{ holdtime }}
+ peer {{ peer }} timer keepalive {{ keepalive }} hold {{ holdtime }}
 {% endif %}
 {% if graceful_restart %}
-peer {{ peer }} graceful-restart
+ peer {{ peer }} graceful-restart
 {% endif %}
 {% if bfd_enabled %}
-peer {{ peer }} bfd enable
+ peer {{ peer }} bfd enable
 {% endif %}
 {% if shutdown %}
-peer {{ peer }} shutdown
+ peer {{ peer }} shutdown
 {% endif %}
 {% if afi == 'ipv6' %}
-ipv6-family unicast
+ ipv6-family unicast
 {% else %}
-ipv4-family unicast
+ ipv4-family unicast
 {% endif %}
   peer {{ peer }} enable
 {% if rp_import %}

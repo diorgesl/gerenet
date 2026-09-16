@@ -1,24 +1,24 @@
 interface {{ interface }}
 {% if descricao %}
-description {{ descricao }}
+ description {{ descricao }}
 {% endif %}
 {% if qinq %}
-vlan-type dot1q 0x88a8 vid {{ vid }}
+ vlan-type dot1q 0x88a8 vid {{ vid }}
 # second-dot1q: encapsulamento interno duplo — dívida do ciclo C
 {% else %}
-vlan-type dot1q vid {{ vid }}
+ vlan-type dot1q vid {{ vid }}
 {% endif %}
 {% for v4 in enderecos_v4 %}
-ip address {{ v4.endereco }} {{ v4.mascara }}
+ ip address {{ v4.endereco }} {{ v4.mascara }}
 {% endfor %}
 {% if enderecos_v6 %}
-ipv6 enable
+ ipv6 enable
 {% endif %}
 {% for v6 in enderecos_v6 %}
-ipv6 address {{ v6 }}
+ ipv6 address {{ v6 }}
 {% endfor %}
-statistic enable
+ statistic enable
 {% if cir_kbps %}
-qos car cir {{ cir_kbps }} inbound
-qos car cir {{ cir_kbps }} outbound
+ qos car cir {{ cir_kbps }} inbound
+ qos car cir {{ cir_kbps }} outbound
 {% endif %}
