@@ -126,11 +126,16 @@ def descricao_subinterface(
     Quem cede no orçamento é o nome da organização, cortado seco. Sobrando menos
     de um caractere para ele, a linha sai como `<CÓDIGO> [<VELOCIDADE>]`, sem
     espaço dobrado.
+
+    Velocidade zerada não emite os colchetes, como o nulo: o rótulo `[0G]`
+    anunciaria uma taxa que o limitador não aplica — o guard do template
+    (`{% if cir_kbps %}`, isto é `velocidade × 1000`) também não emite o
+    `qos car`, e o VRP recusaria um `cir 0`.
     """
     nome = _dobra_ascii(nome_organizacao or "").strip()
     if not nome:
         return None
-    sufixo = f" [{_velocidade_legivel(velocidade_mbps)}]" if velocidade_mbps is not None else ""
+    sufixo = f" [{_velocidade_legivel(velocidade_mbps)}]" if velocidade_mbps else ""
     espaco = LIMITE_DESCRICAO - len(code) - len(sufixo) - 1
     if espaco < 1:
         return f"{code}{sufixo}"

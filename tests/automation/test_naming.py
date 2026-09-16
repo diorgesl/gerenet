@@ -73,6 +73,18 @@ def test_descricao_subinterface_sem_velocidade_nao_emite_colchetes() -> None:
     assert naming.descricao_subinterface("CIRC-500", "ACME", None) == "CIRC-500 ACME"
 
 
+def test_descricao_subinterface_com_velocidade_zero_tambem_nao_emite() -> None:
+    """Zero cai no mesmo lugar que o nulo (item 12).
+
+    O template só emite o `qos car` com `cir_kbps` verdadeiro, e `0 × 1000` não
+    é: um circuito gravado com `velocidade_mbps = 0` por fora do schema (a API
+    recusa com `gt=0`) sairia com a descrição anunciando `[0G]` e sem limitador
+    nenhum — o rótulo prometendo uma taxa que o equipamento não aplica. O VRP
+    recusaria um `cir 0` de qualquer forma, então quem cede é o rótulo.
+    """
+    assert naming.descricao_subinterface("CIRC-500", "ACME", 0) == "CIRC-500 ACME"
+
+
 def test_descricao_subinterface_nao_multiplo_de_1024_fica_em_m() -> None:
     """3000 Mbps são 2,93 G: arredondar para `3G` mentiria a taxa no rótulo."""
     assert naming.descricao_subinterface("CIRC-7", "ACME", 3000) == "CIRC-7 ACME [3000M]"
@@ -96,6 +108,30 @@ def test_descricao_subinterface_sem_espaco_para_o_nome_perde_o_nome() -> None:
     mas o helper não pode produzir `CIRC-...  [1G]`, com dois espaços."""
     linha = naming.descricao_subinterface("C" * 80, "ACME", 99999)
     assert linha == "C" * 80 + " [99999M]"
+
+
+def test_descricao_subinterface_sem_espaco_e_so_o_codigo_quando_nao_ha_velocidade() -> None:
+    """Item 8 — o mesmo ramo sem sufixo: a linha é o código e mais nada.
+
+    O teste acima o dirige com velocidade, e o sufixo disfarça o que o ramo
+    devolve: só ele dá para ver que não sobra um espaço solto no fim da
+    descrição — o `" ".join` de uma linha com espaço à direita não acusaria, mas
+    o VRP gravaria a linha com o espaço, e a comparação byte a byte da coleta
+    veria divergência em tudo que passasse por ali.
+    """
+    linha = naming.descricao_subinterface("C" * 80, "ACME", None)
+    assert linha == "C" * 80
+
+
+def test_o_limite_da_descricao_e_80() -> None:
+    """Item 9 — o número em si, e não só a constante.
+
+    Todos os testes desta frente usam `naming.LIMITE_DESCRICAO` simbolicamente
+    (é o que os mantém corretos se o limite descer), e é justamente por isso que
+    nenhum deles perceberia a constante virando 40: o orçamento é decisão do §4,
+    e mudá-lo tem de doer em algum teste.
+    """
+    assert naming.LIMITE_DESCRICAO == 80
 
 
 def test_descricao_subinterface_sem_organizacao_nao_e_emitida() -> None:
