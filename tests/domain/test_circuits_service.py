@@ -177,6 +177,20 @@ def test_velocidade_mbps_recusa_valor_fora_da_faixa(db_session: Session) -> None
             _circuito(site_id, org_id, sw_id, ne_id, velocidade_mbps=invalido)
 
 
+def test_velocidade_mbps_do_update_recusa_valor_fora_da_faixa() -> None:
+    """Item 11 — a mesma faixa do lado do PATCH.
+
+    A restrição existe nos dois schemas, e só a do `CircuitCreate` era dirigida
+    por teste: a do `CircuitUpdate` tinha sido provada por sondagem manual, que
+    não roda em CI. Se alguém afrouxar o `le=100000` (ou o `gt=0`) só ali, o
+    PATCH da web passa a gravar uma taxa impossível e nada acusa — a descrição e
+    o QoS saem dela depois (§3).
+    """
+    for invalido in (0, -1, 100001):
+        with pytest.raises(PydanticValidationError):
+            CircuitUpdate(velocidade_mbps=invalido)
+
+
 def test_velocidade_mbps_sobrevive_ao_update(db_session: Session) -> None:
     """`update_circuit` faz `model_dump(exclude_unset=True)`: o campo precisa
     estar nos dois schemas, senão o PATCH da web não o alcança (§8)."""
