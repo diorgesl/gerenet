@@ -8,7 +8,7 @@ change request.
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from gerenet.api.deps import Actor, require_actor
@@ -150,6 +150,36 @@ def _busca_proposta(
     return casam[0]
 
 
+def _blocos_do_query(autorizacoes: list[str] | None) -> list[tuple[str, str]] | None:
+    """Os blocos da revisão, na forma `família:prefixo` que a query string aceita.
+
+    É a mesma informação do `AdocaoAutorizacaoIn` do POST, e na mesma ordem de
+    campos: `(prefixo, família)` é o que a conferência consome. O corte é no
+    PRIMEIRO dois-pontos porque o prefixo de IPv6 é cheio deles
+    (`ipv6:2804:2594::/32`) — cortar no último perderia a família.
+
+    Bloco torto é 422 desta rota: o ensaio não tem o que fazer com ele, e deixá-lo
+    virar uma diferença a mais faria a tela acusar o operador por um erro de
+    digitação da própria tela.
+    """
+    if not autorizacoes:
+        return None
+    blocos: list[tuple[str, str]] = []
+    for item in autorizacoes:
+        family, separador, prefixo = item.partition(":")
+        if not separador or family not in ("ipv4", "ipv6") or not prefixo:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Bloco de prefixo inválido: {item!r}. A forma é "
+                    "`ipv4:138.121.28.0/22` — a família primeiro, e o prefixo "
+                    "depois dos dois-pontos."
+                ),
+            )
+        blocos.append((prefixo, family))
+    return blocos
+
+
 @router.get("/fidelidade", response_model=schemas.FidelidadeOut)
 def fidelidade(
     session: SessionDep, device_id: int, subinterface: str | None = None, vrf: str | None = None,
@@ -158,6 +188,11 @@ def fidelidade(
     organizacao_id: int | None = None,
     organizacao_nome: str | None = None,
     velocidade_mbps: int | None = None,
+    # O `Query()` explícito é o que faz a LISTA repetida ser lida da query string
+    # nesta versão do FastAPI: sem o `Annotated`, `list[str]` chega sempre vazio
+    # (conferido em sonda), e a conferência seguiria sem os blocos sem nada
+    # acusar. É o único parâmetro desta assinatura que precisa dele.
+    autorizacoes: Annotated[list[str] | None, Query()] = None,
     import_ipv4: int | None = None, export_ipv4: int | None = None,
     import_ipv6: int | None = None, export_ipv6: int | None = None,
 ) -> schemas.FidelidadeOut:
@@ -172,6 +207,11 @@ def fidelidade(
     `organizacao_id`/`organizacao_nome`, `velocidade_mbps`) são o que a revisão
     vai GRAVAR: o ensaio roda com eles para comparar exatamente o que a adoção
     produziria.
+
+    `autorizacoes` são os blocos que a revisão marcou, um por entrada, na forma
+    `família:prefixo` (`?autorizacoes=ipv4:138.121.28.0/22`): sem eles o ensaio
+    renderiza o peer SEM o `import route-policy` que a adoção cria, e a prévia ao
+    vivo acusa como faltando a linha que a própria escrita emite.
     """
     try:
         proposta = _busca_proposta(session, device_id=device_id,
@@ -184,6 +224,7 @@ def fidelidade(
             session, proposta, perfis=perfis, edge_trunk=edge_trunk,
             circuit_code=circuit_code, organizacao_id=organizacao_id,
             organizacao_nome=organizacao_nome, velocidade_mbps=velocidade_mbps,
+            autorizacoes=_blocos_do_query(autorizacoes),
         )
     except NotFoundError as exc:
         # O `try` cobre a conferência inteira, e não só a busca: o ensaio lê o

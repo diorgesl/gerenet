@@ -181,6 +181,86 @@ def test_fidelidade_leva_a_identidade_da_revisao(client, db_session, tmp_path) -
                for linha in com_org["sobrando"])
 
 
+def test_fidelidade_leva_os_blocos_da_revisao(client, db_session, tmp_path) -> None:
+    """Os blocos marcados na revisão chegam à conferência pela query, um por
+    entrada, na forma `família:prefixo` (item 14).
+
+    É a autorização da organização que faz o `_bloco_import` emitir o filtro e a
+    route-policy (§6.4): sem os blocos, o ensaio renderiza um peer SEM o
+    `import route-policy` que o equipamento tem, e a prévia ao vivo acusa como
+    faltando a linha que a própria adoção escreve — a tela pedia `ciente` por
+    uma diferença que ela cria. A adoção já mandava os blocos (o POST os tem
+    desde a Task 7); o que faltava era o GET.
+
+    A sonda que expôs o problema fica registrada no relatório: a assinatura
+    `list[str] | None = None`, sem `Annotated[... Query()]`, chega sempre vazia
+    nesta versão do FastAPI, e a conferência seguiria sem os blocos sem nada
+    acusar.
+    """
+    ambiente = _ambiente(db_session, tmp_path)
+    url = (f"/api/v1/discovery/fidelidade?device_id={ambiente['dev'].id}"
+           "&subinterface=Eth-Trunk127.1001"
+           "&circuit_code=ADOC-API-1001&organizacao_nome=Cliente API")
+
+    def _corpo(query: str) -> dict:
+        resposta = client.get(f"{url}{query}", headers=_auth())
+        assert resposta.status_code == 200, resposta.text
+        return resposta.json()
+
+    def _linhas_de_peer(corpo: dict) -> set[str]:
+        return {linha for d in corpo["diferencas"] if d["contexto"] == "peer"
+                for linha in d["sobrando"] + d["faltando"]}
+
+    # A linha do RENDER é o que o ensaio ganha com o bloco: sem autorização
+    # nenhuma o laço do `_bloco_import` não tem o que emitir, e o peer sai sem o
+    # filtro de importação que a adoção cria. A asserção é sobre a grafia do
+    # render (`bgp_peer.j2` escreve `import route-policy`) e não sobre a da
+    # fixture de propósito — veja a nota das duas grafias no fim do teste.
+    importacao = "peer 100.64.10.1 import route-policy RP-64512-IMPORT-V4"
+
+    def _contextos(corpo: dict) -> set[str]:
+        return {d["contexto"] for d in corpo["diferencas"]}
+
+    sem_blocos = _corpo("")
+    assert importacao not in _linhas_de_peer(sem_blocos)
+    # O outro lado da mesma ausência: sem autorização não há definição nenhuma
+    # para a sessão referenciar, e o contexto `definicao` não existe.
+    assert "definicao" not in _contextos(sem_blocos)
+
+    com_bloco = _corpo("&autorizacoes=ipv4:138.121.28.0/22")
+    assert importacao in _linhas_de_peer(com_bloco)
+    # E o que a linha referencia entra na conferência junto: o corpo da
+    # prefix-list e o da route-policy, que é o que distingue o produto que a
+    # revisão escolheu (§6.5) — sem os blocos, os dois ficariam de fora.
+    definicoes = [d for d in com_bloco["diferencas"] if d["contexto"] == "definicao"]
+    assert any("route-policy RP-64512-IMPORT-V4 permit node 10" in linha
+               for d in definicoes for linha in d["sobrando"])
+
+    # O prefixo de IPv6 é cheio de dois-pontos e o corte é no PRIMEIRO: a família
+    # sai de antes dele e o resto é o prefixo. Cortar no último daria 422, e o
+    # nome do filtro na saída é o que prova qual família o render leu.
+    v6 = _corpo("&autorizacoes=ipv6:2804:2594::/32")
+    assert any("IP-PFX-64512-IN-V6 index 10 permit 2804:2594::/32" in linha
+               for d in v6["diferencas"] for linha in d["sobrando"])
+
+    # Nota das duas grafias, para o vermelho futuro não enganar: a fixture lê a
+    # forma CLÁSSICA (`peer X route-policy N import`) e o render escreve a outra
+    # (`peer X import route-policy N`), então a linha do equipamento continua em
+    # `faltando` mesmo com o bloco marcado — o mesmo laço de sempre casando duas
+    # grafias do mesmo comando. É a assunção 7 do checklist do
+    # `docs/runbook-validacao-ne8000.md`, ainda sem captura real que a confirme, e
+    # por isso ela é dívida registrada, não conserto deste item: aqui só entra o
+    # que o item move, que é o ensaio passar a emitir a linha e as definições.
+
+    # Fora da forma é 422 desta rota: um bloco torto não tem o que fazer no
+    # ensaio, e deixá-lo virar diferença acusaria o operador por um erro que é da
+    # própria tela.
+    for torto in ("ipv4", "v4:138.121.28.0/22", "ipv4:"):
+        recusa = client.get(f"{url}&autorizacoes={torto}", headers=_auth())
+        assert recusa.status_code == 422, torto
+        assert "família" in recusa.json()["detail"]
+
+
 def test_a_lista_traz_os_internos_e_a_idade_da_coleta(client, db_session, tmp_path) -> None:
     """Os dois campos novos da listagem, preenchidos: com o schema de um lado e a
     rota do outro, um campo que ninguém preenche chega vazio para sempre — e o
