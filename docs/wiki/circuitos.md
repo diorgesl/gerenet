@@ -69,8 +69,9 @@ description <CÓDIGO> <NOME DA ORGANIZAÇÃO> [<VELOCIDADE>]
 | vazia | `description CIRC-500 ACME TELECOMUNICACOES` |
 
 O nome da organização vai em maiúsculas e sem acento, e cede no orçamento de 80
-caracteres se não couber — cortado seco. Velocidade múltipla de 1024 sai em
-`G`; qualquer outra sai em `M`.
+caracteres se não couber — cortado seco. Os 80 são a premissa do sistema hoje;
+o limite real desta versão do VRP é o que a Etapa 3 do runbook de validação
+confere. Velocidade múltipla de 1024 sai em `G`; qualquer outra sai em `M`.
 
 Com a velocidade preenchida, o render emite também o limitador de taxa nas duas
 direções, depois do `statistic enable`:
@@ -85,12 +86,14 @@ e o `red discard` **não** são emitidos — o VRP os completa ao aplicar.
 
 **Circuito que já está provisionado converge numa mudança nova.** Até esta
 frente, o plano pulava a subinterface inteira pelo nome; agora ele confere
-também a descrição e o QoS, e o que faltar entra no plano como "atualizar". O
-bloco vai inteiro ao equipamento (reemitir endereço com o mesmo valor é
-inócuo no VRP), e o que a mudança registra é o estado desejado daquele pedaço.
+também a descrição e o QoS, e o bloco entra no plano como qualquer outro, um
+`create`. Na execução, o re-diff o encontra já lá e fora de conformidade e
+marca aquele passo como "atualizar": reemitir, não pular. O bloco vai inteiro
+ao equipamento (reemitir endereço com o mesmo valor é inócuo no VRP), e o que
+a mudança registra é o estado desejado daquele pedaço.
 
-A descrição é **derivada**: renomear a organização reescreve a descrição de
-todas as subinterfaces dela no próximo provisionamento.
+A descrição é **derivada**: renomear a organização não varre o parque — cada
+circuito pega o nome novo na sua próxima mudança, planejada e aprovada por si.
 
 ## Reservar recursos
 
