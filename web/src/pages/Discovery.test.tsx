@@ -732,6 +732,49 @@ describe("Discovery", () => {
     );
   });
 
+  it("a velocidade fora da forma de dígitos barra na tela, e o `0100` continua valendo", async () => {
+    // O campo manda o TEXTO cru para a query e o servidor o lê como `int`: `1e3`
+    // é literal que o `type="number"` mantém e o `Number()` aceita, mas o `int()`
+    // recusa — o gate antigo deixava o Adotar habilitado, o 422 voltava no alerta
+    // genérico e o operador ficava sem saber qual campo corrigir (item 18). O
+    // gate da forma vem antes do da faixa.
+    mockFetchComFidelidade();
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+    const campo = within(dialog).getByLabelText(/^Velocidade \(Mbps\)/);
+    await preencheAcesso(dialog);
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeEnabled(),
+    );
+
+    // `fireEvent.change` e não o `userEvent.type` das outras cenas, de propósito:
+    // o `user-event` escreve num `type="number"` pelo `valueAsNumber`, e `1e3`
+    // chegaria como `1000` — que é o que o campo NÃO faz. Medido: o `value` cru
+    // mantém `1e3`, `1.0` e `0100` (só o intermediário `1e` é que o navegador
+    // descarta), e é esse o estado que o operador vê antes do 422.
+    fireEvent.change(campo, { target: { value: "1e3" } });
+    expect((campo as HTMLInputElement).value).toBe("1e3");
+    expect(
+      within(dialog).getByText(/A velocidade aceita de 1 a 100000 Mbps\./),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeDisabled(),
+    );
+
+    // O zero à esquerda continua texto válido, de propósito: `0100` e `100` são a
+    // mesma taxa e assinaturas diferentes, e é a grafia digitada que viaja — o
+    // conserto é da FORMA, e não uma conversão para número.
+    fireEvent.change(campo, { target: { value: "0100" } });
+    await waitFor(
+      () => expect(conferencias().some((u) => u.includes("velocidade_mbps=0100"))).toBe(true),
+      { timeout: 2000 },
+    );
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeEnabled(),
+    );
+  });
+
   it("o aceite não atravessa a espera do trunk: o botão exige a conferência do valor digitado", async () => {
     // A espera do trunk abre a janela que este teste fecha: a tela mostra o diff
     // do valor anterior e o campo já tem o novo. O `ciente` é um booleano sem
@@ -916,6 +959,42 @@ describe("Discovery", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: "Adotar" }));
 
     await waitFor(() => expect(corpoDoPost().autorizacoes).toEqual([]));
+  });
+
+  it("a conferência leva os blocos marcados da revisão, e só eles", async () => {
+    // A conferência é o que o operador lê antes de aceitar: sem os blocos o
+    // ensaio renderiza o peer sem o filtro de importação e acusa como faltando a
+    // linha que a adoção grava — o `ciente` cobrado por uma diferença que a
+    // própria tela cria (item 14). A lista é a MESMA do POST, na forma do query
+    // string.
+    mockFetch();
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+    // Sem bloco nenhum o parâmetro não vai vazio: ele não vai.
+    expect(new URL(conferencias().at(-1) ?? "", "http://local").searchParams.getAll(
+      "autorizacoes",
+    )).toEqual([]);
+
+    const antesDoRegistro = conferencias().length;
+    await userEvent.click(within(dialog).getByRole("button", { name: "Buscar no registro" }));
+    expect(await within(dialog).findByLabelText("Incluir 203.0.113.0/24")).toBeChecked();
+
+    // Os blocos entram na assinatura que o aceite observa: a consulta é refeita
+    // depois da espera, e o diff que volta é o do render com a autorização.
+    await esperaConferenciaNova(antesDoRegistro);
+    expect(new URL(conferencias().at(-1) ?? "", "http://local").searchParams.getAll(
+      "autorizacoes",
+    )).toEqual(["ipv4:203.0.113.0/24"]);
+
+    // Desmarcar também refaz: o render do ensaio muda com a lista, então o diff
+    // na tela já não é o que o operador leu.
+    const antesDeDesmarcar = conferencias().length;
+    await userEvent.click(within(dialog).getByLabelText("Incluir 203.0.113.0/24"));
+    await esperaConferenciaNova(antesDeDesmarcar);
+    expect(new URL(conferencias().at(-1) ?? "", "http://local").searchParams.getAll(
+      "autorizacoes",
+    )).toEqual([]);
   });
 
   it("o que será gravado abre pelas reservas e nomeia a S-VLAN", async () => {

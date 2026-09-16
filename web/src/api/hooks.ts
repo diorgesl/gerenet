@@ -867,6 +867,12 @@ export type IdentidadeDaConferencia = {
   organizacaoId: number;
   organizacaoNome: string;
   velocidade: string;
+  /** Os blocos marcados na revisão, já na forma `família:prefixo` do query
+   * string — a MESMA lista que o POST de adoção manda, e a que faz o
+   * `_bloco_import` emitir o filtro de importação. Marcar ou desmarcar uma
+   * caixa muda o que o ensaio renderiza, então entra na assinatura do aceite
+   * como os outros campos: o `ciente` não viaja sobre um diff que ninguém viu. */
+  autorizacoes: string[];
 };
 
 /** Os perfis entram na chave de propósito: trocar um `select` de perfil refaz a
@@ -892,6 +898,11 @@ export const useFidelidade = (
         }
         if (identidade.organizacaoNome) qs.set("organizacao_nome", identidade.organizacaoNome);
         if (identidade.velocidade) qs.set("velocidade_mbps", identidade.velocidade);
+        // Um `append` por bloco, e não um `set`: a lista é repetida na query
+        // (`?autorizacoes=ipv4:...&autorizacoes=ipv6:...`), e o `set` deixaria
+        // só o último como autorização do ensaio — a prévia voltaria a acusar o
+        // filtro que a adoção cria por conta dos demais.
+        for (const bloco of identidade.autorizacoes) qs.append("autorizacoes", bloco);
       }
       for (const [afi, p] of Object.entries(perfis)) {
         if (p.import) qs.set(`import_${afi}`, String(p.import));

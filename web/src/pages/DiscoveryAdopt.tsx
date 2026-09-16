@@ -49,6 +49,14 @@ const LIMITE_DO_CAMINHO = 255;
 /** O teto do schema (`CircuitCreate.velocidade_mbps`), espelhado. */
 const LIMITE_DA_VELOCIDADE = 100000;
 
+/** A forma do texto que a conferência manda na query (`velocidade_mbps`) e que o
+ * servidor parseia como `int`: só dígitos. O campo é `type="number"` e mantém
+ * `1e3` e `1.0` — o `Number()` os lê como 1000 e 1, mas o `int` os recusa com
+ * 422, e a tela ficava sem dizer qual campo corrigir. Com só dígitos, `0100`
+ * continua sendo texto válido e distinto de `100` na assinatura, porque o que a
+ * assinatura compara é o que o operador digitou. */
+const VELOCIDADE_VALIDA = /^\d+$/;
+
 /** O trunk, o código e a velocidade são digitados: a espera é o que segura a
  * enxurrada de consultas — cada conferência roda um render do equipamento
  * inteiro no servidor. */
@@ -99,10 +107,20 @@ export function AdocaoDialog({
   const [velocidade, setVelocidade] = useState(
     proposta.velocidade_mbps === null ? "" : String(proposta.velocidade_mbps),
   );
+  const [blocosDoRegistro, setBlocosDoRegistro] = useState<BlocoDoRegistro[]>([]);
+  const [avisosDoRegistro, setAvisosDoRegistro] = useState<string[]>([]);
   // A `criarOrg` sobe para cá porque a assinatura abaixo a lê: ela é quem decide
   // qual das duas metades da organização — o nome da nova ou a id da existente —
   // entra na conferência.
   const criarOrg = orgId === 0;
+  // Os blocos livres e marcados são uma lista só para as duas pontas que a
+  // consomem: o POST da adoção e o ensaio. O `_bloco_import` só emite o filtro
+  // de importação para as autorizações ativas da organização, então marcar ou
+  // desmarcar uma caixa muda o render — e o diff ao vivo tem de ser o do que a
+  // escrita vai gravar, não o de outra lista parecida (item 14).
+  const blocosMarcados = criarOrg
+    ? blocosDoRegistro.filter((b) => b.marcado && b.conflito === null)
+    : [];
   // O que o operador digitou, como assinatura: é ela que a espera observa e é
   // dela que sai o objeto da conferência. Comparar o objeto direto refaria a
   // consulta a cada render, porque cada render cria um objeto novo.
@@ -112,6 +130,10 @@ export function AdocaoDialog({
     organizacaoId: criarOrg ? 0 : orgId,
     organizacaoNome: criarOrg ? orgNome.trim() : "",
     velocidade,
+    // A forma `família:prefixo` é a do query string (a mesma ordem dos campos do
+    // `AdocaoAutorizacaoIn`, com os dois-pontos no meio): o prefixo de IPv6 é
+    // cheio deles, e é a rota que faz o corte no primeiro.
+    autorizacoes: blocosMarcados.map((b) => `${b.family}:${b.prefix}`),
   });
   const [identidadeDaConferencia, setIdentidadeDaConferencia] = useState<IdentidadeDaConferencia>(
     () => JSON.parse(assinaturaDaIdentidade) as IdentidadeDaConferencia,
@@ -119,8 +141,6 @@ export function AdocaoDialog({
   const [razaoSocial, setRazaoSocial] = useState("");
   const [documento, setDocumento] = useState("");
   const [asSet, setAsSet] = useState("");
-  const [blocosDoRegistro, setBlocosDoRegistro] = useState<BlocoDoRegistro[]>([]);
-  const [avisosDoRegistro, setAvisosDoRegistro] = useState<string[]>([]);
   const [ciente, setCiente] = useState(false);
   // Os perfis vêm ANTES da conferência: ela é refeita quando eles mudam, porque
   // o corpo da política de exportação depende do produto escolhido.
@@ -193,10 +213,17 @@ export function AdocaoDialog({
   const nomeLongo = orgNome.trim().length > LIMITE_DO_NOME;
   const caminhoLongo = (afi: string) =>
     (caminhos[afi] ?? "").trim().length > LIMITE_DO_CAMINHO;
-  const velocidadeNumero = velocidade === "" ? null : Number(velocidade);
+  // A forma vem antes da faixa: com o `Number()` decidindo sozinho, `1e3` e
+  // `1.0` passavam como 1000 e 1 — inteiros e dentro da faixa —, mas o `int` do
+  // servidor recusava o texto cru que a conferência manda, e o operador ficava
+  // preso sem saber qual campo corrigir (item 18). As bordas são aparadas
+  // porque o `int()` do Python também as apara; com só dígitos a faixa é lida
+  // sem risco de `NaN`.
+  const velocidadeTexto = velocidade.trim();
+  const velocidadeNumero = velocidadeTexto === "" ? null : Number(velocidadeTexto);
   const velocidadeInvalida =
     velocidade !== "" &&
-    (!Number.isInteger(velocidadeNumero) ||
+    (!VELOCIDADE_VALIDA.test(velocidadeTexto) ||
       (velocidadeNumero as number) <= 0 ||
       (velocidadeNumero as number) > LIMITE_DA_VELOCIDADE);
   // A identidade digitada e a da conferência têm de ser a mesma. Entre a tecla e
@@ -296,12 +323,9 @@ export function AdocaoDialog({
         organizacao_id: criarOrg ? null : orgId,
         organizacao_nova: organizacaoNova,
         // Só os blocos livres e marcados: o conflitante a API recusaria, e o
-        // desmarcado o operador não quis.
-        autorizacoes: criarOrg
-          ? blocosDoRegistro
-              .filter((b) => b.marcado && b.conflito === null)
-              .map((b) => ({ prefix: b.prefix, family: b.family }))
-          : [],
+        // desmarcado o operador não quis. É a lista que a conferência já
+        // recebeu, na forma do corpo.
+        autorizacoes: blocosMarcados.map((b) => ({ prefix: b.prefix, family: b.family })),
         // A lista sai das SESSÕES da proposta, e não dos candidatos: quem casa a
         // revisão com o que a leitura entregou é o `_sessao_da_proposta` do
         // serviço, pela família, e uma família sem sessão — o endereço que não é
