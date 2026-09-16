@@ -1113,7 +1113,19 @@ def _ensaio(
         # organização, família, prefixo e a origem que a escrita grava; o
         # `admin_status` fica no default, que é o que o `list_authorizations`
         # filtra.
+        # A lista é deduplicada por `(família, prefixo)` — a chave da idempotência
+        # da escrita, que com a organização fixa do ensaio é o que sobra dela —,
+        # preservando a primeira ocorrência. É o que faz o ensaio e a escrita
+        # concordarem sobre QUANTAS linhas a lista vira: sem isto o prefixo
+        # repetido renderizaria o bloco duas vezes (o índice 10 e o 20 da
+        # prefix-list), e a conferência acusaria uma diferença que a escrita não
+        # cria, porque o `create_authorization` devolve a linha do primeiro.
+        vistas: set[tuple[str, str]] = set()
         for prefixo, family in autorizacoes:
+            chave = (family, prefixo)
+            if chave in vistas:
+                continue
+            vistas.add(chave)
             session.add(models.BgpPrefixAuthorization(
                 organization_id=org_id, family=family, prefix=prefixo, origin="registro",
             ))

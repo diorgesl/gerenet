@@ -721,6 +721,52 @@ def test_a_conferencia_ve_as_autorizacoes_da_revisao(db_session, tmp_path) -> No
     ]
 
 
+def test_a_conferencia_nao_duplica_a_autorizacao_repetida(db_session, tmp_path) -> None:
+    """A lista que repete o mesmo prefixo vira UMA linha, no ensaio como na escrita.
+
+    A escrita é idempotente pela chave `(organização, família, prefixo)` com
+    `admin_status` ligado: o `create_authorization` acha a linha que o primeiro
+    bloco criou e devolve ela (§3.2, e a guarda existe justamente porque a lista
+    da adoção pode trazer o mesmo bloco duas vezes). O ensaio inseria uma linha
+    por par recebido, então a lista com o prefixo repetido renderizava o bloco
+    duplicado: o ensaio emitia uma linha a mais do que a adoção grava, a
+    conferência acusava `sobrando` no `definicao` e a adoção recusava o
+    `ciente=False` por causa de uma linha que ela mesma não escreveria.
+
+    Com um bloco só a cena passa, e é por isso que a duplicação passou despercebida
+    até aqui: o que este teste mede é o ensaio e a escrita concordando sobre
+    QUANTAS linhas a lista vira, e não só sobre os blocos chegarem.
+    """
+    _site, dev = _ambiente(db_session, tmp_path, texto=_CONFIG_COM_AUTORIZACAO)
+    prop = _proposta(db_session, dev, vid=601)
+
+    circ_id = adotar_proposta(
+        db_session, proposta=prop, actor="cli",
+        revisao=_revisao(dev, vid=601, ciente=False,
+                         sessoes=[AdocaoSessaoIn(afi="ipv4")],
+                         autorizacoes=[
+                             AdocaoAutorizacaoIn(prefix="138.121.28.0/22", family="ipv4"),
+                             AdocaoAutorizacaoIn(prefix="138.121.28.0/22", family="ipv4"),
+                         ]),
+    )
+
+    # O `ciente=False` passou: nenhuma diferença que mudaria o equipamento.
+    assert db_session.get(models.Circuit, circ_id) is not None
+    evento = db_session.scalars(
+        select(models.AuditEvent).where(models.AuditEvent.type == "discovery.adopt")
+    ).one()
+    diferencas = evento.details["depois"]["diferencas"]
+    assert [d["contexto"] for d in diferencas] == [
+        "peer", "subinterface", "definicao", "definicao",
+    ]
+    assert [(d["contexto"], d["sobrando"], d["faltando"])
+            for d in diferencas if d["sobrando"] or d["faltando"]] == []
+    # Uma linha, e não duas: o ensaio e a escrita gravam a mesma quantidade.
+    assert [(a.prefix, a.family, a.origin) for a in _autorizacoes(db_session)] == [
+        ("138.121.28.0/22", "ipv4", "registro")
+    ]
+
+
 def test_a_colisao_de_nome_da_organizacao_diz_o_motivo(db_session, tmp_path) -> None:
     """A organização nova que repete um nome já cadastrado é recusada com a mesma
     frase do `create_organization` — e não com o `AVISO_SEM_ENSAIO`.
