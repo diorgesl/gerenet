@@ -847,8 +847,11 @@ def test_fidelidade_ignora_comentario_dentro_da_interface(db_session, tmp_path) 
     sub = next(d for d in conferir_fidelidade(db_session, prop) if d.contexto == "subinterface")
     # A `description` do ensaio é a única sobra: a configuração deste caso não
     # tem descrição nenhuma e o render passou a emiti-la (§4). Fora ela, nada
-    # pode sobrar — se o comentário tivesse zerado o `dentro`, o `vlan-type` e o
-    # `ip address` escritos depois dele apareceriam aqui.
+    # pode sobrar — e a ORDEM das linhas é o que diz quem pega o quê: o
+    # `vlan-type` vem ANTES do comentário, e quem o segura é o `faltando == ()`
+    # (se ele sumisse do encontrado, a linha do render ficaria sem par); o
+    # `ip address` vem depois, e é ele que apareceria aqui se o comentário
+    # tivesse zerado o `dentro`.
     assert [linha for linha in sub.sobrando if not linha.startswith("description ")] == []
     assert sub.faltando == ()
 
