@@ -675,6 +675,18 @@ _CONFIG_COM_AUTORIZACAO = (
 )
 
 
+# O mesmo enlace com as DUAS autorizações já no equipamento (os índices 10 e 20
+# da prefix-list): é o estado em que a adoção da lista `[A, B, A]` deixa o
+# equipamento, e o texto precisa ter os dois blocos — sem o segundo, a
+# conferência acusaria a linha que o ensaio emite como sobra e a cena deixaria
+# de medir a dedup (o `ciente=False` passaria a falhar por outro motivo).
+_CONFIG_COM_AUTORIZACAO_DUPLA = _CONFIG_COM_AUTORIZACAO.replace(
+    "ip ip-prefix IP-PFX-64512-IN-V4 index 10 permit 138.121.28.0/22\n",
+    "ip ip-prefix IP-PFX-64512-IN-V4 index 10 permit 138.121.28.0/22\n"
+    "ip ip-prefix IP-PFX-64512-IN-V4 index 20 permit 198.51.100.0/24\n",
+)
+
+
 def test_a_conferencia_ve_as_autorizacoes_da_revisao(db_session, tmp_path) -> None:
     """A conferência tem de enxergar as autorizações que a PRÓPRIA adoção cria.
 
@@ -736,8 +748,15 @@ def test_a_conferencia_nao_duplica_a_autorizacao_repetida(db_session, tmp_path) 
     Com um bloco só a cena passa, e é por isso que a duplicação passou despercebida
     até aqui: o que este teste mede é o ensaio e a escrita concordando sobre
     QUANTAS linhas a lista vira, e não só sobre os blocos chegarem.
+
+    A repetição é NÃO ADJACENTE (`[A, B, A]`, item 15): o prefill do registro
+    pode repetir um bloco com outro no meio, e o `--json` aceita qualquer ordem
+    — a promessa ("vira UMA linha") não é sobre vizinhos, e com uma dedup contra
+    o vizinho imediato a cena de `[A, A]` seguia verde. Aqui o estrago é maior
+    que o da cena original: além da linha repetida, o bloco seguinte é
+    re-indexado, e a escrita do prefixo certo passa a divergir de índice.
     """
-    _site, dev = _ambiente(db_session, tmp_path, texto=_CONFIG_COM_AUTORIZACAO)
+    _site, dev = _ambiente(db_session, tmp_path, texto=_CONFIG_COM_AUTORIZACAO_DUPLA)
     prop = _proposta(db_session, dev, vid=601)
 
     circ_id = adotar_proposta(
@@ -746,6 +765,7 @@ def test_a_conferencia_nao_duplica_a_autorizacao_repetida(db_session, tmp_path) 
                          sessoes=[AdocaoSessaoIn(afi="ipv4")],
                          autorizacoes=[
                              AdocaoAutorizacaoIn(prefix="138.121.28.0/22", family="ipv4"),
+                             AdocaoAutorizacaoIn(prefix="198.51.100.0/24", family="ipv4"),
                              AdocaoAutorizacaoIn(prefix="138.121.28.0/22", family="ipv4"),
                          ]),
     )
@@ -761,9 +781,11 @@ def test_a_conferencia_nao_duplica_a_autorizacao_repetida(db_session, tmp_path) 
     ]
     assert [(d["contexto"], d["sobrando"], d["faltando"])
             for d in diferencas if d["sobrando"] or d["faltando"]] == []
-    # Uma linha, e não duas: o ensaio e a escrita gravam a mesma quantidade.
+    # Duas linhas, e não três: o prefixo repetido não vira uma segunda linha, e o
+    # que veio no meio continua sendo gravado uma vez.
     assert [(a.prefix, a.family, a.origin) for a in _autorizacoes(db_session)] == [
-        ("138.121.28.0/22", "ipv4", "registro")
+        ("138.121.28.0/22", "ipv4", "registro"),
+        ("198.51.100.0/24", "ipv4", "registro"),
     ]
 
 
