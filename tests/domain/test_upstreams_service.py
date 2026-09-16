@@ -276,3 +276,115 @@ def test_update_upstream_org_nula_explicita_vira_validacao(session, up):
     # nada persistiu: o upstream continua com a organização original
     session.refresh(up)
     assert up.organization_id is not None
+
+
+def _perfil_import(session, nome: str) -> int:
+    """O id do perfil de importação do catálogo seedado."""
+    return session.scalar(select(models.PolicyProfile.id).where(
+        models.PolicyProfile.name == nome,
+        models.PolicyProfile.direction == "import",
+    ))
+
+
+def _sessao_sem_perfil(session, circuito_up, edge_device):
+    """A sessão do circuito de upstream sem perfil de importação: é o estado em
+    que `propagar_defaults` decide — sessão que já tem perfil vence e não é mexida."""
+    sessao = models.BgpSession(
+        circuit_id=circuito_up.id, device_id=edge_device.id, afi="ipv4",
+        local_address="100.64.10.1", remote_address="100.64.10.2",
+        asn_local=65001, asn_remote=64501,
+    )
+    session.add(sessao)
+    session.commit()
+    return sessao
+
+
+def test_o_produto_da_coluna_vence_o_do_tipo(session, org_operadora, circuito_up,
+                                             edge_device) -> None:
+    """§7: `produto_import` é a fonte quando preenchida, mesmo contra o que o
+    tipo daria — `pni` sozinho daria `up-parcial`."""
+    sessao = _sessao_sem_perfil(session, circuito_up, edge_device)
+
+    up = svc.create_upstream(session, UpstreamCreate(
+        name="up-pni-cheio", tipo="pni", organization_id=org_operadora.id,
+        produto_import="full",
+    ), actor="cli")
+    svc.vincular_circuito(session, up.id, circuito_up.id, papel="principal", ordem=1,
+                          actor="cli")
+
+    assert session.get(models.BgpSession, sessao.id).import_profile_id == \
+        _perfil_import(session, "up-full")
+
+
+def test_sem_produto_o_tipo_decide(session, org_operadora, circuito_up, edge_device) -> None:
+    """A coluna nula mantém o comportamento antigo — é o que garante que nenhum
+    upstream existente mude de produto ao migrar."""
+    sessao = _sessao_sem_perfil(session, circuito_up, edge_device)
+
+    up = svc.create_upstream(session, UpstreamCreate(
+        name="up-pni-vazio", tipo="pni", organization_id=org_operadora.id,
+    ), actor="cli")
+    svc.vincular_circuito(session, up.id, circuito_up.id, papel="principal", ordem=1,
+                          actor="cli")
+
+    assert session.get(models.BgpSession, sessao.id).import_profile_id == \
+        _perfil_import(session, "up-parcial")
+
+
+def test_mudar_o_produto_repropaga(session, org_operadora, circuito_up, edge_device) -> None:
+    """`produto_import` entra em `_CAMPOS_PROPAGACAO`: mudar o produto dispara a
+    passagem, e quem ainda não tem perfil recebe o do produto novo. A sessão que
+    já tem perfil **fica como está** — a propagação não sobrescreve perfil
+    definido, a mesma regra do `tipo` (`upstreams.py:271`)."""
+    primeira = _sessao_sem_perfil(session, circuito_up, edge_device)
+    up = svc.create_upstream(session, UpstreamCreate(
+        name="up-muda-produto", tipo="pni", organization_id=org_operadora.id,
+        produto_import="full",
+    ), actor="cli")
+    svc.vincular_circuito(session, up.id, circuito_up.id, papel="principal", ordem=1,
+                          actor="cli")
+    assert session.get(models.BgpSession, primeira.id).import_profile_id == \
+        _perfil_import(session, "up-full")
+
+    # Sessão que nasceu depois do vínculo: ainda sem perfil quando o produto muda.
+    depois = models.BgpSession(
+        circuit_id=circuito_up.id, device_id=edge_device.id, afi="ipv6",
+        local_address="2804:194C:1000::1", remote_address="2804:194C:1000::2",
+        asn_local=65001, asn_remote=64501,
+    )
+    session.add(depois)
+    session.commit()
+
+    svc.update_upstream(session, up.id, UpstreamUpdate(produto_import="parcial"), actor="cli")
+
+    # a passagem rodou por causa do produto (falha se o campo sair da tupla)…
+    assert session.get(models.BgpSession, depois.id).import_profile_id == \
+        _perfil_import(session, "up-parcial")
+    # …e o perfil já definido não foi sobrescrito (falha se a guarda cair).
+    assert session.get(models.BgpSession, primeira.id).import_profile_id == \
+        _perfil_import(session, "up-full")
+
+
+def test_create_upstream_com_commit_false_nao_grava(session, org_operadora) -> None:
+    """§5.3: a adoção encadeia o upstream na transação dela, e um só commit
+    persiste a cadeia inteira. Sem o commit, nada fica."""
+    svc.create_upstream(session, UpstreamCreate(
+        name="up-nao-gravado", tipo="ix", organization_id=org_operadora.id,
+    ), actor="cli", commit=False)
+    session.rollback()
+    assert session.scalar(select(models.Upstream).where(
+        models.Upstream.name == "up-nao-gravado"
+    )) is None
+
+
+def test_vincular_com_commit_false_nao_grava(session, org_operadora, circuito_up,
+                                             edge_device) -> None:
+    """O vínculo também espera o commit de quem chamou (é o passo 5 do §5.3)."""
+    _sessao_sem_perfil(session, circuito_up, edge_device)
+    up = svc.create_upstream(session, UpstreamCreate(
+        name="up-vinculo-pendente", tipo="ix", organization_id=org_operadora.id,
+    ), actor="cli")
+    svc.vincular_circuito(session, up.id, circuito_up.id, papel="principal", ordem=1,
+                          actor="cli", commit=False)
+    session.rollback()
+    assert session.scalars(select(models.UpstreamCircuit)).all() == []

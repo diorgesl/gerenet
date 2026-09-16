@@ -14,16 +14,18 @@ from gerenet.domain.services.organizations import get_organization
 PRODUTO_IMPORT_POR_TIPO = {"transito": "up-full", "ix": "up-full",
                            "pni": "up-parcial", "contingencia": "up-default"}
 
+# O nome do perfil de importação de cada produto (§7). São vocabulários
+# diferentes: `produto_import` guarda "full"/"parcial"/"default" e o catálogo
+# chama os perfis de "up-full"/"up-parcial"/"up-default".
+PERFIL_DO_PRODUTO = {"full": "up-full", "parcial": "up-parcial",
+                     "default": "up-default"}
+
 # Campos do upstream que alimentam a propagação (§3.1): mudou algum ⇒ repropagar
 # defaults às sessões dos circuitos vinculados no update_upstream.
 _CAMPOS_PROPAGACAO = frozenset((
-    "tipo",
-    "expected_prefixes_v4",
-    "expected_prefixes_v6",
-    "max_prefix_margin_pct",
-    "entrada_local_preference",
-    "contingencia_local_preference",
-    "contingencia_prepend",
+    "tipo", "expected_prefixes_v4", "expected_prefixes_v6", "max_prefix_margin_pct",
+    "entrada_local_preference", "contingencia_local_preference", "contingencia_prepend",
+    "produto_import",
 ))
 
 
@@ -67,7 +69,10 @@ def _valida_nomes(nome: str | None) -> None:
         raise ValidationError("Nome do upstream deve ter entre 2 e 128 caracteres.")
 
 
-def create_upstream(session: Session, data: UpstreamCreate, *, actor: str) -> models.Upstream:
+def create_upstream(session: Session, data: UpstreamCreate, *, actor: str,
+                    commit: bool = True) -> models.Upstream:
+    """Cadastra o upstream; `commit=False` é para a adoção encadear a cadeia
+    inteira numa transação (design §5.3)."""
     _validar_org_operadora(session, data.organization_id)
     _valida_nomes(data.name)
     dump = data.model_dump()
@@ -77,12 +82,14 @@ def create_upstream(session: Session, data: UpstreamCreate, *, actor: str) -> mo
         session.flush()  # valida unicidade antes da auditoria
         registrar(session, tipo="upstream.create", ator=actor, objeto="upstream",
                   objeto_id=up.id, antes=None, depois=dump)
-        session.commit()  # propagação às sessões ocorre no vínculo de circuitos
-        # (vincular_circuito/update_upstream chamam propagar_defaults — §3.1)
+        if commit:
+            session.commit()  # propagação às sessões ocorre no vínculo de circuitos
+            # (vincular_circuito/update_upstream chamam propagar_defaults — §3.1)
     except IntegrityError:
         session.rollback()
         raise ConflictError(f"Já existe um upstream com o nome {data.name}.") from None
-    session.refresh(up)
+    if commit:
+        session.refresh(up)
     return up
 
 
@@ -166,7 +173,7 @@ def _valida_conjunto_sem_principal(session: Session, up: models.Upstream, *,
 
 
 def vincular_circuito(session: Session, upstream_id: int, circuit_id: int, *, papel: str,
-                      ordem: int, actor: str) -> models.Upstream:
+                      ordem: int, actor: str, commit: bool = True) -> models.Upstream:
     """Vincula um circuito ao upstream (§7) — os defaults caem nas sessões aqui.
 
     Regras: circuito deve existir e estar ativo; um circuito só tem um upstream
@@ -198,11 +205,13 @@ def vincular_circuito(session: Session, upstream_id: int, circuit_id: int, *, pa
                     "ordem": ordem},
         )
         propagar_defaults(session, up)
-        session.commit()
+        if commit:
+            session.commit()
     except IntegrityError:
         session.rollback()
         raise ConflictError("Circuito já vinculado a um upstream.") from None
-    session.refresh(up)
+    if commit:
+        session.refresh(up)
     return up
 
 
@@ -269,7 +278,11 @@ def propagar_defaults(session: Session, up: models.Upstream) -> list[int]:
                 if up.entrada_local_preference is not None and sessao.local_preference is None:
                     sessao.local_preference = up.entrada_local_preference
             if sessao.import_profile_id is None:
-                perfil = _perfil_import(session, PRODUTO_IMPORT_POR_TIPO[up.tipo])
+                nome_perfil = (
+                    PERFIL_DO_PRODUTO[up.produto_import] if up.produto_import
+                    else PRODUTO_IMPORT_POR_TIPO[up.tipo]
+                )
+                perfil = _perfil_import(session, nome_perfil)
                 if perfil is not None:
                     sessao.import_profile_id = perfil.id
                     alterados.append(sessao.id)

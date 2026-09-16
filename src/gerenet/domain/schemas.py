@@ -932,6 +932,8 @@ class UpstreamCreate(BaseModel):
     expected_prefixes_v6: int | None = None
     max_prefix_margin_pct: int = Field(default=20, ge=0, le=100)
     rpki_enabled: bool = True
+    # §7: o tipo de rota que a operadora envia. Nulo ⇒ o produto sai do tipo.
+    produto_import: Literal["full", "parcial", "default"] | None = None
     entrada_local_preference: int | None = None
     contingencia_local_preference: int | None = None
     contingencia_prepend: int | None = Field(default=None, ge=0, le=10)
@@ -957,6 +959,7 @@ class UpstreamUpdate(BaseModel):
     # valores absurdos iam direto ao banco (design §9: margem 0-100, prepend 0-10).
     max_prefix_margin_pct: int | None = Field(default=None, ge=0, le=100)
     rpki_enabled: bool | None = None
+    produto_import: Literal["full", "parcial", "default"] | None = None
     entrada_local_preference: int | None = None
     contingencia_local_preference: int | None = None
     contingencia_prepend: int | None = Field(default=None, ge=0, le=10)
@@ -1022,6 +1025,7 @@ class UpstreamOut(BaseModel):
     expected_prefixes_v6: int | None
     max_prefix_margin_pct: int
     rpki_enabled: bool
+    produto_import: str | None
     entrada_local_preference: int | None
     contingencia_local_preference: int | None
     contingencia_prepend: int | None
