@@ -7,12 +7,13 @@ import {
   useOrganizations,
   usePolicyProfiles,
   usePrefill,
+  useUpstreams,
   type IdentidadeDaConferencia,
 } from "@/api/hooks";
 import { FormField } from "@/components/FormField";
 import { Modal } from "@/components/Modal";
 import { help } from "@/help";
-import type { DiscoveryPropostaOut, OrganizationPrefillOut } from "@/api/types";
+import type { DiscoveryPropostaOut, OrganizationPrefillOut, UpstreamTipo } from "@/api/types";
 
 /** O trunk do circuito, derivado do nome da subinterface.
  *
@@ -62,6 +63,78 @@ const VELOCIDADE_VALIDA = /^\d+$/;
  * inteiro no servidor. */
 const ESPERA_DA_IDENTIDADE_MS = 300;
 
+/** Os tetos e o piso do `AdocaoUpstreamIn.name`, espelhados do schema. */
+const MINIMO_DO_NOME_DO_UPSTREAM = 2;
+const LIMITE_DO_NOME_DO_UPSTREAM = 128;
+
+/** A regra do `NOME_DE_POLITICA_RE` do serviço (`schemas.py`, §25.4), palavra
+ * por palavra: o nome vai para a configuração do equipamento, e o que o serviço
+ * recusa tem de ser recusado aqui antes — com a frase desta tela, e não com o
+ * 422 do Pydantic em inglês. */
+const NOME_DE_POLITICA = /^[A-Za-z0-9_.\-]{1,63}$/;
+const LIMITE_DO_NOME_DE_POLITICA = 63;
+const MENSAGEM_DA_POLITICA =
+  `O nome da route-policy aceita até ${LIMITE_DO_NOME_DE_POLITICA} caracteres, `
+  + "com letras, números, ponto, hífen e sublinhado.";
+
+/** O tipo da organização na revisão (§5.5): o palpite do `_classificar` abre o
+ * select, e é o operador quem decide. */
+type KindDaOrganizacao = "downstream" | "parceiro" | "operadora";
+
+/** O modo do bloco de upstream (§5.2): o enlace de cliente não tem bloco. */
+type ModoDoUpstream = "nenhum" | "vincular" | "criar";
+
+/** O produto da importação (`AdocaoUpstreamIn.produto_import`): vazio é o
+ * mesmo `null`, e o produto sai do tipo do upstream. */
+type ProdutoDoUpstream = "" | "full" | "parcial" | "default";
+
+/** O papel do vínculo (`upstream_circuits.papel`). */
+type PapelDoUpstream = "principal" | "contingencia";
+
+/** Os campos que compõem o bloco `upstream` da revisão — o que o helper lê. */
+type FormDoUpstream = {
+  upstreamModo: ModoDoUpstream;
+  /** O id como o operador o escolheu (o `<select>` devolve texto): vazio é
+   * "nenhum vínculo escolhido", e é o que o helper recusa. */
+  upstreamId: string;
+  upstreamNome: string;
+  upstreamTipo: UpstreamTipo;
+  upstreamProduto: ProdutoDoUpstream;
+  upstreamPapel: PapelDoUpstream;
+};
+
+/** O bloco `upstream` da revisão, ou `undefined` quando não há bloco.
+ *
+ * Nos dois modos: vincular manda só o `upstream_id` (o resto é o upstream da
+ * SoT, e o serviço recusa os campos de criação junto com ele); criar manda os
+ * campos digitados. `nenhum` não manda nada — é o enlace de cliente. */
+function blocoDoUpstream(form: FormDoUpstream) {
+  if (form.upstreamModo === "vincular") {
+    // Sem id não há vínculo, e `Number("")` seria 0: o id sentinela viajaria à
+    // conferência como um upstream de verdade, e o ensaio compararia o enlace
+    // de outro.
+    if (!/^\d+$/.test(form.upstreamId)) return undefined;
+    return { upstream_id: Number(form.upstreamId), papel: form.upstreamPapel };
+  }
+  if (form.upstreamModo === "criar") {
+    return {
+      name: form.upstreamNome.trim(),
+      tipo: form.upstreamTipo,
+      produto_import: form.upstreamProduto || null,
+      papel: form.upstreamPapel,
+    };
+  }
+  return undefined;
+}
+
+/** O nome de política que a proposta leu do equipamento, como texto.
+ *
+ * O campo das sessões da proposta é genérico (`Record<string, unknown>`): a
+ * leitura pode não ter achado a diretiva na configuração, e ausente é o mesmo
+ * que vazio — a revisão abre o campo em branco, e a adoção grava o nome padrão
+ * do gerenet. */
+const nomeLido = (valor: unknown) => (typeof valor === "string" ? valor : "");
+
 /** Um bloco do registro na lista da revisão: o `marcado` é a escolha do
  * operador e o `conflito` é o estado do bloco na SoT (§7). */
 type BlocoDoRegistro = {
@@ -96,6 +169,8 @@ export function AdocaoDialog({
   // organização que a tela nunca mostrou.
   const { data: organizacoes } = useOrganizations({ includeDisabled: true });
   const { data: policyProfiles } = usePolicyProfiles();
+  // Os upstreams da SoT: o vínculo do §5.2 escolhe um deles pelo id.
+  const { data: upstreams } = useUpstreams();
   const adotar = useAdotar();
   const prefill = usePrefill();
   const [code, setCode] = useState(proposta.circuit_code_sugerido ?? "");
@@ -104,6 +179,22 @@ export function AdocaoDialog({
   const [trunk, setTrunk] = useState(trunkDoNome(proposta));
   const [orgId, setOrgId] = useState<number>(proposta.organizacao_id ?? 0);
   const [orgNome, setOrgNome] = useState(proposta.organizacao_sugerida ?? "");
+  // O palpite do `_classificar` (§5.5) abre o select, e é só isso que ele faz:
+  // quem decide o tipo da organização é o operador. A classificação é por
+  // CANDIDATO, e a proposta traz a lista deles — o enlace de upstream é o que
+  // tem um peer classificado assim.
+  const [kind, setKind] = useState<KindDaOrganizacao>(() =>
+    proposta.candidatos.some((c) => c.classificacao === "upstream") ? "operadora" : "downstream",
+  );
+  // O bloco do upstream (§5.2). Nasce em `nenhum`: o enlace de cliente é o caso
+  // comum, e o select do `kind` é que abre o bloco quando a organização é
+  // operadora.
+  const [upstreamModo, setUpstreamModo] = useState<ModoDoUpstream>("nenhum");
+  const [upstreamId, setUpstreamId] = useState("");
+  const [upstreamNome, setUpstreamNome] = useState("");
+  const [upstreamTipo, setUpstreamTipo] = useState<UpstreamTipo>("transito");
+  const [upstreamProduto, setUpstreamProduto] = useState<ProdutoDoUpstream>("");
+  const [upstreamPapel, setUpstreamPapel] = useState<PapelDoUpstream>("principal");
   const [velocidade, setVelocidade] = useState(
     proposta.velocidade_mbps === null ? "" : String(proposta.velocidade_mbps),
   );
@@ -121,6 +212,12 @@ export function AdocaoDialog({
   const blocosMarcados = criarOrg
     ? blocosDoRegistro.filter((b) => b.marcado && b.conflito === null)
     : [];
+  // O bloco do upstream, montado UMA vez: é ele que o corpo da adoção manda e é
+  // ele que a conferência recebe (§5.4), e dois objetos iguais montados em dois
+  // lugares divergem no primeiro campo que um dos dois ganhar.
+  const upstreamDaRevisao = blocoDoUpstream({
+    upstreamModo, upstreamId, upstreamNome, upstreamTipo, upstreamProduto, upstreamPapel,
+  });
   // O que o operador digitou, como assinatura: é ela que a espera observa e é
   // dela que sai o objeto da conferência. Comparar o objeto direto refaria a
   // consulta a cada render, porque cada render cria um objeto novo.
@@ -129,6 +226,12 @@ export function AdocaoDialog({
     circuitCode: code,
     organizacaoId: criarOrg ? 0 : orgId,
     organizacaoNome: criarOrg ? orgNome.trim() : "",
+    // O `kind` e o bloco entram na identidade pela mesma razão que a
+    // organização: o ensaio monta a organização descartável com esse tipo e
+    // despacha o enlace pelo vínculo — o diff de um enlace de operadora não é o
+    // de um de cliente, e o aceite não viaja entre os dois.
+    organizacaoKind: kind,
+    upstream: upstreamDaRevisao,
     velocidade,
     // A forma `família:prefixo` é a do query string (a mesma ordem dos campos do
     // `AdocaoAutorizacaoIn`, com os dois-pontos no meio): o prefixo de IPv6 é
@@ -149,6 +252,23 @@ export function AdocaoDialog({
   // não entra na conferência — o ensaio não tem o valor da senha, e a SoT
   // guarda o caminho no Vault, nunca o valor.
   const [caminhos, setCaminhos] = useState<Record<string, string>>({});
+  // O nome da route-policy lido no equipamento, por família (§4.3): a revisão o
+  // mostra com o botão de limpar, e adotar é decidir mantê-lo ou limpá-lo.
+  // Vazio não é um nome vazio no corpo — é o campo AUSENTE, e o serviço o lê
+  // como "o nome padrão do gerenet" (`_DO_OPERADOR`).
+  //
+  // A semente sai de um estado inicial, e não de um efeito: o diálogo é montado
+  // com `key` por proposta (`Discovery.tsx`), então este estado nasce uma vez
+  // por revisão — que é o mesmo que o efeito prometeria, sem o render extra.
+  const [politicas, setPoliticas] = useState<Record<string, { import: string; export: string }>>(
+    () =>
+      Object.fromEntries(
+        proposta.sessoes.map((s) => [
+          s.afi,
+          { import: nomeLido(s.import_route_policy), export: nomeLido(s.export_route_policy) },
+        ]),
+      ),
+  );
   const { data: fidelidade, error: erroDaConferencia } = useFidelidade(
     proposta.device_id, proposta.vrf, proposta.subinterface, perfis, identidadeDaConferencia,
   );
@@ -166,6 +286,14 @@ export function AdocaoDialog({
     setPerfis((atual) => ({ ...atual, [afi]: { ...atual[afi], ...valores } }));
   const setCaminho = (afi: string, valor: string) =>
     setCaminhos((atual) => ({ ...atual, [afi]: valor }));
+  const setPolitica = (afi: string, campo: "import" | "export", valor: string) =>
+    setPoliticas((atual) => ({
+      ...atual,
+      [afi]: { ...(atual[afi] ?? { import: "", export: "" }), [campo]: valor },
+    }));
+  /** O botão de limpar: o campo volta ao nome padrão do gerenet. */
+  const limparPolitica = (afi: string, campo: "import" | "export") =>
+    setPolitica(afi, campo, "");
 
   const diferencas = fidelidade?.diferencas ?? [];
   const mudam = diferencas.filter((d) => d.exige_ciente);
@@ -213,6 +341,19 @@ export function AdocaoDialog({
   const nomeLongo = orgNome.trim().length > LIMITE_DO_NOME;
   const caminhoLongo = (afi: string) =>
     (caminhos[afi] ?? "").trim().length > LIMITE_DO_CAMINHO;
+  // O nome do upstream criado tem o piso e o teto do schema (§5.2): um nome de
+  // uma letra o `AdocaoUpstreamIn` recusa, e é a mesma frase da tela.
+  const nomeDoUpstream = upstreamNome.trim();
+  const nomeDoUpstreamInvalido =
+    nomeDoUpstream.length < MINIMO_DO_NOME_DO_UPSTREAM ||
+    nomeDoUpstream.length > LIMITE_DO_NOME_DO_UPSTREAM;
+  // O nome lido só entra na revisão pela mão do operador: se ele mantém um nome
+  // fora da regra do serviço, a adoção seria recusada depois do clique — e o
+  // campo não diria qual dos dois nomes corrigir.
+  const politicaInvalida = (afi: string, campo: "import" | "export") => {
+    const nome = (politicas[afi]?.[campo] ?? "").trim();
+    return nome !== "" && !NOME_DE_POLITICA.test(nome);
+  };
   // A forma vem antes da faixa: com o `Number()` decidindo sozinho, `1e3` e
   // `1.0` passavam como 1000 e 1 — inteiros e dentro da faixa —, mas o `int` do
   // servidor recusava o texto cru que a conferência manda, e o operador ficava
@@ -249,17 +390,34 @@ export function AdocaoDialog({
     trunk.length > LIMITE_DO_TRUNK ||
     velocidadeInvalida ||
     (criarOrg && (orgNome.trim() === "" || nomeLongo || asnRemoto === null)) ||
-    proposta.candidatos.some((c) => caminhoLongo(c.afi));
+    (kind === "operadora" &&
+      ((upstreamModo === "vincular" && upstreamDaRevisao === undefined) ||
+        (upstreamModo === "criar" && nomeDoUpstreamInvalido))) ||
+    proposta.candidatos.some((c) => caminhoLongo(c.afi)) ||
+    proposta.candidatos.some((c) => politicaInvalida(c.afi, "import") || politicaInvalida(c.afi, "export"));
   // Sem a conferência não há aceite que valha (§6): o ensaio recusado devolve a
   // comparação que não pôde ser feita, e é o mesmo caso da consulta que não
   // voltou. O servidor recusa os dois de qualquer forma; aqui é o que impede o
   // operador de aceitar sobre uma comparação que nenhum dos dois lados viu, e o
   // ciente não libera nenhum deles — não há diferença que valha assumir.
   const semConferencia = fidelidade === undefined || ensaio.length > 0;
+  // O par de frases do §5.1, o mesmo do serviço — sem as crases, que aqui são
+  // ruído. O `kind` e o bloco andam juntos: a operadora sem vínculo é o estado
+  // em que o render despacha o enlace como cliente enquanto o conjunto de
+  // autorizações sai do caminho da operadora. Quem recusa é o backend (a guarda
+  // roda antes da conferência); isto é a cortesia que evita o 422 depois do
+  // clique.
+  const recusaDoUpstream =
+    kind === "operadora" && upstreamDaRevisao === undefined
+      ? "A organização é operadora e a revisão não traz o bloco de upstream."
+      : kind !== "operadora" && upstreamDaRevisao !== undefined
+        ? "O bloco de upstream exige organização operadora."
+        : null;
   const podeAdotar =
     !revisaoIncompleta &&
     !semConferencia &&
     identidadeConferida &&
+    recusaDoUpstream === null &&
     (mudam.length === 0 || ciente) &&
     !adotar.isPending;
 
@@ -294,7 +452,7 @@ export function AdocaoDialog({
 
   const adotarProposta = () => {
     let organizacaoNova: {
-      name: string; kind: string; asn: number;
+      name: string; kind: KindDaOrganizacao; asn: number;
       legal_name: string | null; document: string | null; irr_as_set: string | null;
     } | null = null;
     if (criarOrg) {
@@ -307,7 +465,9 @@ export function AdocaoDialog({
       // preenchido, e um espaço invisível faz uma organização repetida passar
       // por nova.
       organizacaoNova = {
-        name: orgNome.trim(), kind: "downstream", asn: asnRemoto,
+        // O tipo é a escolha da revisão (§5.5), e não mais um `downstream`
+        // fixo: é ela que diz ao serviço se o enlace tem bloco de upstream.
+        name: orgNome.trim(), kind, asn: asnRemoto,
         legal_name: razaoSocial.trim() || null,
         document: documento.trim() || null,
         irr_as_set: asSet.trim() || null,
@@ -322,6 +482,10 @@ export function AdocaoDialog({
         velocidade_mbps: velocidadeNumero,
         organizacao_id: criarOrg ? null : orgId,
         organizacao_nova: organizacaoNova,
+        // O MESMO bloco que a conferência recebeu: montá-lo de novo aqui é
+        // como os dois divergem — e o diff que o operador leu deixaria de ser o
+        // da escrita.
+        upstream: upstreamDaRevisao,
         // Só os blocos livres e marcados: o conflitante a API recusaria, e o
         // desmarcado o operador não quis. É a lista que a conferência já
         // recebeu, na forma do corpo.
@@ -332,13 +496,24 @@ export function AdocaoDialog({
         // nenhuma das duas pontas do par, `ponta_incoerente` no motor — viajaria
         // como uma sessão que não existe. É aí que as duas listas divergem, e o
         // payload segue a que a guarda do serviço confere.
-        sessoes: proposta.sessoes.map((s) => ({
-          afi: s.afi,
-          import_profile_id: perfis[s.afi]?.import || null,
-          export_profile_id: perfis[s.afi]?.export || null,
-          // Só o caminho: o valor do segredo nunca passa por esta tela.
-          password_ref: caminhos[s.afi]?.trim() || null,
-        })),
+        sessoes: proposta.sessoes.map((s) => {
+          const politica = politicas[s.afi];
+          const importada = politica?.import.trim() ?? "";
+          const exportada = politica?.export.trim() ?? "";
+          return {
+            afi: s.afi,
+            import_profile_id: perfis[s.afi]?.import || null,
+            export_profile_id: perfis[s.afi]?.export || null,
+            // Só o caminho: o valor do segredo nunca passa por esta tela.
+            password_ref: caminhos[s.afi]?.trim() || null,
+            // O nome lido só viaja quando o operador o mantém; ausente, o
+            // serviço grava o nome padrão do gerenet (§25.4) — que é o que o
+            // botão de limpar promete. Um nome vazio mandado como `""` seria
+            // outra coisa, e a chave só aparece quando há o que gravar.
+            ...(importada === "" ? {} : { import_route_policy: importada }),
+            ...(exportada === "" ? {} : { export_route_policy: exportada }),
+          };
+        }),
         ciente,
       },
       {
@@ -439,6 +614,17 @@ export function AdocaoDialog({
           ))}
         </select>
       </FormField>
+      {/* O tipo da organização vale para as duas metades do campo acima: criar
+          a nova (o `kind` vai no corpo) ou escolher uma da lista (o tipo é o
+          dela na SoT, e o serviço o lê de lá — aqui o select diz ao operador
+          qual enlace ele está montando, e é ele que o ensaio recebe). */}
+      <FormField label="Tipo de organização" help={help("adocao.kind")}>
+        <select value={kind} onChange={(e) => setKind(e.target.value as KindDaOrganizacao)}>
+          <option value="downstream">downstream</option>
+          <option value="parceiro">parceiro</option>
+          <option value="operadora">operadora</option>
+        </select>
+      </FormField>
       {criarOrg && (
         <>
           <FormField
@@ -523,6 +709,100 @@ export function AdocaoDialog({
         </>
       )}
 
+      {/* O bloco do upstream (§5.2): o enlace de operadora vincula um upstream
+          da SoT ou cria o novo. Ele aparece com a operadora — e continua
+          visível se o operador trocou o tipo depois de preenchê-lo: escondido,
+          a revisão travada pela recusa do §5.1 não diria o que desfazer, e o
+          único caminho de volta seria adivinhar. */}
+      {(kind === "operadora" || upstreamModo !== "nenhum") && (
+        <fieldset>
+          <legend>Upstream</legend>
+          <FormField label="Modo do upstream" help={help("adocao.upstream")}>
+            <select
+              value={upstreamModo}
+              onChange={(e) => setUpstreamModo(e.target.value as ModoDoUpstream)}
+            >
+              <option value="nenhum">—</option>
+              <option value="vincular">Vincular a um existente</option>
+              <option value="criar">Criar o novo</option>
+            </select>
+          </FormField>
+          {upstreamModo === "vincular" && (
+            <FormField
+              label="Upstream existente *"
+              erro={
+                upstreamId === "" ? "Escolha o upstream a vincular." : undefined
+              }
+            >
+              <select value={upstreamId} onChange={(e) => setUpstreamId(e.target.value)}>
+                <option value="">Selecione…</option>
+                {/* O vínculo é por id, e é só o id que vai no corpo: o resto é
+                    o cadastro do upstream, que a SoT já tem. */}
+                {(upstreams ?? []).map((u) => (
+                  <option key={u.id} value={u.id}>
+                    #{u.id} — {u.name}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+          )}
+          {upstreamModo === "criar" && (
+            <>
+              <FormField
+                label="Nome do upstream *"
+                erro={
+                  nomeDoUpstreamInvalido
+                    ? `O nome do upstream aceita de ${MINIMO_DO_NOME_DO_UPSTREAM} a ${LIMITE_DO_NOME_DO_UPSTREAM} caracteres.`
+                    : undefined
+                }
+              >
+                <input
+                  value={upstreamNome}
+                  onChange={(e) => setUpstreamNome(e.target.value)}
+                />
+              </FormField>
+              <FormField label="Tipo do upstream">
+                <select
+                  value={upstreamTipo}
+                  onChange={(e) => setUpstreamTipo(e.target.value as UpstreamTipo)}
+                >
+                  <option value="transito">Trânsito</option>
+                  <option value="ix">IX</option>
+                  <option value="pni">PNI</option>
+                  <option value="contingencia">Contingência</option>
+                </select>
+              </FormField>
+              {/* Os mesmos rótulos do cadastro do upstream: "Tipo de policy" é
+                  o produto da importação, e "Papel" é o do vínculo. */}
+              <FormField label="Tipo de policy" help={help("adocao.produto_import")}>
+                <select
+                  value={upstreamProduto}
+                  onChange={(e) => setUpstreamProduto(e.target.value as ProdutoDoUpstream)}
+                >
+                  <option value="">—</option>
+                  <option value="full">Full</option>
+                  <option value="parcial">Parcial</option>
+                  <option value="default">Default</option>
+                </select>
+              </FormField>
+              <FormField label="Papel">
+                <select
+                  value={upstreamPapel}
+                  onChange={(e) => setUpstreamPapel(e.target.value as PapelDoUpstream)}
+                >
+                  <option value="principal">Principal</option>
+                  <option value="contingencia">Contingência</option>
+                </select>
+              </FormField>
+            </>
+          )}
+        </fieldset>
+      )}
+      {/* Fora do `fieldset`: a recusa do segundo caso só existe com o bloco
+          preenchido e o tipo já trocado — e aí o bloco está à vista, logo
+          acima, com o modo a corrigir. */}
+      {recusaDoUpstream !== null && <p role="alert">{recusaDoUpstream}</p>}
+
       {proposta.candidatos.map((c) => (
         <div key={`${c.afi}-${c.remote_address}`}>
           <FormField label={`Perfil de importação (${c.afi})`}>
@@ -546,6 +826,49 @@ export function AdocaoDialog({
                 <option key={p.id} value={p.id}>{p.label}</option>
               ))}
             </select>
+          </FormField>
+          {/* O nome que a leitura achou no equipamento, por família (§4.3): o
+              campo nasce com ele, e o botão ao lado o limpa — adotar é decidir
+              manter o nome ou devolver o padrão do gerenet (§25.4). O nome não
+              entra na conferência (a rota do `fidelidade` não o recebe): o diff
+              da política continua sendo o do caminho de hoje. */}
+          <FormField
+            label={`Route-policy de importação (${c.afi})`}
+            help={help("adocao.politica_import")}
+            erro={politicaInvalida(c.afi, "import") ? MENSAGEM_DA_POLITICA : undefined}
+          >
+            <div className="politica-linha">
+              <input
+                value={politicas[c.afi]?.import ?? ""}
+                onChange={(e) => setPolitica(c.afi, "import", e.target.value)}
+              />
+              <button
+                type="button"
+                aria-label={`Limpar a route-policy de importação (${c.afi})`}
+                onClick={() => limparPolitica(c.afi, "import")}
+              >
+                Limpar
+              </button>
+            </div>
+          </FormField>
+          <FormField
+            label={`Route-policy de exportação (${c.afi})`}
+            help={help("adocao.politica_export")}
+            erro={politicaInvalida(c.afi, "export") ? MENSAGEM_DA_POLITICA : undefined}
+          >
+            <div className="politica-linha">
+              <input
+                value={politicas[c.afi]?.export ?? ""}
+                onChange={(e) => setPolitica(c.afi, "export", e.target.value)}
+              />
+              <button
+                type="button"
+                aria-label={`Limpar a route-policy de exportação (${c.afi})`}
+                onClick={() => limparPolitica(c.afi, "export")}
+              >
+                Limpar
+              </button>
+            </div>
           </FormField>
           {/* O rótulo diz "caminho" antes do hover: um campo chamado "segredo"
               convida a colar a senha, e ela iria parar no render da

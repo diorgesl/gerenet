@@ -151,6 +151,11 @@ export const HELP = {
   // Adoção da proposta (revisão)
   "adocao.acesso": "De que switch e porta o cliente chega: a configuração do edge não tem isso.",
   "adocao.organizacao": "A organização é casada pelo ASN do par; criar uma nova exige o nome.",
+  "adocao.kind": "downstream (cliente), parceiro ou operadora. Operadora exige o bloco de upstream: o render trata o enlace pelo vínculo, e sem ele a sessão sai pelo caminho de cliente.",
+  "adocao.upstream": "Vincular um upstream existente ou criar o novo. O circuito nasce vinculado como principal, na mesma transação.",
+  "adocao.produto_import": "Tipo de rota que a operadora envia: full, parcial ou default. É o que descreve o enlace de upstream — a operadora não tem prefix-list própria.",
+  "adocao.politica_import": "Nome da route-policy de importação como está no equipamento. Importar significa que o gerenet passa a gerenciar o corpo dela sob esse nome; limpar devolve o nome padrão do gerenet.",
+  "adocao.politica_export": "Idem para a route-policy de exportação.",
   "adocao.razao_social": "Razão social do cliente, como no registro (opcional).",
   "adocao.documento": "CNPJ/ownerid do registro (até 32 caracteres); é o que a consulta ao registro preenche quando encontra.",
   "adocao.as_set": "AS-SET do IRR (ex.: AS-64512) — o conjunto de onde as rotas do cliente são validadas.",

@@ -204,6 +204,34 @@ const PERFIL_EXPORT = {
 
 const POLICY_PROFILES = [PERFIL_EXPORT];
 
+// O upstream da SoT que a revisão pode vincular (§5.2): o vínculo é por id, e
+// o resto dos campos é do cadastro que já existe — por isso o `<select>` os
+// pede pelo nome, e não digita nenhum.
+const UPSTREAMS = [
+  {
+    id: 4,
+    name: "OPERADORA-ALFA",
+    tipo: "transito",
+    capacity: null,
+    priority: null,
+    cost: null,
+    organization_id: 5,
+    expected_prefixes_v4: null,
+    expected_prefixes_v6: null,
+    max_prefix_margin_pct: 20,
+    rpki_enabled: true,
+    entrada_local_preference: null,
+    contingencia_local_preference: null,
+    contingencia_prepend: null,
+    contingencia_notes: null,
+    admin_status: true,
+    organization_kind: "operadora",
+    organization_name: "OPERADORA-ALFA",
+    created_at: "2026-09-01T00:00:00Z",
+    updated_at: "2026-09-01T00:00:00Z",
+  },
+];
+
 // O diff da conferência de fidelidade. A linha de `faltando` é o que a SoT
 // mudaria no equipamento (é ela que levanta o gate do aceite); a de
 // `nao_gerenciado` é o que a SoT não emite — visível, e sem bloquear. As duas
@@ -252,6 +280,17 @@ const DIFERENCA_MUDA_COM_OUTRO_PERFIL = {
   exige_ciente: true,
 };
 
+/** A proposta com o nome da política lido no equipamento, em cada família (§4.3).
+ *
+ * O nome sai da configuração lida (o `_sessao_de` da descoberta o devolve), e a
+ * revisão o mostra em cada família: adotar é decidir mantê-lo ou limpá-lo. */
+function propostaComPolitica(importRoutePolicy: string) {
+  return {
+    ...PROPOSTA,
+    sessoes: [{ ...PROPOSTA.sessoes[0], import_route_policy: importRoutePolicy }],
+  };
+}
+
 function mockFetch(
   opts: {
     descoberta?: unknown;
@@ -285,6 +324,7 @@ function mockFetch(
         return json(comDesativadas ? ORGANIZACOES : ORGANIZACOES.filter((o) => o.admin_status));
       }
       if (url === "/api/v1/policy-profiles") return json(POLICY_PROFILES);
+      if (url.startsWith("/api/v1/upstreams")) return json(UPSTREAMS);
       if (url.startsWith("/api/v1/discovery/fidelidade")) {
         conferencias += 1;
         return json({
@@ -893,6 +933,164 @@ describe("Discovery", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(await screen.findByRole("status")).toHaveTextContent(
       "Proposta adotada: o circuito 9 foi gravado na SoT.",
+    );
+  });
+
+  it("deixa escolher o kind da organização", async () => {
+    mockFetch({});
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+
+    // O select abre no palpite do `_classificar` (a proposta sem organização
+    // sai como "downstream") e é o operador quem decide.
+    const kind = within(dialog).getByRole("combobox", { name: /^Tipo de organização/ });
+    expect(kind).toHaveValue("downstream");
+    // O bloco de upstream só existe no enlace de operadora (§5.1): o campo é
+    // consultado pela legenda, que é o nome acessível do `fieldset`.
+    expect(within(dialog).queryByRole("group", { name: "Upstream" })).not.toBeInTheDocument();
+
+    await userEvent.selectOptions(kind, "operadora");
+    expect(within(dialog).getByRole("group", { name: "Upstream" })).toBeInTheDocument();
+  });
+
+  it("mostra o nome da política lido em cada família", async () => {
+    mockFetch({
+      descoberta: { ...DISCOVERY, propostas: [propostaComPolitica("RP-LIDA-IMPORT")] },
+    });
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+
+    expect(await within(dialog).findByDisplayValue("RP-LIDA-IMPORT")).toBeInTheDocument();
+  });
+
+  it("recusa adotar operadora sem o bloco de upstream", async () => {
+    mockFetch({});
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+
+    // Preenche o que a adoção exige ANTES de escolher a operadora: sem isto o
+    // botão já estaria barrado pelo acesso em falta, e o teste não diria nada
+    // sobre a guarda do §5.1.
+    await preencheAcesso(dialog);
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeEnabled(),
+    );
+
+    await userEvent.selectOptions(
+      within(dialog).getByRole("combobox", { name: /^Tipo de organização/ }),
+      "operadora",
+    );
+    expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeDisabled();
+    // A frase é a do serviço, e a asserção vai pelo papel porque a DICA do
+    // `help("adocao.kind")` também fala do bloco de upstream: um `getByText`
+    // casaria as duas e o teste passaria sem a mensagem existir.
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(/bloco de upstream/i);
+  });
+
+  it("o Adotar manda o bloco do upstream criado e a organização operadora", async () => {
+    mockFetch({});
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+    const escolhe = (nome: RegExp, valor: string) =>
+      userEvent.selectOptions(within(dialog).getByRole("combobox", { name: nome }), valor);
+
+    await escolhe(/^Tipo de organização/, "operadora");
+    await escolhe(/^Modo do upstream/, "criar");
+    await userEvent.type(
+      within(dialog).getByRole("textbox", { name: /^Nome do upstream/ }),
+      "OPERADORA-BETA",
+    );
+    await escolhe(/^Tipo do upstream/, "ix");
+    await escolhe(/^Tipo de policy/, "parcial");
+    await preencheAcesso(dialog);
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeEnabled(),
+    );
+
+    // A conferência roda com o MESMO bloco que a escrita vai gravar (§5.4):
+    // sem ele o ensaio renderiza pelo caminho de cliente e acusa diferença em
+    // tudo — e o `kind` é o outro lado da mesma moeda (§5.1).
+    await waitFor(
+      () =>
+        expect(
+          conferencias().some(
+            (url) =>
+              url.includes("organizacao_kind=operadora") &&
+              url.includes("upstream_tipo=ix") &&
+              url.includes("upstream_produto=parcial"),
+          ),
+        ).toBe(true),
+      { timeout: 2000 },
+    );
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Adotar" }));
+    await waitFor(() =>
+      expect(corpoDoPost()).toMatchObject({
+        organizacao_nova: { name: "CLIENTE-ALFA", kind: "operadora", asn: 64512 },
+        upstream: {
+          name: "OPERADORA-BETA",
+          tipo: "ix",
+          produto_import: "parcial",
+          papel: "principal",
+        },
+      }),
+    );
+  });
+
+  it("o vínculo manda só o upstream_id, sem os campos de criação", async () => {
+    mockFetch({});
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+    const escolhe = (nome: RegExp, valor: string) =>
+      userEvent.selectOptions(within(dialog).getByRole("combobox", { name: nome }), valor);
+
+    await escolhe(/^Tipo de organização/, "operadora");
+    await escolhe(/^Modo do upstream/, "vincular");
+    // O vínculo é por id: o resto é o upstream da SoT, e o serviço recusa os
+    // campos de criação junto com ele (`_uma_das_formas`).
+    await escolhe(/^Upstream existente/, "4");
+    await preencheAcesso(dialog);
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeEnabled(),
+    );
+    await userEvent.click(within(dialog).getByRole("button", { name: "Adotar" }));
+
+    await waitFor(() =>
+      expect(corpoDoPost().upstream).toEqual({ upstream_id: 4, papel: "principal" }),
+    );
+  });
+
+  it("limpar o nome lido devolve a sessão ao nome padrão do gerenet", async () => {
+    mockFetch({
+      descoberta: { ...DISCOVERY, propostas: [propostaComPolitica("RP-LIDA-IMPORT")] },
+    });
+    renderDiscovery("/discovery?device_id=1");
+    await userEvent.click(await screen.findByRole("button", { name: "Adotar" }));
+    const dialog = screen.getByRole("dialog");
+    const campo = await within(dialog).findByDisplayValue("RP-LIDA-IMPORT");
+
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Limpar a route-policy de importação (ipv4)" }),
+    );
+    expect(campo).toHaveValue("");
+
+    await preencheAcesso(dialog);
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Adotar" })).toBeEnabled(),
+    );
+    await userEvent.click(within(dialog).getByRole("button", { name: "Adotar" }));
+
+    // Sem o nome no corpo, a sessão nasce com o nome do §25.4: é o "limpar" que
+    // devolve o padrão, e não um nome vazio gravado por engano.
+    await waitFor(() =>
+      expect(corpoDoPost().sessoes).toEqual([
+        { afi: "ipv4", import_profile_id: null, export_profile_id: null, password_ref: null },
+      ]),
     );
   });
 

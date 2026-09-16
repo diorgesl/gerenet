@@ -639,7 +639,15 @@ export interface DiscoveryPropostaOut {
   // As sessões que a proposta leu do equipamento, uma por família: o resto do
   // conteúdo é genérico (a tela não o lê), mas o `afi` é a chave com que a
   // revisão casa os perfis e o caminho do segredo.
-  sessoes: ({ afi: string } & Record<string, unknown>)[];
+  sessoes: ({
+    afi: string;
+    /** Os três campos que a revisão edita (§4.3 e Task 11): o anúncio de
+     * default da sessão de cliente e os nomes de route-policy lidos na
+     * configuração, por família. */
+    default_route_advertise?: boolean;
+    import_route_policy?: string | null;
+    export_route_policy?: string | null;
+  } & Record<string, unknown>)[];
   candidatos: DiscoveryCandidatoOut[];
   pendencias: DiscoveryPendenciaOut[];
   conflitos: DiscoveryConflitoOut[];
@@ -697,7 +705,7 @@ export interface DiscoveryAdocaoIn {
   organizacao_id: number | null;
   organizacao_nova: {
     name: string;
-    kind?: string;
+    kind?: "downstream" | "parceiro" | "operadora";
     asn: number;
     legal_name?: string | null;
     document?: string | null;
@@ -705,12 +713,35 @@ export interface DiscoveryAdocaoIn {
   } | null;
   /** Os blocos do registro que viram autorização da organização nova. */
   autorizacoes: { prefix: string; family: string }[];
+  // O bloco do upstream (§5.2): a revisão de um enlace de operadora. Como o
+  // `AdocaoUpstreamIn` do serviço, ou se vincula um upstream da SoT
+  // (`upstream_id`) ou se criam os campos dele — os dois juntos são recusados.
+  upstream?: {
+    upstream_id?: number | null;
+    name?: string;
+    tipo?: "transito" | "ix" | "pni" | "contingencia";
+    capacity?: string | null;
+    priority?: number | null;
+    cost?: string | null;
+    expected_prefixes_v4?: number | null;
+    expected_prefixes_v6?: number | null;
+    max_prefix_margin_pct?: number;
+    rpki_enabled?: boolean;
+    entrada_local_preference?: number | null;
+    produto_import?: "full" | "parcial" | "default" | null;
+    papel?: "principal" | "contingencia";
+    ordem?: number;
+  } | null;
   sessoes: {
     afi: string;
     import_profile_id: number | null;
     export_profile_id: number | null;
     /** Caminho do segredo no Vault — nunca o valor (§19). */
     password_ref: string | null;
+    // O nome lido no equipamento, quando o operador o mantém (§4.3): vazio, a
+    // sessão nasce com o nome padrão do gerenet (§25.4).
+    import_route_policy?: string | null;
+    export_route_policy?: string | null;
   }[];
   ciente: boolean;
 }

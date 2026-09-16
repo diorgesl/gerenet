@@ -876,6 +876,16 @@ export type IdentidadeDaConferencia = {
    * caixa muda o que o ensaio renderiza, então entra na assinatura do aceite
    * como os outros campos: o `ciente` não viaja sobre um diff que ninguém viu. */
   autorizacoes: string[];
+  /** O tipo da organização escolhido na revisão (§5.5): sem ele o ensaio monta
+   * a organização descartável como `downstream`, qualquer que seja a escolha do
+   * select — e o diff sai do caminho de cliente para um enlace de operadora. */
+  organizacaoKind?: "downstream" | "parceiro" | "operadora";
+  /** O bloco do upstream (§5.2), na mesma forma que o corpo da adoção manda —
+   * é ele que faz o ensaio renderizar pelo caminho do vínculo (§5.4). Ausente
+   * no enlace de cliente, que não tem bloco. */
+  upstream?:
+    | { upstream_id: number; papel: string }
+    | { name: string; tipo: string; produto_import: string | null; papel: string };
 };
 
 /** Os perfis entram na chave de propósito: trocar um `select` de perfil refaz a
@@ -900,7 +910,24 @@ export const useFidelidade = (
           qs.set("organizacao_id", String(identidade.organizacaoId));
         }
         if (identidade.organizacaoNome) qs.set("organizacao_nome", identidade.organizacaoNome);
+        if (identidade.organizacaoKind) {
+          qs.set("organizacao_kind", identidade.organizacaoKind);
+        }
         if (identidade.velocidade) qs.set("velocidade_mbps", identidade.velocidade);
+        // O bloco do upstream entra no ensaio como entra no corpo (§5.4): o
+        // vínculo manda o id e o papel; a criação manda o tipo, o produto e o
+        // papel — os campos que o render usa para montar as sessões do enlace.
+        // O `upstream_papel` sai nos dois ramos: no modo vincular ele é escolha
+        // da revisão, e não o papel do vínculo que já existe.
+        const up = identidade.upstream;
+        if (up && "upstream_id" in up) {
+          qs.set("upstream_id", String(up.upstream_id));
+          qs.set("upstream_papel", up.papel);
+        } else if (up) {
+          qs.set("upstream_tipo", up.tipo);
+          if (up.produto_import) qs.set("upstream_produto", up.produto_import);
+          qs.set("upstream_papel", up.papel);
+        }
         // Um `append` por bloco, e não um `set`: a lista é repetida na query
         // (`?autorizacoes=ipv4:...&autorizacoes=ipv6:...`), e o `set` deixaria
         // só o último como autorização do ensaio — a prévia voltaria a acusar o
