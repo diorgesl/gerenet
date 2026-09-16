@@ -181,8 +181,21 @@ auditoria registra. A alternativa (mandar só as linhas faltantes) evita
 reescrever endereço, mas quebra o bloco em comandos parciais e complica o
 pós-check, que hoje confere presença por bloco.
 
-**Pós-check não muda**: nome e endereços presentes continuam bastando. A
-conferência de descrição e QoS entra como item de atenção, não como crítica.
+**O pós-check de provisionamento não confere o conteúdo.** O caminho de
+provisionamento fecha pela comparação desejado × encontrado
+(`reconciliar_device`), que não lê o texto da configuração: nome e endereços
+presentes continuam bastando. Se o VRP recusar a `description` ou o `qos car`,
+a CR fecha **`aplicado` sem item nenhum** — não há alarme.
+
+A conferência de conteúdo existe no código (`subinterface.conteudo`, severidade
+`atencao`, em `_verifica_aplicados`), mas só o caminho de **remoção** a chama, e
+lá o bloco da subinterface é um `delete`, que resolve como "consta" antes da
+conferência: hoje ela não acontece em mudança nenhuma.
+
+A convergência não se perde: o `_ja_existe` da CR seguinte compara o texto
+coletado, encontra a descrição ou o QoS fora do que o bloco pede e reemite o
+bloco. Quem fecha o ciclo é o re-planejamento, um plano depois — o que falta no
+meio é o alarme, não a convergência.
 
 ## 7. Descoberta e adoção
 
@@ -267,8 +280,29 @@ próximo provisionamento. Fica registrado; não há cache nem histórico.
 - **QoS com classes e marcação.** Esta frente entrega o limitador de taxa
   simples. Fila por classe, marcação e perfil de QoS são frente própria, com o
   dado já no lugar.
-- **`cbs` explícito.** O VRP completa; se a operação passar a querer um `cbs`
-  calculado, é campo novo.
+- **`cbs` e `pir` fora da SoT.** O VRP completa o `cbs` e a operação não usa
+  `pir` — quem quiser um `cbs` calculado precisa de campo novo. A consequência
+  está na comparação: o `equivalencia_vrp` dobra a linha longa do equipamento na
+  curta olhando só a taxa e a direção, então um CAR de duas taxas
+  (`... cir 1024000 cbs ... pir 2000000 pbs ...`) também conta como conforme, e o
+  `pir` fica invisível ao plano e à conferência de fidelidade. A dobra fica como
+  está de propósito: sem ela a divergência apareceria e o bloco seria reemitido,
+  devolvendo `cbs` e `pir` ao default do VRP num enlace vivo.
+- **A velocidade apagada deixa o `qos car` no equipamento.** Um PATCH com
+  `velocidade_mbps: null` limpa o campo e o render deixa de emitir a taxa. A
+  `description` converge — sem o colchete ela difere da que está no equipamento e
+  o bloco vira `atualizar` —, mas o limitador não: as linhas de `qos car` não
+  estão entre as que o render emite, a `conteudo_conforme` só confere as que o
+  bloco emite, e não existe caminho que mande remover a taxa. O circuito segue
+  limitado na velocidade antiga enquanto a SoT diz que não há velocidade — o
+  cliente tem o tráfego cortado por um valor que ninguém contratou mais. Tirar a
+  velocidade de um circuito provisionado é caso de remoção e reprovisionamento do
+  bloco (`undo interface` leva o limitador junto).
+- **O bloco reemitido leva o `vlan-type` junto.** Quando a `description` ou o
+  QoS divergem, o §6 reemite o bloco inteiro — inclusive o `vlan-type` da SoT.
+  Uma subinterface cujo encapsulamento divirja do cadastro é reescrita com o da
+  SoT, e essa divergência de encapsulamento não aparecia como diferença em
+  superfície nenhuma antes disso.
 - **Flake do Redis.** Seis testes de `tests/worker/` falham com o worker da
   stack varrendo o mesmo Redis DB 0. Não é desta frente; `GERENET_REDIS_URL`
   apontando para outro DB resolve, e foi assim que o baseline foi conferido.
