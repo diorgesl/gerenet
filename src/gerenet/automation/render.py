@@ -246,9 +246,10 @@ def _bloco_import(
     prefix-list: quem a anuncia AO peer é o `default_route_advertise`, emitido
     no bloco do peer (§3.3), e o `allow_default_route` (aceitar a default do
     peer) não tem mais este caminho. Devolve também o nome efetivo da RP
-    (§4.1/§25.4 — estável para ASN+AFI) quando a definição EXISTE para a
-    sessão, mesmo que o bloco não seja apensado (dedup): o peer referencia a
-    RP pela existência da definição, não pelo estado do dedup (ruling R5).
+    (§4.1: o importado quando a sessão o tem, senão o derivado do ASN do par,
+    §25.4) quando a definição EXISTE para a sessão, mesmo que o bloco não seja
+    apensado (dedup): o peer referencia a RP pela existência da definição, não
+    pelo estado do dedup (ruling R5).
     """
     autorizadas = [
         a for a in list_authorizations(session, organization_id=circuito.organization_id)
@@ -314,8 +315,9 @@ def _bloco_export(
 
     Prefix-list/RP de exportação passam pelo dedup de definições (texto já
     visto ⇒ 1 bloco; divergente ⇒ convivem, dívida §25.4/§25.5 ciclo C).
-    Devolve também o nome da RP (§25.4) quando a definição EXISTE para a
-    sessão (produto renderizável: full / default / cdn|personalizado com
+    Devolve também o nome efetivo da RP de exportação (§4.1: o importado quando
+    a sessão o tem, senão o derivado do ASN, §25.4) quando a definição EXISTE
+    para a sessão (produto renderizável: full / default / cdn|personalizado com
     prefixos / default_internas / parcial com lista) — o peer referencia
     pelo critério de definição, independente do dedup (ruling R5); dívida
     (comentário) não gera referência. O produto "parcial" cai em dívida
@@ -758,7 +760,8 @@ def render_desejado(session: Session, device_id: int) -> RenderResult:
             list_sessions(session, circuit_id=circ_id, device_id=device_id),
             key=lambda s: (s.afi, s.remote_address),
         ):
-            # As referências do peer vêm do critério de definição (nome §25.4),
+            # As referências do peer vêm do critério de definição (nome efetivo
+            # da RP — o importado quando a sessão o tem, §4.1; senão o do §25.4),
             # NUNCA do que sobrou dos blocos: com dedup, a 2ª sessão da mesma
             # definição não apensa bloco, mas a referência continua (Ruling R5).
             up = _eh_upstream(session, sessao)

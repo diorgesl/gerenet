@@ -552,7 +552,7 @@ def test_subinterface_qos_vem_da_velocidade_contratada(db_session: Session) -> N
 
 
 def test_default_route_advertise_anuncia_e_nao_aceita(db_session: Session) -> None:
-    """§3.3: o campo novo emite o comando na família da sessão, e o antigo não
+    """§3.3: o comando sai na família da sessão que marcou o campo, e o antigo não
     toca mais na prefix-list de importação do cliente."""
     from gerenet.automation.render import render_desejado
 
@@ -564,21 +564,45 @@ def test_default_route_advertise_anuncia_e_nao_aceita(db_session: Session) -> No
         ), actor="cli",
     )
     _sessao(db_session, env, circ_id, afi="ipv4", default_route_advertise=True)
+    _sessao(db_session, env, circ_id, afi="ipv6", default_route_advertise=True)
+    v6_remoto = _pontas(db_session, circ_id)["v6_r"]
 
     render = render_desejado(db_session, env["ne_id"])
-    blocos = [b for b in render.blocos if b.objeto == "session"]
-    comandos = [linha for b in blocos for linha in b.comandos]
-    assert "  peer 100.64.0.1 default-route-advertise" in comandos
+    peers = [b for b in render.blocos if b.tipo == "bgp_peer"]
+    # `default-route-advertise` é sub-comando de família no VRP: a sessão v6 não
+    # pode recebê-lo na família v4, nem o contrário (a linha solta no bloco não
+    # provaria isso).
+    v4 = next(b for b in peers if any("ipv4-family" in linha for linha in b.comandos))
+    v6 = next(b for b in peers if any("ipv6-family" in linha for linha in b.comandos))
+    assert "  peer 100.64.0.1 default-route-advertise" in v4.comandos
+    assert f"  peer {v6_remoto} default-route-advertise" in v6.comandos
+    # E DEPOIS da linha da família: solto antes dela, o comando cairia no
+    # contexto global do `bgp` e não valeria para o peer.
+    linha_familia = next(i for i, l in enumerate(v6.comandos) if "ipv6-family" in l)
+    assert v6.comandos.index(f"  peer {v6_remoto} default-route-advertise") > linha_familia
 
     # A prefix-list de importação do cliente segue sem a entrada de índice 5,
-    # com o campo antigo marcado ou não: quem insere a default ali é o
+    # com o campo antigo marcado ou não: quem inseria a default ali era o
     # `allow_default_route`, e ele não tem mais esse caminho.
     prefix = next(b for b in render.blocos if b.tipo == "prefix_list")
-    assert not any("index 5 permit 0.0.0.0/0" in linha for linha in prefix.comandos)
+    # O índice 10 continua na lista: a negativa abaixo não é de uma lista vazia.
+    assert any(
+        "ip ip-prefix IP-PFX-64512-IN-V4 index 10 permit 192.0.2.0/24" in linha
+        for linha in prefix.comandos
+    )
+    assert not any(
+        "ip ip-prefix IP-PFX-64512-IN-V4 index 5 permit 0.0.0.0/0" in linha
+        for linha in prefix.comandos
+    )
 
 
-def test_allow_default_route_nao_toca_no_cliente_mas_segue_no_upstream(db_session: Session) -> None:
-    """§2: o campo antigo continua decidindo a proteção do up-full e nada mais."""
+def test_allow_default_route_nao_toca_na_lista_do_cliente(db_session: Session) -> None:
+    """§2: o campo antigo não tem mais caminho no render do cliente.
+
+    A metade de cima — a proteção do `up-full`, que o campo antigo ainda
+    controla — é coberta em `test_render_upstream.py`, onde vivem os fixtures
+    de upstream; aqui só se prende o lado do cliente.
+    """
     from gerenet.automation.render import render_desejado
 
     env = _ambiente(db_session)
@@ -591,15 +615,22 @@ def test_allow_default_route_nao_toca_no_cliente_mas_segue_no_upstream(db_sessio
     _sessao(db_session, env, circ_id, afi="ipv4", allow_default_route=True)
     render = render_desejado(db_session, env["ne_id"])
     prefix = next(b for b in render.blocos if b.tipo == "prefix_list")
-    assert not any("index 5 permit 0.0.0.0/0" in linha for linha in prefix.comandos)
+    assert any(
+        "ip ip-prefix IP-PFX-64512-IN-V4 index 10 permit 192.0.2.0/24" in linha
+        for linha in prefix.comandos
+    )
+    assert not any(
+        "ip ip-prefix IP-PFX-64512-IN-V4 index 5 permit 0.0.0.0/0" in linha
+        for linha in prefix.comandos
+    )
     # §3.3: o campo antigo também NÃO acende o comando novo — os dois sentidos
     # da default viraram campos separados.
     assert "default-route-advertise" not in render.texto
 
 
-def test_nome_importado_da_politica_manda_no_render(db_session: Session) -> None:
-    """§4.1: o cabeçalho da definição e a referência do peer usam o nome lido;
-    a prefix-list interna continua com o nome do gerenet."""
+def test_nomes_lidos_do_equipamento_mandam_no_render(db_session: Session) -> None:
+    """§4.1: nos dois sentidos, o cabeçalho da definição e a referência do peer
+    usam o nome lido; a prefix-list interna continua com o nome do gerenet."""
     from gerenet.automation.render import render_desejado
 
     env = _ambiente(db_session)
@@ -609,14 +640,20 @@ def test_nome_importado_da_politica_manda_no_render(db_session: Session) -> None
             organization_id=env["org_id"], family="ipv4", prefix="192.0.2.0/24",
         ), actor="cli",
     )
+    perfis = {p.name: p.id for p in list_policy_profiles(db_session, direction="export")}
     _sessao(db_session, env, circ_id, afi="ipv4",
-            import_route_policy="RP-DO-EQUIPAMENTO-IN")
+            import_route_policy="RP-DO-EQUIPAMENTO-IN",
+            export_route_policy="RP-DO-EQUIPAMENTO-OUT",
+            export_profile_id=perfis["full"])
 
     render = render_desejado(db_session, env["ne_id"])
     comandos = [linha for b in render.blocos for linha in b.comandos]
     assert "route-policy RP-DO-EQUIPAMENTO-IN permit node 10" in comandos
+    assert "route-policy RP-DO-EQUIPAMENTO-OUT permit node 10" in comandos
     # O peer é o endereço remoto da sessão (o /31 do circuito: .0 local, .1 remoto).
     assert "  peer 100.64.0.1 import route-policy RP-DO-EQUIPAMENTO-IN" in comandos
-    # O nome do §25.4 não sobra em lugar nenhum, e o da prefix-list é o do gerenet.
+    assert "  peer 100.64.0.1 export route-policy RP-DO-EQUIPAMENTO-OUT" in comandos
+    # Os nomes do §25.4 não sobram em lugar nenhum, e o da prefix-list é do gerenet.
     assert not any("RP-64512-IMPORT-V4" in linha for linha in comandos)
+    assert not any("RP-64512-EXPORT-V4" in linha for linha in comandos)
     assert any("IP-PFX-64512-IN-V4" in linha for linha in comandos)

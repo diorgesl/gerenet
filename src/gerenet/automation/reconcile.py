@@ -303,7 +303,7 @@ def reconciliar_device(
                         items.append(_item(
                             "peer.filtros", "critica", rps[tipo_rp],
                             str(verbose.get(campo) or "—"),
-                            "Filtro aplicado no equipamento diverge do renderizado (nomes §25.4).",
+                            "Filtro aplicado no equipamento diverge do renderizado (nome efetivo da política, §4.1).",
                         ))
 
         # circuito.sem_trunk: reservado (tem Vlan) + sessão ativa, sem edge_trunk

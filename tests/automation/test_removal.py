@@ -261,6 +261,89 @@ def test_remocao_usa_o_nome_importado_da_politica(db_session, tmp_path):
     assert naming.rp_export(64512, "ipv4") not in emitido
 
 
+def test_remocao_mesmo_asn_com_nome_efetivo_diferente_ainda_desfaz_a_politica(
+    db_session, tmp_path,
+):
+    """§4.1: o compartilhamento é o NOME efetivo, não o par (asn_remote, afi).
+
+    A sessão do outro circuito tem o mesmo ASN+afi, mas política própria (a do
+    §25.4, porque as colunas dela são nulas): são definições diferentes no
+    equipamento. Tratar o ASN+afi como se fosse o nome engolia o undo e deixava
+    a definição importada órfã na caixa.
+    """
+    amb = _ambiente(db_session)
+    circ = _circuito(db_session, amb)
+    circ2 = _circuito(db_session, amb, code="circ-002")
+    # mesmo ASN+afi, nome efetivo diferente; desativada e criada antes (o serviço
+    # conflita device+afi só com sessão ativa), remote diferente do alvo.
+    _sessao(db_session, circ2, amb["dev"], remote="100.64.1.99", local="100.64.2.1", ativa=False)
+    _sessao(db_session, circ, amb["dev"], import_route_policy="RP-DO-EQUIPAMENTO-IN")
+    snap = _snapshot(
+        db_session, amb["dev"], tmp_path=tmp_path,
+        backup=(
+            f"ip ip-prefix {naming.pfx_in(64512, 'ipv4')} index 10 permit 192.0.2.0/24\n"
+            "route-policy RP-DO-EQUIPAMENTO-IN permit node 10\n"
+        ),
+        peers=[{"afi": "ipv4", "peer": "100.64.1.2", "asn": 64512, "estado": "Established"}],
+        interfaces=[],
+    )
+    blocos = removal.blocos_remocao(db_session, circ, amb["dev"].id, snapshot=snap)
+    por_tipo = {b["tipo"]: b["comandos"] for b in blocos}
+    assert por_tipo["route_policy_import"] == ["undo route-policy RP-DO-EQUIPAMENTO-IN"]
+    # A prefix-list fica de fora: o nome dela continua saindo do ASN do par
+    # (§25.4), e a sessão do circ-002 referencia a mesma `IP-PFX-64512-IN-V4`.
+    assert "prefix_list" not in por_tipo
+
+
+def test_remocao_nao_desfaz_politica_de_outro_asn_com_o_mesmo_nome(db_session, tmp_path):
+    """§4.1: nome efetivo igual em ASN diferente = uma definição, um dono.
+
+    Dois peers de operadoras distintas podem carregar a mesma política de
+    operadora (é para isso que a coluna importada existe). Derrubá-la no
+    `continue` do par antigo (asn_remote, afi) mandaria `undo route-policy` para
+    uma definição que o outro circuito ainda referencia.
+    """
+    from gerenet.domain.schemas import OrganizationCreate
+    from gerenet.domain.services.organizations import create_organization
+
+    amb = _ambiente(db_session)
+    circ = _circuito(db_session, amb)
+    org2 = create_organization(
+        db_session, OrganizationCreate(name="operadora-y", asn=64513), actor="cli"
+    )
+    circ2 = _circuito(db_session, amb, code="circ-002", org=org2)
+    # ASN diferente, mesmo nome lido: a guarda tem que olhar o NOME.
+    _sessao(
+        db_session, circ2, amb["dev"], remote="100.64.1.99", local="100.64.2.1",
+        ativa=False, asn_remote=64513,
+        import_route_policy="RP-OPERADORA-IN", export_route_policy="RP-OPERADORA-OUT",
+    )
+    _sessao(
+        db_session, circ, amb["dev"],
+        import_route_policy="RP-OPERADORA-IN", export_route_policy="RP-OPERADORA-OUT",
+    )
+    snap = _snapshot(
+        db_session, amb["dev"], tmp_path=tmp_path,
+        backup=(
+            f"ip ip-prefix {naming.pfx_in(64512, 'ipv4')} index 10 permit 192.0.2.0/24\n"
+            "route-policy RP-OPERADORA-IN permit node 10\n"
+            "route-policy RP-OPERADORA-OUT permit node 10\n"
+        ),
+        peers=[{"afi": "ipv4", "peer": "100.64.1.2", "asn": 64512, "estado": "Established"}],
+        interfaces=[],
+    )
+    blocos = removal.blocos_remocao(db_session, circ, amb["dev"].id, snapshot=snap)
+    tipos = [b["tipo"] for b in blocos]
+    # Controle: o laço passou pela sessão e a prefix-list do ASN local saiu — a
+    # guarda segurou só a definição que o outro circuito referencia.
+    assert "prefix_list" in tipos
+    assert "route_policy_import" not in tipos
+    assert "route_policy_export" not in tipos
+    emitido = " ".join(c for b in blocos for c in b["comandos"])
+    assert "undo route-policy RP-OPERADORA-IN" not in emitido
+    assert "undo route-policy RP-OPERADORA-OUT" not in emitido
+
+
 def test_remocao_sem_politica_importada_mantem_o_nome_do_25_4(db_session, tmp_path):
     """§4.1: com as duas colunas nulas, o undo segue com o nome derivado do ASN."""
     amb = _ambiente(db_session)
