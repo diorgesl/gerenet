@@ -17,6 +17,7 @@ from gerenet.domain.schemas import (
 )
 from gerenet.domain.services import bgp_sessions as svc
 from gerenet.domain.services.errors import ConflictError, NotFoundError, ValidationError
+from gerenet.domain.services.upstreams import upstream_do_circuito
 from gerenet.secrets.vault_store import VaultSecretStore
 
 router = APIRouter(prefix="/api/v1/bgp-sessions", tags=["bgp-sessions"], dependencies=[Depends(require_actor)])
@@ -24,12 +25,21 @@ router = APIRouter(prefix="/api/v1/bgp-sessions", tags=["bgp-sessions"], depende
 SessionDep = Annotated[Session, Depends(get_db)]
 
 
-def _com_kind(session: Session, sessao: models.BgpSession) -> dict[str, str | None]:
-    """kind da organização do circuito da sessão (fase 5; via session.get — o
-    modelo de sessão não tem relação direta com circuito)."""
+def _extras_do_circuito(session: Session, sessao: models.BgpSession) -> dict[str, object]:
+    """Campos da resposta que saem do circuito da sessão (fase 5 e §3.6).
+
+    `organization_kind` é o `kind` da organização; `upstream_id` é o vínculo do
+    circuito, que é por onde o render despacha. Os dois andam juntos na adoção
+    (§5.1) — e é `upstream_id` que a página usa para escolher o checkbox do
+    escopo.
+    """
     circ = session.get(models.Circuit, sessao.circuit_id)
     org = circ.organization if circ else None
-    return {"organization_kind": org.kind if org else None}
+    up = upstream_do_circuito(session, sessao.circuit_id)
+    return {
+        "organization_kind": org.kind if org else None,
+        "upstream_id": up.id if up is not None else None,
+    }
 
 
 @router.get("", response_model=list[BgpSessionOut])
@@ -40,7 +50,7 @@ def listar(
     include_disabled: bool = False,
 ) -> list:
     return [
-        BgpSessionOut.model_validate(s).model_copy(update=_com_kind(session, s))
+        BgpSessionOut.model_validate(s).model_copy(update=_extras_do_circuito(session, s))
         for s in svc.list_sessions(
             session,
             circuit_id=circuit_id,
@@ -64,7 +74,9 @@ def criar(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return BgpSessionOut.model_validate(sessao).model_copy(update=_com_kind(session, sessao))
+    return BgpSessionOut.model_validate(sessao).model_copy(
+        update=_extras_do_circuito(session, sessao)
+    )
 
 
 @router.get("/{session_id}", response_model=BgpSessionOut)
@@ -73,7 +85,9 @@ def detalhar(session_id: int, session: SessionDep) -> object:
         sessao = svc.get_session(session, session_id)
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return BgpSessionOut.model_validate(sessao).model_copy(update=_com_kind(session, sessao))
+    return BgpSessionOut.model_validate(sessao).model_copy(
+        update=_extras_do_circuito(session, sessao)
+    )
 
 
 @router.patch("/{session_id}", response_model=BgpSessionOut)
@@ -97,7 +111,9 @@ def atualizar(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return BgpSessionOut.model_validate(sessao).model_copy(update=_com_kind(session, sessao))
+    return BgpSessionOut.model_validate(sessao).model_copy(
+        update=_extras_do_circuito(session, sessao)
+    )
 
 
 @router.post("/{session_id}/password", response_model=BgpSessionOut)
@@ -120,7 +136,9 @@ def definir_senha(
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=f"Vault indisponível: {exc}.") from exc
     sessao = svc.set_password(session, sessao.id, actor=actor.nome, path=caminho)
-    return BgpSessionOut.model_validate(sessao).model_copy(update=_com_kind(session, sessao))
+    return BgpSessionOut.model_validate(sessao).model_copy(
+        update=_extras_do_circuito(session, sessao)
+    )
 
 
 @router.get("/{session_id}/communities", response_model=list[CommunityOut])

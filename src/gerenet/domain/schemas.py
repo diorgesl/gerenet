@@ -232,6 +232,12 @@ class PrefixAuthorizationCreate(BaseModel):
     notes: str | None = None
 
 
+# §4.5: o limite é o do VRP e o conjunto de caracteres é o que o parser lê de
+# volta sem ambiguidade. O nome pode deixar de derivar do ASN do par (exceção
+# registrada ao §25.4), mas o tamanho e a grafia não mudam.
+NOME_DE_POLITICA_RE = r"^[A-Za-z0-9_.\-]{1,63}$"
+
+
 class BgpSessionCreate(BaseModel):
     circuit_id: int
     device_id: int
@@ -259,9 +265,10 @@ class BgpSessionCreate(BaseModel):
     # sendo o outro sentido (aceitar a default que o peer manda).
     default_route_advertise: bool = False
     # §4.1: nomes de route-policy lidos do equipamento; nulos, o render deriva
-    # do ASN do par (§25.4). 63 caracteres é o teto do VRP.
-    import_route_policy: str | None = Field(default=None, max_length=63)
-    export_route_policy: str | None = Field(default=None, max_length=63)
+    # do ASN do par (§25.4). O `pattern` é o teto e a grafia do VRP, não o padrão
+    # de nomes do §25.4: um nome de equipamento fora do padrão da casa entra.
+    import_route_policy: str | None = Field(default=None, pattern=NOME_DE_POLITICA_RE)
+    export_route_policy: str | None = Field(default=None, pattern=NOME_DE_POLITICA_RE)
     # O caminho do segredo no Vault, nunca o valor (`models.BgpSession.password_ref`).
     # A revisão da adoção escolhe o caminho e o `create_session` o grava pelo
     # `model_dump`; a senha em si continua entrando só pelo `set_password`.
@@ -293,6 +300,9 @@ class BgpSessionUpdate(BaseModel):
     graceful_restart: bool | None = None
     shutdown: bool | None = None
     allow_default_route: bool | None = None
+    default_route_advertise: bool | None = None
+    import_route_policy: str | None = Field(default=None, pattern=NOME_DE_POLITICA_RE)
+    export_route_policy: str | None = Field(default=None, pattern=NOME_DE_POLITICA_RE)
     admin_status: bool | None = None
 
 
@@ -401,9 +411,15 @@ class BgpSessionOut(BaseModel):
     graceful_restart: bool
     shutdown: bool
     allow_default_route: bool
+    default_route_advertise: bool
+    import_route_policy: str | None = None
+    export_route_policy: str | None = None
     has_password: bool  # property do modelo — o valor nunca trafega aqui
     admin_status: bool
     organization_kind: str | None = None  # derivado da organização do circuito da sessão (router/fase 5)
+    # §3.6: o vínculo do circuito, e não o `kind` da organização: é por ele que
+    # o render despacha, e uma operadora sem vínculo cai no caminho de cliente.
+    upstream_id: int | None = None
 
 
 class PrefixAuthorizationOut(BaseModel):

@@ -26,7 +26,7 @@ def _sessao() -> models.BgpSession:
         local_address="100.64.0.1", remote_address="100.64.0.2",
         asn_local=64600, asn_remote=64512, bfd_enabled=False,
         graceful_restart=False, shutdown=False, allow_default_route=False,
-        admin_status=True,
+        default_route_advertise=False, admin_status=True,
     )
     sessao.id = 1
     return sessao
