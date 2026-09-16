@@ -17,15 +17,23 @@ runner = CliRunner()
 FIXTURE = Path("tests/fixtures/huawei_vrp/ne8000_display_current_configuration.txt")
 
 
-def _ambiente(db_session, tmp_path: Path) -> models.Device:
+def _ambiente(db_session, tmp_path: Path, *, com_mtu: bool = False) -> models.Device:
     site = create_site(db_session, SiteCreate(name="pop-desc-cli",
                                               p2p_ipv4_block="100.64.10.0/24"), actor="cli")
     dev = create_device(db_session, DeviceCreate(name="ne8000-desc-cli",
                                                  management_address="10.0.0.1", asn=65001),
                         actor="cli")
     link_device(db_session, site.id, dev.id, actor="cli")
+    texto = FIXTURE.read_text(encoding="utf-8")
+    if com_mtu:
+        # O `mtu` da subinterface é o que a SoT não gerencia (§6 do design): a
+        # linha entra no bloco do enlace, e não na fixture compartilhada — os
+        # outros cinco arquivos que a leem afirmam `nao_gerenciado == []`.
+        texto = texto.replace(
+            "interface Eth-Trunk127.1001\n", "interface Eth-Trunk127.1001\n mtu 9000\n", 1
+        )
     arquivo = tmp_path / "current.txt"
-    arquivo.write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    arquivo.write_text(texto, encoding="utf-8")
     db_session.add(models.DeviceSnapshot(device_id=dev.id, status="success",
                                         raw_files={"config_backup": [str(arquivo)]}))
     db_session.commit()
@@ -67,6 +75,25 @@ def test_show_imprime_a_explicacao_do_ensaio(db_session, tmp_path) -> None:
     assert r.exit_code == 0, r.output
     assert "fidelidade ensaio:" in r.output
     assert "a comparação não é confiável para uma sessão em VRF" in r.output
+
+
+def test_show_imprime_o_grupo_que_a_sot_nao_gerencia(db_session, tmp_path) -> None:
+    """Item 6 — o cabeçalho do grupo não gerenciado, de volta com teste.
+
+    O `mtu` da subinterface é o que a SoT não emite (§6 do design): não é
+    divergência e não exige `ciente`, mas o operador precisa vê-lo — é o que ele
+    vai encontrar no equipamento e a adoção não toca. O bloco próprio e o seu
+    cabeçalho existem desde a Task 6, e o teste que os dirigia foi reaponteado
+    para o grupo que gateia (Ruling 14): nada mais imprimia estas duas linhas, e
+    o cabeçalho podia divergir do grupo que ele diz imprimir sem que nada
+    acusasse.
+    """
+    dev = _ambiente(db_session, tmp_path, com_mtu=True)
+    r = runner.invoke(cli_app, ["discovery", "show", dev.name, "100.64.10.1"])
+    assert r.exit_code == 0, r.output
+    assert "fidelidade subinterface:" in r.output
+    assert "o que a SoT não gerencia (não exige ciente):" in r.output
+    assert "      mtu 9000" in r.output
 
 
 def test_ignore_e_unignore(db_session, tmp_path) -> None:
