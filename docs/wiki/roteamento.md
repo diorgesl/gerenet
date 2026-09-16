@@ -59,11 +59,12 @@ cliente é o `default_route_advertise`.
 
 O **índice 5** existe do outro lado: na prefix-list de proteção que a sessão de
 upstream usa no `up-full`, `IP-PFX-<ASN>-IN-<AFI>`. Quando a sessão está sem
-`allow_default_route`, a default (`0.0.0.0/0` ou `::/0`) entra nessa lista como
-**negativa**, no índice 5, antes das proteções do índice 10 (rotas internas e
-autorizações ativas de clientes); a route-policy do `up-full` nega o que casa a
-lista e aceita o resto no node final. Sem essa entrada, a default do provedor
-entraria junto com o full mesmo com o flag desligado.
+`allow_default_route`, a default (`0.0.0.0/0` ou `::/0`) entra nessa lista no
+índice 5, antes das proteções do índice 10 (rotas internas e autorizações ativas
+de clientes). A lista é toda de `permit`; quem nega é a route-policy, no `deny
+node 10` que casa com ela, e o resto das rotas do provedor entra pelo node
+final. Sem essa entrada, a default entraria junto com o full mesmo com o flag
+desligado.
 
 ## Perfis de política
 

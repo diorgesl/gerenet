@@ -167,13 +167,16 @@ No bloco **Upstream**, a revisão escolhe entre duas formas:
   como no [cadastro do upstream](/wiki/upstreams)) e o papel do vínculo,
   `principal` ou `contingência`.
 
-Nos dois casos o circuito nasce vinculado ao upstream na mesma transação —
-como **principal**, salvo se a revisão escolher a contingência —, e é o vínculo
-que decide o caminho do render da primeira mudança em diante. O que a revisão
+Nos dois casos o circuito nasce vinculado ao upstream na mesma transação, com o
+papel **principal** por padrão, e é o vínculo que decide o caminho do render da
+primeira mudança em diante. O papel **contingência** exige que o upstream já
+tenha um principal: num upstream novo, que nasce sem vínculo, a escolha é
+recusada e a adoção inteira volta atrás. Com um principal já no lugar, o vínculo
+de contingência se faz na [página do upstream](/wiki/upstreams). O que a revisão
 cria do upstream novo é o essencial (nome, tipo, tipo de policy e papel); os
-outros campos do cadastro ficam para a [página do upstream](/wiki/upstreams),
-depois. O tipo de policy escolhido aqui também preenche o perfil de importação
-das sessões que a revisão deixar sem um.
+outros campos do cadastro ficam para a página, depois. O tipo de policy escolhido
+aqui também preenche o perfil de importação das sessões que a revisão deixar sem
+um.
 
 ## O nome de política lido no equipamento
 
