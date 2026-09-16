@@ -107,7 +107,8 @@ presente, endereços, peer) e **não lê o texto da configuração**: a mudança
 subinterface no equipamento ou na configuração que a coleta guardou (página
 Snapshots). O item de pós-check previsto para esse caso
 (`subinterface.conteudo`, de atenção) não chega a sair — a conferência que o
-produz só roda na remoção, e lá o bloco é um `undo`, que resolve antes dela.
+produz só roda na remoção, e lá o bloco é um `undo`, que já resolve como
+"consta" antes da conferência de conteúdo.
 Quem conserta é a mudança seguinte: o plano reencontra a linha fora do desejado
 e reemite o bloco.
 
