@@ -296,7 +296,13 @@ def test_render_export_parcial_sem_conteudo_vai_divida(db_session: Session) -> N
     assert "export route-policy" not in texto
 
 
-def test_render_import_com_default_autorizada(db_session: Session) -> None:
+def test_render_import_do_cliente_ignora_o_allow_default_route(db_session: Session) -> None:
+    """§3.3: o campo antigo não injeta mais a default na lista de importação.
+
+    O caminho antigo (index 5 na prefix-list do cliente, para o cliente poder nos
+    anunciar a default) foi removido: quem fala de default com o cliente agora é o
+    `default_route_advertise` (anúncio AO peer). A lista segue com as autorizações.
+    """
     from gerenet.automation.render import render_desejado
 
     env = _ambiente(db_session)
@@ -309,7 +315,7 @@ def test_render_import_com_default_autorizada(db_session: Session) -> None:
     _sessao(db_session, env, circ_id, afi="ipv4", allow_default_route=True)
 
     texto = render_desejado(db_session, env["ne_id"]).texto
-    assert "index 5 permit 0.0.0.0/0" in texto
+    assert "index 5 permit 0.0.0.0/0" not in texto
     assert "index 10 permit 192.0.2.0/24" in texto
     assert "if-match ip-prefix IP-PFX-64512-IN-V4" in texto
 
@@ -543,3 +549,74 @@ def test_subinterface_qos_vem_da_velocidade_contratada(db_session: Session) -> N
     assert "description CIRC-R-VEL CLIENTE RENDER [1G]" in texto
     assert "qos car cir 1024000 inbound" in texto
     assert "qos car cir 1024000 outbound" in texto
+
+
+def test_default_route_advertise_anuncia_e_nao_aceita(db_session: Session) -> None:
+    """§3.3: o campo novo emite o comando na família da sessão, e o antigo não
+    toca mais na prefix-list de importação do cliente."""
+    from gerenet.automation.render import render_desejado
+
+    env = _ambiente(db_session)
+    circ_id = _circuito_reservado(db_session, env, code="CIRC-R-DRA")
+    create_authorization(
+        db_session, PrefixAuthorizationCreate(
+            organization_id=env["org_id"], family="ipv4", prefix="192.0.2.0/24",
+        ), actor="cli",
+    )
+    _sessao(db_session, env, circ_id, afi="ipv4", default_route_advertise=True)
+
+    render = render_desejado(db_session, env["ne_id"])
+    blocos = [b for b in render.blocos if b.objeto == "session"]
+    comandos = [linha for b in blocos for linha in b.comandos]
+    assert "  peer 100.64.0.1 default-route-advertise" in comandos
+
+    # A prefix-list de importação do cliente segue sem a entrada de índice 5,
+    # com o campo antigo marcado ou não: quem insere a default ali é o
+    # `allow_default_route`, e ele não tem mais esse caminho.
+    prefix = next(b for b in render.blocos if b.tipo == "prefix_list")
+    assert not any("index 5 permit 0.0.0.0/0" in linha for linha in prefix.comandos)
+
+
+def test_allow_default_route_nao_toca_no_cliente_mas_segue_no_upstream(db_session: Session) -> None:
+    """§2: o campo antigo continua decidindo a proteção do up-full e nada mais."""
+    from gerenet.automation.render import render_desejado
+
+    env = _ambiente(db_session)
+    circ_id = _circuito_reservado(db_session, env, code="CIRC-R-ADR")
+    create_authorization(
+        db_session, PrefixAuthorizationCreate(
+            organization_id=env["org_id"], family="ipv4", prefix="192.0.2.0/24",
+        ), actor="cli",
+    )
+    _sessao(db_session, env, circ_id, afi="ipv4", allow_default_route=True)
+    render = render_desejado(db_session, env["ne_id"])
+    prefix = next(b for b in render.blocos if b.tipo == "prefix_list")
+    assert not any("index 5 permit 0.0.0.0/0" in linha for linha in prefix.comandos)
+    # §3.3: o campo antigo também NÃO acende o comando novo — os dois sentidos
+    # da default viraram campos separados.
+    assert "default-route-advertise" not in render.texto
+
+
+def test_nome_importado_da_politica_manda_no_render(db_session: Session) -> None:
+    """§4.1: o cabeçalho da definição e a referência do peer usam o nome lido;
+    a prefix-list interna continua com o nome do gerenet."""
+    from gerenet.automation.render import render_desejado
+
+    env = _ambiente(db_session)
+    circ_id = _circuito_reservado(db_session, env, code="CIRC-R-RP")
+    create_authorization(
+        db_session, PrefixAuthorizationCreate(
+            organization_id=env["org_id"], family="ipv4", prefix="192.0.2.0/24",
+        ), actor="cli",
+    )
+    _sessao(db_session, env, circ_id, afi="ipv4",
+            import_route_policy="RP-DO-EQUIPAMENTO-IN")
+
+    render = render_desejado(db_session, env["ne_id"])
+    comandos = [linha for b in render.blocos for linha in b.comandos]
+    assert "route-policy RP-DO-EQUIPAMENTO-IN permit node 10" in comandos
+    # O peer é o endereço remoto da sessão (o /31 do circuito: .0 local, .1 remoto).
+    assert "  peer 100.64.0.1 import route-policy RP-DO-EQUIPAMENTO-IN" in comandos
+    # O nome do §25.4 não sobra em lugar nenhum, e o da prefix-list é o do gerenet.
+    assert not any("RP-64512-IMPORT-V4" in linha for linha in comandos)
+    assert any("IP-PFX-64512-IN-V4" in linha for linha in comandos)

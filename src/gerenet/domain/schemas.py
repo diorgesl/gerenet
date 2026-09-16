@@ -255,6 +255,13 @@ class BgpSessionCreate(BaseModel):
     graceful_restart: bool = False
     shutdown: bool = False
     allow_default_route: bool = False
+    # §3.3: o anúncio da default AO peer. O `allow_default_route` acima continua
+    # sendo o outro sentido (aceitar a default que o peer manda).
+    default_route_advertise: bool = False
+    # §4.1: nomes de route-policy lidos do equipamento; nulos, o render deriva
+    # do ASN do par (§25.4). 63 caracteres é o teto do VRP.
+    import_route_policy: str | None = Field(default=None, max_length=63)
+    export_route_policy: str | None = Field(default=None, max_length=63)
     # O caminho do segredo no Vault, nunca o valor (`models.BgpSession.password_ref`).
     # A revisão da adoção escolhe o caminho e o `create_session` o grava pelo
     # `model_dump`; a senha em si continua entrando só pelo `set_password`.

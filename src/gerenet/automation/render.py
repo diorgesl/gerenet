@@ -220,6 +220,21 @@ def _apensa_definicao(
     blocos.append(bloco)
 
 
+def _nome_rp_import(sessao: models.BgpSession) -> str:
+    """O nome efetivo da route-policy de importação (§4.1).
+
+    A coluna importada manda quando preenchida: o nome lido no equipamento é o
+    que o render emite, e a exceção ao §25.4 está registrada no design. Nula, o
+    nome volta a derivar do ASN do par, como sempre foi.
+    """
+    return sessao.import_route_policy or naming.rp_import(sessao.asn_remote, sessao.afi)
+
+
+def _nome_rp_export(sessao: models.BgpSession) -> str:
+    """O nome efetivo da route-policy de exportação (§4.1) — mesma regra do import."""
+    return sessao.export_route_policy or naming.rp_export(sessao.asn_remote, sessao.afi)
+
+
 def _bloco_import(
     session: Session, circuito: models.Circuit, sessao: models.BgpSession,
     definidas: dict[tuple[str, str], set[str]],
@@ -227,11 +242,13 @@ def _bloco_import(
     """Prefix-list + RP de importação a partir das autorizações da org (§6.4).
 
     Só quando há autorização ativa da família; sem autorização, a sessão não
-    tem filtro de importação para renderizar (ruling 4). Devolve também o
-    nome da RP (§25.4 — sempre estável para ASN+AFI) quando a definição
-    EXISTE para a sessão, mesmo que o bloco não seja apensado (dedup): o
-    peer referencia a RP pela existência da definição, não pelo estado do
-    dedup (ruling R5).
+    tem filtro de importação para renderizar (ruling 4). A default NÃO entra na
+    prefix-list: quem a anuncia AO peer é o `default_route_advertise`, emitido
+    no bloco do peer (§3.3), e o `allow_default_route` (aceitar a default do
+    peer) não tem mais este caminho. Devolve também o nome efetivo da RP
+    (§4.1/§25.4 — estável para ASN+AFI) quando a definição EXISTE para a
+    sessão, mesmo que o bloco não seja apensado (dedup): o peer referencia a
+    RP pela existência da definição, não pelo estado do dedup (ruling R5).
     """
     autorizadas = [
         a for a in list_authorizations(session, organization_id=circuito.organization_id)
@@ -242,11 +259,8 @@ def _bloco_import(
     afi = sessao.afi
     asn_par = sessao.asn_remote
     nome_pfx = naming.pfx_in(asn_par, afi)
-    nome_rp = naming.rp_import(asn_par, afi)
-    entradas: list[dict] = []
-    if sessao.allow_default_route:
-        entradas.append({"index": 5, "prefixo": "0.0.0.0/0" if afi == "ipv4" else "::/0"})
-    entradas += [
+    nome_rp = _nome_rp_import(sessao)
+    entradas: list[dict] = [
         {"index": 10 * (i + 1), "prefixo": a.prefix} for i, a in enumerate(autorizadas)
     ]
     comandos = _render_template(
@@ -311,7 +325,7 @@ def _bloco_export(
         return [], None
     perfil = get_policy_profile(session, sessao.export_profile_id)
     afi = sessao.afi
-    nome_rp = naming.rp_export(sessao.asn_remote, afi)
+    nome_rp = _nome_rp_export(sessao)
     produto = perfil.name
     if produto == "full":
         blocos: list[BlocoRender] = []
@@ -496,7 +510,7 @@ def _bloco_import_upstream(
     """
     afi = sessao.afi
     asn_par = sessao.asn_remote
-    nome_rp = naming.rp_import(asn_par, afi)
+    nome_rp = _nome_rp_import(sessao)
     perfil = (
         get_policy_profile(session, sessao.import_profile_id)
         if sessao.import_profile_id else None
@@ -631,7 +645,7 @@ def _bloco_export_upstream(
     segue o critério de definição (Ruling R5).
     """
     afi = sessao.afi
-    nome_rp = naming.rp_export(sessao.asn_remote, afi)
+    nome_rp = _nome_rp_export(sessao)
     nome_pfx = naming.pfx_export(sessao.asn_remote, afi)
     anuncio = list(dict.fromkeys(
         internas_prefixos(session)[afi]
@@ -685,6 +699,10 @@ def _bloco_peer(sessao: models.BgpSession, rp_import: str | None, rp_export: str
             "graceful_restart": sessao.graceful_restart,
             "bfd_enabled": sessao.bfd_enabled,
             "shutdown": sessao.shutdown,
+            # §3.3: o comando é emitido sempre que o campo está marcado, nos dois
+            # caminhos; a guarda de escopo (sessão de upstream não anuncia) vive
+            # no serviço, não aqui.
+            "default_route_advertise": sessao.default_route_advertise,
             "afi": sessao.afi,
             "rp_import": rp_import,
             "rp_export": rp_export,
