@@ -58,11 +58,11 @@ def test_subinterface_sem_velocidade_nao_emite_qos() -> None:
     guard por `is not none`, o `qos car cir 0` que apareceria aqui é o que o VRP
     recusaria no equipamento — e recusar a linha é diferente de ignorá-la.
     """
-    ctx = dict(
-        interface="Eth-Trunk127.4024", descricao=None, qinq=False, vid=4024,
-        enderecos_v4=[{"endereco": "100.64.0.1", "mascara": "255.255.255.254"}],
-        enderecos_v6=[],
-    )
+    ctx = {
+        "interface": "Eth-Trunk127.4024", "descricao": None, "qinq": False, "vid": 4024,
+        "enderecos_v4": [{"endereco": "100.64.0.1", "mascara": "255.255.255.254"}],
+        "enderecos_v6": [],
+    }
     esperado = (
         "interface Eth-Trunk127.4024\n"
         "vlan-type dot1q vid 4024\n"
