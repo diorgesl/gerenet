@@ -84,5 +84,7 @@ def conteudo_conforme(comandos: list[str], linhas: set[str]) -> bool:
     equipamento. O espaço interno é normalizado pela mesma regra do
     `_normaliza_linhas`, porque a coluna que separa os tokens não é informação.
     """
-    extras = [c for c in comandos if c.startswith(LINHAS_DE_CONTEUDO)]
-    return all(equivalencia_vrp(" ".join(c.split())) in linhas for c in extras)
+    extras = [
+        c for c in (" ".join(c.split()) for c in comandos) if c.startswith(LINHAS_DE_CONTEUDO)
+    ]
+    return all(equivalencia_vrp(c) in linhas for c in extras)

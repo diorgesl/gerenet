@@ -7,10 +7,12 @@ import pytest
 from redis import Redis
 from sqlalchemy.orm import Session
 
-from gerenet.automation import render
+from gerenet.automation import changes, render
 from gerenet.automation.runner import (
+    _enderecos_do_bloco,
     _estado_do_bloco,
     _mascarar_texto,
+    _peer_familia,
     _re_diff,
     _verifica_aplicados,
     run_change,
@@ -837,3 +839,47 @@ def test_pos_check_marca_atualizar_como_atencao_e_nao_como_critica(tmp_path: Pat
     items = _verifica_aplicados(step, snap)
     assert [i["severidade"] for i in items] == ["atencao"]
     assert items[0]["tipo"] == "subinterface.conteudo"
+
+
+# ---------------------------------------------------------------------------
+# C1 — os leitores do bloco são imunes à indentação do render
+# ---------------------------------------------------------------------------
+
+def test_enderecos_do_bloco_le_a_linha_indentada() -> None:
+    """C1 — o bloco do render pode vir indentado, e os DOIS `re.match` são
+    âncora no início: sem a normalização o helper devolve `{}` e a identidade
+    por endereços (§5.3) deixa de existir — um bloco cujo endereço o
+    equipamento não tem passa a "consta"."""
+    comandos = [
+        "interface GE1/0/0.2",
+        " vlan-type dot1q vid 2",
+        " ip address 10.0.0.0 255.255.255.254",
+        " ipv6 address 2804:194C::1/126",
+    ]
+    assert _enderecos_do_bloco(comandos) == {"v4": ["10.0.0.0/31"], "v6": ["2804:194C::1/126"]}
+    # a forma plana responde o mesmo (a normalização é a mesma regra)
+    assert _enderecos_do_bloco([" ".join(c.split()) for c in comandos]) == {
+        "v4": ["10.0.0.0/31"], "v6": ["2804:194C::1/126"],
+    }
+
+
+def test_as_duas_peer_familia_concordam_no_bloco_indentado() -> None:
+    """C1 — a paridade entre as duas cópias de `_peer_familia`.
+
+    A função existe duas vezes, de propósito: o plano (`changes._ja_existe`) e a
+    execução (`runner._estado_do_bloco`) fazem a mesma pergunta em módulos
+    diferentes, e consolidá-las alargaria o diff de uma frente que não as criou.
+    O que as impede de divergir é este teste: ele exercita AS DUAS sobre a mesma
+    lista, então consertar uma e esquecer a outra quebra aqui — e não no
+    equipamento, quando o plano e a execução discordarem sobre a família do peer.
+    """
+    v4 = [
+        "bgp 61785",
+        " peer 100.110.0.74 as-number 270620",
+        " ipv4-family unicast",
+        "  peer 100.110.0.74 enable",
+    ]
+    v6 = [c.replace("ipv4-family", "ipv6-family") for c in v4]
+    for comandos, esperado in ((v4, "ipv4"), (v6, "ipv6")):
+        assert _peer_familia(comandos) == esperado
+        assert changes._peer_familia(comandos) == esperado

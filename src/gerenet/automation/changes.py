@@ -68,10 +68,16 @@ def _peer_asn(comandos: list[str]) -> int | None:
 
 
 def _peer_familia(comandos: list[str]) -> str | None:
-    """AFI do bloco (`ipv4-family unicast`/`ipv6-family unicast`), ou None."""
-    if any(c.startswith("ipv6-family") for c in comandos):
+    """AFI do bloco (`ipv4-family unicast`/`ipv6-family unicast`), ou None.
+
+    O prefixo é testado na linha normalizada: o render pode vir indentado (o
+    `display current-configuration` escreve os sub-comandos com um espaço), e o
+    `startswith` na string crua não casaria.
+    """
+    linhas = [" ".join(c.split()) for c in comandos]
+    if any(c.startswith("ipv6-family") for c in linhas):
         return "ipv6"
-    if any(c.startswith("ipv4-family") for c in comandos):
+    if any(c.startswith("ipv4-family") for c in linhas):
         return "ipv4"
     return None
 
