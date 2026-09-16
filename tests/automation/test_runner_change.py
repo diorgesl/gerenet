@@ -137,17 +137,42 @@ def _interfaces_do_render(db_session: Session, dev, *, com_enderecos: bool = Tru
         end_v6: list[str] = []
         if com_enderecos:
             for linha in b.comandos[1:]:
-                if linha.startswith("ip address "):
-                    endereco, mascara = linha.removeprefix("ip address ").split()
+                # O prefixo é testado na linha dobrada: o render herda a
+                # indentação do template por sub-comando (o
+                # `display current-configuration` escreve com um espaço à
+                # esquerda), e o `startswith` na string crua devolveria lista
+                # vazia — um "encontrado" sem endereço nenhum, que o re-diff
+                # leria como conflito em vez de "já aplicado".
+                dobrada = " ".join(linha.split())
+                if dobrada.startswith("ip address "):
+                    endereco, mascara = dobrada.removeprefix("ip address ").split()
                     prefixlen = ipaddress.IPv4Network(f"0.0.0.0/{mascara}").prefixlen
                     end_v4.append(f"{endereco}/{prefixlen}")
-                elif linha.startswith("ipv6 address "):
-                    end_v6.append(linha.removeprefix("ipv6 address "))
+                elif dobrada.startswith("ipv6 address "):
+                    end_v6.append(dobrada.removeprefix("ipv6 address "))
         por_nome[nome] = {
             "nome": nome, "phy": "up", "protocolo": "up",
             "enderecos_v4": end_v4, "enderecos_v6": end_v6, "vpn": None,
         }
     return [por_nome[n] for n in sorted(por_nome)]
+
+
+def _afi_do_bloco(comandos: list[str]) -> str:
+    """AFI do bloco renderizado, pelo prefixo testado na linha dobrada — o render
+    herda a indentação do template por sub-comando, e o `startswith` na string
+    crua classificaria todo bloco como ipv4."""
+    linhas = [" ".join(c.split()) for c in comandos]
+    return "ipv6" if any(c.startswith("ipv6-family") for c in linhas) else "ipv4"
+
+
+def _peer_do_bloco(comandos: list[str]) -> str:
+    """Endereço do peer: a primeira linha `peer <addr> ...` do bloco.
+
+    Por âncora de conteúdo, não por índice — o template pode ganhar linhas
+    antes dela, e o índice fixo passaria a ler a linha errada em silêncio.
+    """
+    linhas = [" ".join(c.split()) for c in comandos]
+    return next(c.split()[1] for c in linhas if c.startswith("peer "))
 
 
 def _peers_aplicados(db_session: Session, dev) -> list[dict]:
@@ -157,8 +182,8 @@ def _peers_aplicados(db_session: Session, dev) -> list[dict]:
     for b in r.blocos:
         if b.tipo != "bgp_peer":
             continue
-        afi = "ipv6" if any(c.startswith("ipv6-family") for c in b.comandos) else "ipv4"
-        peer = b.comandos[1].split()[1]
+        afi = _afi_do_bloco(b.comandos)
+        peer = _peer_do_bloco(b.comandos)
         achado: str | None = None
         for p in b.comandos:
             tokens = p.split()
@@ -180,10 +205,9 @@ def _verbose_aplicados(db_session: Session, dev) -> list[dict]:
     for b in r.blocos:
         if b.tipo != "bgp_peer":
             continue
-        afi = "ipv6" if any(c.startswith("ipv6-family") for c in b.comandos) else "ipv4"
         linhas.append({
-            "afi": afi, "peer": b.comandos[1].split()[1], "descricao": None,
-            "filtro_import": None, "filtro_export": None,
+            "afi": _afi_do_bloco(b.comandos), "peer": _peer_do_bloco(b.comandos),
+            "descricao": None, "filtro_import": None, "filtro_export": None,
         })
     return linhas
 
