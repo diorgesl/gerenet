@@ -4,13 +4,17 @@ Revision ID: f2b7d4a91c3e
 Revises: c4a8e1f0b7d3
 Create Date: 2026-09-15
 """
-from alembic import op
+from collections.abc import Sequence
+
 import sqlalchemy as sa
 
-revision = "f2b7d4a91c3e"
-down_revision = "c4a8e1f0b7d3"
-branch_labels = None
-depends_on = None
+from alembic import op
+
+# revision identifiers, used by Alembic.
+revision: str = 'f2b7d4a91c3e'
+down_revision: str | Sequence[str] | None = 'c4a8e1f0b7d3'
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
