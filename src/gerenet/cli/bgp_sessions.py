@@ -101,6 +101,18 @@ def add(
     graceful_restart: bool = typer.Option(False, "--graceful-restart", help="Graceful restart."),
     shutdown: bool = typer.Option(False, "--shutdown", help="Admin shutdown."),
     allow_default_route: bool = typer.Option(False, "--allow-default-route", help="Aceita rota default."),
+    default_route_advertise: bool = typer.Option(
+        False, "--default-route-advertise",
+        help="Anuncia a rota default ao peer (caminho de cliente).",
+    ),
+    import_route_policy: str | None = typer.Option(
+        None, "--import-route-policy",
+        help="Nome da route-policy de importação lido no equipamento (o render passa a emiti-lo).",
+    ),
+    export_route_policy: str | None = typer.Option(
+        None, "--export-route-policy",
+        help="Nome da route-policy de exportação lido no equipamento.",
+    ),
 ) -> None:
     """Cadastra uma sessão BGP."""
     with get_session() as session:
@@ -130,6 +142,9 @@ def add(
                     graceful_restart=graceful_restart,
                     shutdown=shutdown,
                     allow_default_route=allow_default_route,
+                    default_route_advertise=default_route_advertise,
+                    import_route_policy=import_route_policy,
+                    export_route_policy=export_route_policy,
                 ),
                 actor="cli",
             )
