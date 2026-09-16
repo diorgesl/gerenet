@@ -664,6 +664,88 @@ def test_nao_anuncia_default_em_upstream_nem_pelo_update(db_session: Session) ->
         )
 
 
+def _operadora_e_upstream(db_session: Session, *, nome: str, asn: int) -> int:
+    """Operadora com upstream criado; devolve o id do upstream."""
+    operadora = create_organization(
+        db_session, OrganizationCreate(name=nome, asn=asn, kind="operadora"), actor="cli"
+    )
+    return create_upstream(
+        db_session, UpstreamCreate(name=f"up-{asn}", tipo="transito",
+                                   organization_id=operadora.id),
+        actor="cli",
+    ).id
+
+
+def test_reparo_desliga_o_anuncio_e_destrava_o_vinculo(db_session: Session) -> None:
+    """A saída existe de verdade: com a sessão anunciando, o vínculo é recusado, e
+    enquanto o vínculo não existe o anúncio é editável — desmarcá-lo passa pela
+    guarda, que só recusa ligar, e o vínculo então fecha. Nada é normalizado em
+    silêncio: quem desliga é o operador."""
+    env = _ambiente(db_session)
+    circ_id = _circuito(db_session, env, code="CIRC-DRA-REPARO", edge_id=env["ne1_id"])
+    sessao_id = create_session(
+        db_session,
+        _sessao_data(env, circ_id, env["ne1_id"], default_route_advertise=True),
+        actor="cli",
+    ).id
+    up_id = _operadora_e_upstream(db_session, nome="Operadora DRA-REPARO", asn=64517)
+
+    with pytest.raises(ValidationError, match="default-route-advertise"):
+        vincular_circuito(db_session, up_id, circ_id, papel="principal", ordem=1, actor="cli")
+
+    update_session(
+        db_session, sessao_id, BgpSessionUpdate(default_route_advertise=False), actor="cli"
+    )
+    vincular_circuito(db_session, up_id, circ_id, papel="principal", ordem=1, actor="cli")
+
+    assert db_session.get(models.BgpSession, sessao_id).default_route_advertise is False
+    assert db_session.scalar(select(models.UpstreamCircuit).where(
+        models.UpstreamCircuit.circuit_id == circ_id)) is not None
+
+
+def test_patch_de_outro_campo_em_sessao_que_anuncia_nao_e_recusado(db_session: Session) -> None:
+    """I-1: a guarda decide sobre o estado resultante, mas só quando o payload pode
+    mudá-lo. A sessão que anuncia e foi parar num circuito vinculado depois — o
+    vínculo não olhava para ela — tem de continuar editável; antes, o PATCH de
+    qualquer campo morria na guarda e a sessão ficava congelada."""
+    env = _ambiente(db_session)
+    circ_id = _circuito(db_session, env, code="CIRC-DRA-EDIT", edge_id=env["ne1_id"])
+    sessao_id = create_session(
+        db_session,
+        _sessao_data(env, circ_id, env["ne1_id"], default_route_advertise=True),
+        actor="cli",
+    ).id
+    # o estado pré-existente nasce direto no banco: o serviço agora o recusa
+    up_id = _operadora_e_upstream(db_session, nome="Operadora DRA-EDIT", asn=64515)
+    db_session.add(models.UpstreamCircuit(upstream_id=up_id, circuit_id=circ_id,
+                                          papel="principal", ordem=1))
+    db_session.commit()
+
+    update_session(db_session, sessao_id, BgpSessionUpdate(description="depois"), actor="cli")
+
+    assert db_session.get(models.BgpSession, sessao_id).description == "depois"
+
+
+def test_patch_que_move_a_sessao_para_circuito_vinculado_e_recusado(db_session: Session) -> None:
+    """O `or "circuit_id" in mudancas` da guarda não é folga: sem ele um PATCH que
+    só move a sessão, com o anúncio gravado, criaria o estado proibido sem passar
+    pela guarda."""
+    env = _ambiente(db_session)
+    circ_id = _circuito(db_session, env, code="CIRC-DRA-MOVE", edge_id=env["ne1_id"])
+    circ_up = _circuito(db_session, env, code="CIRC-DRA-MOVE-UP", edge_id=env["ne1_id"],
+                        vrf="CLIENTE-MOVE")
+    sessao_id = create_session(
+        db_session,
+        _sessao_data(env, circ_id, env["ne1_id"], default_route_advertise=True),
+        actor="cli",
+    ).id
+    up_id = _operadora_e_upstream(db_session, nome="Operadora DRA-MOVE", asn=64516)
+    vincular_circuito(db_session, up_id, circ_up, papel="principal", ordem=1, actor="cli")
+
+    with pytest.raises(ValidationError, match="default-route-advertise"):
+        update_session(db_session, sessao_id, BgpSessionUpdate(circuit_id=circ_up), actor="cli")
+
+
 def test_updates_de_default_route_e_politica(db_session: Session) -> None:
     """§3.6/§4.3: os três campos entram pelo PATCH, e `null` explícito limpa o
     nome importado (a revisão da adoção conta com isso para voltar ao §25.4)."""

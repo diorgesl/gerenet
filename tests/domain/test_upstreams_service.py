@@ -214,6 +214,26 @@ def test_vincular_circuito_inexistente(session, up):
         svc.vincular_circuito(session, up.id, 9999, papel="principal", ordem=1, actor="cli")
 
 
+def test_vincular_recusa_sessao_ativa_que_anuncia_a_default(session, up, circuito_up,
+                                                            bgp_session_principal):
+    """§3.5 pela origem: o vínculo não cria o estado que a guarda das sessões
+    proíbe — com o anúncio gravado o render emitiria `peer X default-route-advertise`
+    no enlace de upstream. E a recusa não deixa rastro: sem linha e sem auditoria
+    (o `flush` e o `registrar` não chegam a rodar)."""
+    bgp_session_principal.default_route_advertise = True
+    session.commit()
+    antes = _audit_tipos(session)
+
+    with pytest.raises(ValidationError, match="default-route-advertise"):
+        svc.vincular_circuito(session, up.id, circuito_up.id, papel="principal", ordem=1,
+                              actor="cli")
+
+    assert session.scalar(select(models.UpstreamCircuit).where(
+        models.UpstreamCircuit.circuit_id == circuito_up.id)) is None
+    assert svc.upstream_do_circuito(session, circuito_up.id) is None
+    assert _audit_tipos(session) == antes
+
+
 def test_vincular_propaga_e_audita(session, org_operadora, circuito_up, bgp_session_principal):
     up = svc.create_upstream(session, UpstreamCreate(
         name="transito-aud", tipo="transito", organization_id=org_operadora.id,

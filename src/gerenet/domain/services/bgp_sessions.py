@@ -284,10 +284,14 @@ def update_session(
     circ = get_circuit(session, circ_id)
     if circ.admin_status is False:
         raise ConflictError(f"Circuito {circ.code} desativado não recebe sessões.")
-    _recusa_anuncio_em_upstream(
-        session, circ_id,
-        bool(mudancas.get("default_route_advertise", sessao.default_route_advertise)),
-    )
+    # §3.5: a guarda decide sobre o estado resultante, mas só quando o payload pode
+    # mudá-lo — um PATCH que não toca nem o anúncio nem o circuito não é uma
+    # tentativa de anunciar, e recusá-lo congelava a sessão (I-1 da revisão final).
+    if "default_route_advertise" in mudancas or "circuit_id" in mudancas:
+        _recusa_anuncio_em_upstream(
+            session, circ_id,
+            bool(mudancas.get("default_route_advertise", sessao.default_route_advertise)),
+        )
     _recusa_politicas_de_mesmo_nome(
         import_route_policy=mudancas.get("import_route_policy", sessao.import_route_policy),
         export_route_policy=mudancas.get("export_route_policy", sessao.export_route_policy),
