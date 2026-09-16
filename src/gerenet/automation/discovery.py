@@ -350,6 +350,11 @@ def _sessao_de(peer: PeerConfig, candidato: Candidato, rede, orientacao: str) ->
         "bfd_enabled": peer.bfd,
         "graceful_restart": peer.graceful_restart,
         "shutdown": peer.shutdown,
+        # §4.3: o que o equipamento tem vira sugestão na revisão — quem decide
+        # entre manter, limpar ou renomear é o operador.
+        "default_route_advertise": peer.default_route_advertise,
+        "import_route_policy": peer.import_route_policy,
+        "export_route_policy": peer.export_route_policy,
     }
 
 
@@ -389,11 +394,62 @@ def _pendencia_de_politica(peer: PeerConfig, afi: str) -> Pendencia:
             "produto (full, parcial, default) não é recuperável do nome: escolha os "
             "perfis de importação e exportação na revisão.",
         )
+    # O nome citado é o da importação quando existe: é sob ele que o corpo da
+    # política passa a ser gerenciado (§4.2). Sem importação lida, a mensagem
+    # cita a exportação, que é o que sobrou da lista.
+    nome = peer.import_route_policy or nomes[0]
     return Pendencia(
         "politica_fora_do_padrao",
-        f"A política {nomes[0]} não segue o padrão de nome deste sistema: "
-        "escolha os perfis na revisão, sabendo que o render emitirá nomes novos.",
+        f"A política {nome} não segue o padrão de nome deste sistema: o nome "
+        "pode ser importado na revisão, e o gerenet passa a gerenciar o corpo da "
+        "política sob ele — o que a SoT tiver de diferente do que está no "
+        "equipamento muda na primeira mudança aprovada. Sem importar o nome, o "
+        "render emite nomes novos.",
     )
+
+
+def _politicas_em_uso(session: Session, device_id: int) -> dict[str, str]:
+    """Os nomes de route-policy importada que já têm dono no equipamento (§4.4).
+
+    A chave é o nome, o valor é quem o usa hoje, para a mensagem dizer onde está
+    o dono. Sessão DESATIVADA fica de fora: ela não é renderizada, e o nome
+    volta a estar livre.
+    """
+    em_uso: dict[str, str] = {}
+    for sessao in list_sessions(session, device_id=device_id, include_disabled=False):
+        for nome in (sessao.import_route_policy, sessao.export_route_policy):
+            if nome:
+                em_uso.setdefault(nome, f"sessão {sessao.id} ({sessao.remote_address})")
+    return em_uso
+
+
+def _conflitos_de_politica(
+    peer: PeerConfig, *, em_uso: dict[str, str], vistos: dict[str, str], descricao: str
+) -> list[Conflito]:
+    """§4.4 — o nome importado não pode ter dois donos no mesmo equipamento.
+
+    Dois peers com o mesmo nome e corpos diferentes sairiam sob um cabeçalho só
+    (`_apensa_definicao` deduplica por (tipo, nome) e guarda os textos num
+    conjunto: os dois blocos convivem). Não há modelo para a política
+    compartilhada — a adoção recusa, e o caminho de saída é renomear. O nome
+    visto nesta mesma leitura também conta, inclusive entre as duas famílias do
+    mesmo enlace.
+    """
+    conflitos: list[Conflito] = []
+    for nome in (peer.import_route_policy, peer.export_route_policy):
+        if not nome:
+            continue
+        dono = em_uso.get(nome) or vistos.get(nome)
+        if dono is not None:
+            conflitos.append(Conflito(
+                "politica_compartilhada",
+                f"A política {nome} já tem dono no mesmo equipamento ({dono}): dois "
+                "peers com o mesmo nome de política conviveriam sob um cabeçalho só. "
+                "Adote sem importar o nome, ou cadastre a política compartilhada à mão.",
+            ))
+        else:
+            vistos[nome] = descricao
+    return conflitos
 
 
 def _pendencias_de(
@@ -670,6 +726,12 @@ def listar_propostas(session: Session, device_id: int) -> ResultadoPropostas:
     snap = session.get(models.DeviceSnapshot, descoberta.snapshot_id)
     resultado.snapshot_age_seconds = (datetime.now(UTC) - snap.started_at).total_seconds()
     config = parse_config_vrp(texto_backup(snap))
+    # O índice do §4.4 é do equipamento inteiro: montado uma vez, ele responde
+    # por todas as propostas da leitura.
+    em_uso = _politicas_em_uso(session, device.id)
+    # O que esta leitura já viu, para o mesmo nome não entrar duas vezes por dois
+    # enlaces diferentes (inclusive as duas famílias do mesmo enlace).
+    vistos: dict[str, str] = {}
 
     por_enlace: dict[tuple[str | None, str], Proposta] = {}
     orfas: list[Proposta] = []
@@ -770,6 +832,10 @@ def listar_propostas(session: Session, device_id: int) -> ResultadoPropostas:
 
         proposta.candidatos.append(candidato)
         _acrescenta(proposta.conflitos, _conflitos_da_leitura(peer, candidato.vrf))
+        _acrescenta(proposta.conflitos, _conflitos_de_politica(
+            peer, em_uso=em_uso, vistos=vistos,
+            descricao=f"o peer {candidato.remote_address} desta mesma leitura",
+        ))
         _acrescenta(proposta.pendencias, _pendencias_de(
             session, device, peer, candidato,
             codigo_sugerido=proposta.circuit_code_sugerido,
