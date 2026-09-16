@@ -148,9 +148,12 @@ comparação (o perfil, o trunk) refaz a conferência e desmarca a caixa sozinho
   equipamento não tem, ou o contrário. É o que a configuração mudaria se fosse
   aplicada, e é este grupo que exige o `ciente`.
 - **O que a SoT não gerencia**: linha que o equipamento tem e o render não emite
-  de propósito — hoje o `description` e o `mtu` da subinterface. Numa borda real
-  elas estão em toda proposta, e "diferença exige `ciente`" degeneraria em
-  "marque sempre". Ficam visíveis, para leitura, e não gateiam nada.
+  de propósito — hoje só o `mtu` da subinterface. Numa borda real ele está em
+  toda proposta, e "diferença exige `ciente`" degeneraria em "marque sempre".
+  Fica visível, para leitura, e não gateia nada. A `description` **esteve** aqui
+  até a frente da velocidade: hoje a SoT a deriva do circuito e a emite, então
+  uma descrição divergente é mudança de verdade — e uma proposta cuja descrição
+  fuja do formato `<CÓDIGO> <ORG> [<VELOCIDADE>]` pede o `ciente`.
 
 O `ciente` é a caixa **Estou ciente destas diferenças**, e só aparece quando o
 primeiro grupo tem alguma linha — o que a SoT não gerencia não é assumido por

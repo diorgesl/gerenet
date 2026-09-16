@@ -14,16 +14,63 @@ def test_subinterface_dual() -> None:
         interface="Eth-Trunk127.4024", descricao=None, qinq=False, vid=4024,
         enderecos_v4=[{"endereco": "100.110.0.73", "mascara": "255.255.255.252"}],
         enderecos_v6=["2804:194C:1000::1100:73:1/126"],
-    ) == "interface Eth-Trunk127.4024\nvlan-type dot1q vid 4024\nip address 100.110.0.73 255.255.255.252\nipv6 enable\nipv6 address 2804:194C:1000::1100:73:1/126"
+    ) == "interface Eth-Trunk127.4024\n vlan-type dot1q vid 4024\n ip address 100.110.0.73 255.255.255.252\n ipv6 enable\n ipv6 address 2804:194C:1000::1100:73:1/126\n statistic enable"
 
 
 def test_subinterface_v4_descricao_sem_ipv6() -> None:
     assert _render(
         "subinterface",
-        interface="Eth-Trunk127.4023", descricao="Cliente A", qinq=False, vid=4023,
+        interface="Eth-Trunk127.4023", descricao="CIRC-4023 ACME [1G]", qinq=False, vid=4023,
         enderecos_v4=[{"endereco": "100.64.0.1", "mascara": "255.255.255.254"}],
         enderecos_v6=[],
-    ) == "interface Eth-Trunk127.4023\ndescription Cliente A\nvlan-type dot1q vid 4023\nip address 100.64.0.1 255.255.255.254"
+    ) == "interface Eth-Trunk127.4023\n description CIRC-4023 ACME [1G]\n vlan-type dot1q vid 4023\n ip address 100.64.0.1 255.255.255.254\n statistic enable"
+
+
+def test_subinterface_com_qos_nas_duas_direcoes() -> None:
+    """O `cir` sai de `velocidade_mbps × 1000` (kbps) e a direção sai por
+    extenso: é a forma que o VRP ecoa (§5)."""
+    assert _render(
+        "subinterface",
+        interface="Eth-Trunk127.626", descricao="CIRC-626 NETMAC [1G]", qinq=False, vid=626,
+        enderecos_v4=[{"endereco": "100.110.0.13", "mascara": "255.255.255.252"}],
+        enderecos_v6=[], cir_kbps=1024000,
+    ) == (
+        "interface Eth-Trunk127.626\n "
+        "description CIRC-626 NETMAC [1G]\n "
+        "vlan-type dot1q vid 626\n "
+        "ip address 100.110.0.13 255.255.255.252\n "
+        "statistic enable\n "
+        "qos car cir 1024000 inbound\n "
+        "qos car cir 1024000 outbound"
+    )
+
+
+def test_subinterface_sem_velocidade_nao_emite_qos() -> None:
+    """Item 13 — o golden exato, e não a pertinência.
+
+    `assert "qos car" not in texto` mede uma substring, e este arquivo é de
+    goldens exatos: ele passaria com o template reordenado, com o
+    `statistic enable` fora, ou com qualquer outra linha mudando de lugar, e
+    nada acusaria. O texto inteiro pinado mede o template.
+
+    A segunda chamada prende o ZERO: o guard é `{% if cir_kbps %}` e `0 × 1000`
+    é falso, então o `cir_kbps=0` tem de sair igual ao nulo. Se alguém trocar o
+    guard por `is not none`, o `qos car cir 0` que apareceria aqui é o que o VRP
+    recusaria no equipamento — e recusar a linha é diferente de ignorá-la.
+    """
+    ctx = {
+        "interface": "Eth-Trunk127.4024", "descricao": None, "qinq": False, "vid": 4024,
+        "enderecos_v4": [{"endereco": "100.64.0.1", "mascara": "255.255.255.254"}],
+        "enderecos_v6": [],
+    }
+    esperado = (
+        "interface Eth-Trunk127.4024\n"
+        " vlan-type dot1q vid 4024\n"
+        " ip address 100.64.0.1 255.255.255.254\n"
+        " statistic enable"
+    )
+    assert _render("subinterface", **ctx, cir_kbps=None) == esperado
+    assert _render("subinterface", **ctx, cir_kbps=0) == esperado
 
 
 def test_subinterface_qinq_0x88a8() -> None:
@@ -31,7 +78,7 @@ def test_subinterface_qinq_0x88a8() -> None:
         "subinterface",
         interface="Eth-Trunk127.100", descricao=None, qinq=True, vid=100,
         enderecos_v4=[], enderecos_v6=["2001:DB8::1/126"],
-    ) == "interface Eth-Trunk127.100\nvlan-type dot1q 0x88a8 vid 100\n# second-dot1q: encapsulamento interno duplo — dívida do ciclo C\nipv6 enable\nipv6 address 2001:DB8::1/126"
+    ) == "interface Eth-Trunk127.100\n vlan-type dot1q 0x88a8 vid 100\n# second-dot1q: encapsulamento interno duplo — dívida do ciclo C\n ipv6 enable\n ipv6 address 2001:DB8::1/126\n statistic enable"
 
 
 def test_prefix_list_v4_e_v6() -> None:
@@ -60,11 +107,11 @@ def test_route_policy_import_v4_com_lp_e_v6_sem_lp() -> None:
     assert _render(
         "route_policy_import", nome="RP-64500-IMPORT-V4", afi="ipv4",
         lista="IP-PFX-64500-IN-V4", local_preference=200,
-    ) == "route-policy RP-64500-IMPORT-V4 permit node 10\nif-match ip-prefix IP-PFX-64500-IN-V4\napply local-preference 200"
+    ) == "route-policy RP-64500-IMPORT-V4 permit node 10\n if-match ip-prefix IP-PFX-64500-IN-V4\n apply local-preference 200"
     assert _render(
         "route_policy_import", nome="RP-64500-IMPORT-V6", afi="ipv6",
         lista="IP-PFX-64500-IN-V6", local_preference=None,
-    ) == "route-policy RP-64500-IMPORT-V6 permit node 10\nif-match ipv6 address prefix-list IP-PFX-64500-IN-V6"
+    ) == "route-policy RP-64500-IMPORT-V6 permit node 10\n if-match ipv6 address prefix-list IP-PFX-64500-IN-V6"
 
 
 def test_community_filter() -> None:
@@ -80,11 +127,11 @@ def test_route_policy_import_up_full() -> None:
         deny_communities=["CF-64512-BLK-1"], fail_safe=False,
     ) == (
         "# up-full: accept-all do provedor, exceto as proteções — nós deny separados (if-match de tipos diferentes no mesmo nó é E; a negação de bogons e de communities de bloqueio exige OU)\n"
-        "route-policy RP-64512-IMPORT-V4 deny node 10\n"
+        "route-policy RP-64512-IMPORT-V4 deny node 10\n "
         "if-match ip-prefix IP-PFX-64512-IN-V4\n"
-        "route-policy RP-64512-IMPORT-V4 deny node 20\n"
+        "route-policy RP-64512-IMPORT-V4 deny node 20\n "
         "if-match community-filter CF-64512-BLK-1\n"
-        "route-policy RP-64512-IMPORT-V4 permit node 100\n"
+        "route-policy RP-64512-IMPORT-V4 permit node 100\n "
         "apply local-preference 120"
     )
 
@@ -106,13 +153,13 @@ def test_route_policy_import_up_full_com_aspath_proprias() -> None:
         fail_safe=False,
     ) == (
         "# up-full: accept-all do provedor, exceto as proteções — nós deny separados (if-match de tipos diferentes no mesmo nó é E; a negação de bogons e de communities de bloqueio exige OU)\n"
-        "route-policy RP-64512-IMPORT-V4 deny node 10\n"
+        "route-policy RP-64512-IMPORT-V4 deny node 10\n "
         "if-match ip-prefix IP-PFX-64512-IN-V4\n"
-        "route-policy RP-64512-IMPORT-V4 deny node 20\n"
+        "route-policy RP-64512-IMPORT-V4 deny node 20\n "
         "if-match as-path-filter AS-PATH-65001-OWN\n"
-        "route-policy RP-64512-IMPORT-V4 deny node 30\n"
+        "route-policy RP-64512-IMPORT-V4 deny node 30\n "
         "if-match community-filter CF-64512-BLK-1\n"
-        "route-policy RP-64512-IMPORT-V4 permit node 100\n"
+        "route-policy RP-64512-IMPORT-V4 permit node 100\n "
         "apply local-preference 120"
     )
 
@@ -125,7 +172,7 @@ def test_route_policy_import_up_full_aspath_sem_protecoes() -> None:
         deny_communities=[], deny_as_paths=["AS-PATH-65001-OWN"], fail_safe=False,
     ) == (
         "# up-full: accept-all do provedor, exceto as proteções — nós deny separados (if-match de tipos diferentes no mesmo nó é E; a negação de bogons e de communities de bloqueio exige OU)\n"
-        "route-policy RP-64512-IMPORT-V4 deny node 20\n"
+        "route-policy RP-64512-IMPORT-V4 deny node 20\n "
         "if-match as-path-filter AS-PATH-65001-OWN\n"
         "route-policy RP-64512-IMPORT-V4 permit node 100"
     )
@@ -138,9 +185,9 @@ def test_route_policy_import_up_full_v6_sem_lp() -> None:
         deny_communities=["CF-64512-BLK-1"], fail_safe=False,
     ) == (
         "# up-full: accept-all do provedor, exceto as proteções — nós deny separados (if-match de tipos diferentes no mesmo nó é E; a negação de bogons e de communities de bloqueio exige OU)\n"
-        "route-policy RP-64512-IMPORT-V6 deny node 10\n"
+        "route-policy RP-64512-IMPORT-V6 deny node 10\n "
         "if-match ipv6 address prefix-list IP-PFX-64512-IN-V6\n"
-        "route-policy RP-64512-IMPORT-V6 deny node 20\n"
+        "route-policy RP-64512-IMPORT-V6 deny node 20\n "
         "if-match community-filter CF-64512-BLK-1\n"
         "route-policy RP-64512-IMPORT-V6 permit node 100"
     )
@@ -166,11 +213,11 @@ def test_route_policy_import_up_parcial() -> None:
     ) == (
         '# up-parcial: somente rota default + rotas com a community de "parcial" '
         '(lista chega em deny_communities — aqui são nós de aceite)\n'
-        "route-policy RP-64512-IMPORT-V4 permit node 10\n"
-        "if-match ip-prefix IP-PFX-DEFAULT-V4\n"
+        "route-policy RP-64512-IMPORT-V4 permit node 10\n "
+        "if-match ip-prefix IP-PFX-DEFAULT-V4\n "
         "apply local-preference 200\n"
-        "route-policy RP-64512-IMPORT-V4 permit node 20\n"
-        "if-match community-filter CF-64512-PART-1\n"
+        "route-policy RP-64512-IMPORT-V4 permit node 20\n "
+        "if-match community-filter CF-64512-PART-1\n "
         "apply local-preference 200"
     )
 
@@ -182,8 +229,8 @@ def test_route_policy_import_up_default() -> None:
         deny_communities=[], fail_safe=False,
     ) == (
         "# up-default: somente a rota default do provedor\n"
-        "route-policy RP-64512-IMPORT-V4 permit node 10\n"
-        "if-match ip-prefix IP-PFX-DEFAULT-V4\n"
+        "route-policy RP-64512-IMPORT-V4 permit node 10\n "
+        "if-match ip-prefix IP-PFX-DEFAULT-V4\n "
         "apply local-preference 150"
     )
 
@@ -198,11 +245,11 @@ def test_route_policy_export_upstream_aplicacoes() -> None:
             {"tipo": "lp", "valor": "65530:70:150", "regiao": None},
         ],
     ) == (
-        "route-policy RP-64512-EXPORT-V4 permit node 10\n"
+        "route-policy RP-64512-EXPORT-V4 permit node 10\n "
         "if-match ip-prefix IP-PFX-64512-EXPORT-V4\n"
         "# TE: prepend (SP - if-match na camada de render)\n"
         "# TE: blackhole\n"
-        "# TE: lp\n"
+        "# TE: lp\n "
         "apply community 65530:20:2 65530:666:0 65530:70:150"
     )
 
@@ -214,7 +261,7 @@ def test_route_policy_export_upstream_uma_aplicacao() -> None:
         aplicacoes=[{"tipo": "lp", "valor": "65530:70:150", "regiao": None}],
     ) == (
         "route-policy RP-64512-EXPORT-V4 permit node 10\n"
-        "# TE: lp\n"
+        "# TE: lp\n "
         "apply community 65530:70:150"
     )
 
@@ -237,7 +284,7 @@ def test_route_policy_export_default_com_med_e_prepend() -> None:
     assert _render(
         "route_policy_export", nome="RP-64500-EXPORT-V6", afi="ipv6",
         lista="IP-PFX-DEFAULT-V6", med=50, prepend=2, asn_local=61785,
-    ) == "route-policy RP-64500-EXPORT-V6 permit node 10\nif-match ipv6 address prefix-list IP-PFX-DEFAULT-V6\napply med 50\napply as-path 61785 61785 additive"
+    ) == "route-policy RP-64500-EXPORT-V6 permit node 10\n if-match ipv6 address prefix-list IP-PFX-DEFAULT-V6\n apply med 50\n apply as-path 61785 61785 additive"
 
 
 def test_bgp_peer_v4_completo() -> None:
@@ -249,7 +296,7 @@ def test_bgp_peer_v4_completo() -> None:
         keepalive=30, holdtime=90, graceful_restart=True, bfd_enabled=True,
         shutdown=False, afi="ipv4", rp_import="RP-270620-IMPORT-V4",
         rp_export="RP-270620-EXPORT-V4", maximum_prefix=100, maximum_prefix_threshold=80,
-    ) == "bgp 61785\npeer 100.110.0.74 as-number 270620\npeer 100.110.0.74 description Cliente 270620\n# password no Vault (gerenet/bgp-sessions/1/password)\npeer 100.110.0.74 timer keepalive 30 hold 90\npeer 100.110.0.74 graceful-restart\npeer 100.110.0.74 bfd enable\nipv4-family unicast\n  peer 100.110.0.74 enable\n  peer 100.110.0.74 import route-policy RP-270620-IMPORT-V4\n  peer 100.110.0.74 export route-policy RP-270620-EXPORT-V4\n  peer 100.110.0.74 maximum-prefix 100 80"
+    ) == "bgp 61785\n peer 100.110.0.74 as-number 270620\n peer 100.110.0.74 description Cliente 270620\n# password no Vault (gerenet/bgp-sessions/1/password)\n peer 100.110.0.74 timer keepalive 30 hold 90\n peer 100.110.0.74 graceful-restart\n peer 100.110.0.74 bfd enable\n ipv4-family unicast\n  peer 100.110.0.74 enable\n  peer 100.110.0.74 import route-policy RP-270620-IMPORT-V4\n  peer 100.110.0.74 export route-policy RP-270620-EXPORT-V4\n  peer 100.110.0.74 maximum-prefix 100 80"
 
 
 def test_bgp_peer_v6_minimo_com_shutdown() -> None:
@@ -260,7 +307,7 @@ def test_bgp_peer_v6_minimo_com_shutdown() -> None:
         keepalive=None, holdtime=None, graceful_restart=False, bfd_enabled=False,
         shutdown=True, afi="ipv6", rp_import=None, rp_export=None,
         maximum_prefix=None, maximum_prefix_threshold=None,
-    ) == "bgp 61785\npeer 2804:194C:1000::1100:73:2 as-number 270620\npeer 2804:194C:1000::1100:73:2 shutdown\nipv6-family unicast\n  peer 2804:194C:1000::1100:73:2 enable"
+    ) == "bgp 61785\n peer 2804:194C:1000::1100:73:2 as-number 270620\n peer 2804:194C:1000::1100:73:2 shutdown\n ipv6-family unicast\n  peer 2804:194C:1000::1100:73:2 enable"
 
 
 def test_l2vc_ac_porta_fisica_untag() -> None:

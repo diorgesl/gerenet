@@ -17,15 +17,23 @@ runner = CliRunner()
 FIXTURE = Path("tests/fixtures/huawei_vrp/ne8000_display_current_configuration.txt")
 
 
-def _ambiente(db_session, tmp_path: Path) -> models.Device:
+def _ambiente(db_session, tmp_path: Path, *, com_mtu: bool = False) -> models.Device:
     site = create_site(db_session, SiteCreate(name="pop-desc-cli",
                                               p2p_ipv4_block="100.64.10.0/24"), actor="cli")
     dev = create_device(db_session, DeviceCreate(name="ne8000-desc-cli",
                                                  management_address="10.0.0.1", asn=65001),
                         actor="cli")
     link_device(db_session, site.id, dev.id, actor="cli")
+    texto = FIXTURE.read_text(encoding="utf-8")
+    if com_mtu:
+        # O `mtu` da subinterface é o que a SoT não gerencia (§6 do design): a
+        # linha entra no bloco do enlace, e não na fixture compartilhada — os
+        # outros cinco arquivos que a leem afirmam `nao_gerenciado == []`.
+        texto = texto.replace(
+            "interface Eth-Trunk127.1001\n", "interface Eth-Trunk127.1001\n mtu 9000\n", 1
+        )
     arquivo = tmp_path / "current.txt"
-    arquivo.write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    arquivo.write_text(texto, encoding="utf-8")
     db_session.add(models.DeviceSnapshot(device_id=dev.id, status="success",
                                         raw_files={"config_backup": [str(arquivo)]}))
     db_session.commit()
@@ -48,10 +56,10 @@ def test_show_detalha_pendencias_e_conflitos(db_session, tmp_path) -> None:
     assert r.exit_code == 0, r.output
     assert "organizacao_ausente" in r.output
     assert "senha_nao_legivel" in r.output
-    # A descrição da subinterface saiu do `faltando` para o `nao_gerenciado`:
-    # ela continua na tela, no bloco que diz que não exige ciente.
-    assert "o que a SoT não gerencia (não exige ciente):" in r.output
-    assert "      description CLIENTE-ALFA" in r.output
+    # A descrição da subinterface deixou de ser "não gerenciada": a SoT passou a
+    # emiti-la (§4), então o que o equipamento tem de diferente é diferença de
+    # verdade — ela continua na tela, agora no bloco das que exigem ciente.
+    assert "falta no render: description CLIENTE-ALFA" in r.output
 
 
 def test_show_imprime_a_explicacao_do_ensaio(db_session, tmp_path) -> None:
@@ -67,6 +75,25 @@ def test_show_imprime_a_explicacao_do_ensaio(db_session, tmp_path) -> None:
     assert r.exit_code == 0, r.output
     assert "fidelidade ensaio:" in r.output
     assert "a comparação não é confiável para uma sessão em VRF" in r.output
+
+
+def test_show_imprime_o_grupo_que_a_sot_nao_gerencia(db_session, tmp_path) -> None:
+    """Item 6 — o cabeçalho do grupo não gerenciado, de volta com teste.
+
+    O `mtu` da subinterface é o que a SoT não emite (§6 do design): não é
+    divergência e não exige `ciente`, mas o operador precisa vê-lo — é o que ele
+    vai encontrar no equipamento e a adoção não toca. O bloco próprio e o seu
+    cabeçalho existem desde a Task 6, e o teste que os dirigia foi reaponteado
+    para o grupo que gateia (Ruling 14): nada mais imprimia estas duas linhas, e
+    o cabeçalho podia divergir do grupo que ele diz imprimir sem que nada
+    acusasse.
+    """
+    dev = _ambiente(db_session, tmp_path, com_mtu=True)
+    r = runner.invoke(cli_app, ["discovery", "show", dev.name, "100.64.10.1"])
+    assert r.exit_code == 0, r.output
+    assert "fidelidade subinterface:" in r.output
+    assert "o que a SoT não gerencia (não exige ciente):" in r.output
+    assert "      mtu 9000" in r.output
 
 
 def test_ignore_e_unignore(db_session, tmp_path) -> None:
@@ -413,6 +440,50 @@ def test_adopt_com_ciente_na_linha_de_comando(db_session, tmp_path) -> None:
     assert "fidelidade peer:" in com_flag.output
     assert "    falta no render: peer 100.64.10.1 password [mascarado]" in com_flag.output
     assert com_flag.output.index("password [mascarado]") < com_flag.output.index("Circuito ")
+    # A identidade da revisão entra na prévia: `ENSAIO-` é o que o ensaio emite
+    # quando o código e a organização não lhe chegam, e nenhuma linha dele pode
+    # aparecer na tela que o `--ciente` assume. A descrição que sai é a da
+    # revisão (o equipamento tem outra, porque o nome da organização é outro).
+    assert "ENSAIO-" not in com_flag.output
+    assert "description ADOC-CLI-CIENTE-FLAG CLIENTE CIENTE FLAG" in com_flag.output
+
+
+def test_adopt_leva_a_velocidade_da_revisao_para_a_previa(db_session, tmp_path) -> None:
+    """A velocidade contratada entra na PRÉVIA como entra na escrita.
+
+    O `qos car` do ensaio sai dela (§5), e a subinterface da fixture tem
+    `qos car cir 1024000 cbs 18700000 green pass red discard` nas duas direções —
+    a dobra do `equivalencia_vrp` casa a forma curta do render com a longa do
+    VRP. Sem o parâmetro, a prévia mostra duas linhas que a adoção não cria, e o
+    `--ciente` assume o que o operador não tem como conferir depois.
+    """
+    dev = _ambiente(db_session, tmp_path)
+    json_revisao = tmp_path / "revisao.json"
+    json_revisao.write_text(json.dumps({
+        "device_id": dev.id, "vrf": None, "subinterface": "Eth-Trunk127.1001",
+        "circuit_code": "ADOC-CLI-VELOCIDADE", "access_device_id": dev.id,
+        "access_port": "GE0/0/1", "edge_trunk": "Eth-Trunk127",
+        "velocidade_mbps": 1024,
+        "organizacao_nova": {"name": "Cliente Velocidade", "kind": "downstream",
+                             "asn": 64512},
+        "sessoes": [{"afi": "ipv4"}, {"afi": "ipv6"}],
+        "ciente": True,
+    }), encoding="utf-8")
+
+    r = runner.invoke(cli_app, ["discovery", "adopt", dev.name, "100.64.10.1",
+                                "--json", str(json_revisao)])
+    assert r.exit_code == 0, r.output
+    # O bloco da subinterface foi impresso (as diferenças de descrição do enlace
+    # existem: o equipamento tem `CLIENTE-ALFA` e a revisão escreve outra), e
+    # nenhuma linha de `qos car` sobrou: a taxa do render casou com a do
+    # equipamento.
+    assert "fidelidade subinterface:" in r.output
+    assert "qos car" not in r.output
+    # E a velocidade que a revisão mandou é a que ficou gravada (§7).
+    circuito = db_session.scalar(
+        select(models.Circuit).where(models.Circuit.code == "ADOC-CLI-VELOCIDADE")
+    )
+    assert circuito.velocidade_mbps == 1024
 
 
 def test_adopt_com_arquivo_fora_de_utf8_nao_estoura(db_session, tmp_path) -> None:

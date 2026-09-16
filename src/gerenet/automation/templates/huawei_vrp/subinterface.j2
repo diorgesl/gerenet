@@ -18,3 +18,7 @@ interface {{ interface }}
  ipv6 address {{ v6 }}
 {% endfor %}
  statistic enable
+{% if cir_kbps %}
+ qos car cir {{ cir_kbps }} inbound
+ qos car cir {{ cir_kbps }} outbound
+{% endif %}

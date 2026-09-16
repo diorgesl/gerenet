@@ -238,9 +238,10 @@ def adotar(
 ) -> None:
     """Grava a cadeia da proposta na SoT. Nada é enviado ao equipamento.
 
-    A conferência de fidelidade sai na tela antes da escrita, com o mesmo trunk
-    e os mesmos perfis que a adoção vai gravar: é ela que o `--ciente` assume, e
-    assumir o que não foi mostrado é o que o diff impresso impede.
+    A conferência de fidelidade sai na tela antes da escrita, com o mesmo trunk,
+    os mesmos perfis e a mesma identidade (código, organização e velocidade) que
+    a adoção vai gravar: é ela que o `--ciente` assume, e assumir o que não foi
+    mostrado é o que o diff impresso impede.
     """
     with get_session() as session:
         encontrado = _resolve(session, device)
@@ -278,12 +279,27 @@ def adotar(
             # adoção usa: o `--ciente` (ou o `ciente` do arquivo) registra na
             # auditoria que o operador assumiu estas linhas, e assumir o que o
             # terminal não mostrou é o que esta impressão existe para impedir.
-            # O `show` imprime o mesmo bloco, mas nada obrigava a passar por
-            # ele — aqui a leitura e o aceite acontecem na mesma tela.
+            # O `show` imprime a mesma conferência, no mesmo formato, mas SEM a
+            # identidade da revisão: lá a descrição sai do `ENSAIO-...` — e nada
+            # obrigava a passar por ele de qualquer jeito. Aqui a leitura e o
+            # aceite acontecem na mesma tela.
+            # A identidade entra na mesma conta, com os blocos do registro: sem
+            # ela o ensaio emite a descrição do `ENSAIO-...`, sem as autorizações
+            # ele emite o peer sem o filtro de importação — e a prévia mostraria
+            # linhas que a escrita não cria, com o `--ciente` assumindo o que
+            # ninguém vê.
             _imprime_fidelidade(conferir_fidelidade(
                 session, proposta,
                 perfis=perfis_da_revisao(revisao),
                 edge_trunk=revisao.edge_trunk,
+                circuit_code=revisao.circuit_code,
+                organizacao_id=revisao.organizacao_id,
+                organizacao_nome=(revisao.organizacao_nova.name
+                                  if revisao.organizacao_nova else None),
+                organizacao_kind=(revisao.organizacao_nova.kind
+                                  if revisao.organizacao_nova else None),
+                autorizacoes=[(b.prefix, b.family) for b in revisao.autorizacoes],
+                velocidade_mbps=revisao.velocidade_mbps,
             ))
             circuit_id = adotar_proposta(session, proposta=proposta, revisao=revisao,
                                          actor="cli")

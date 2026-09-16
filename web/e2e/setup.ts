@@ -391,8 +391,11 @@ function python(args: string[]): string {
  * (subinterface com `vlan-type`/`ip address` + o peer BGP dela). Ela não vem de
  * equipamento nenhum, e é a única fonte de proposta do fumo.
  *
- * O `description` da subinterface é de propósito: é a linha que a SoT não
- * gerencia (§6), e é ela que faz a revisão mostrar o grupo de informação. */
+ * A `description` da subinterface é de propósito e FORA do formato do §4
+ * (`<CÓDIGO> <ORG> [<VELOCIDADE>]`): desde a frente da velocidade a SoT gerencia
+ * a linha, então a diferença cai no grupo que gateia e é ela que faz a revisão
+ * exigir o `ciente`. O grupo "a SoT não gerencia" (só o `mtu`) sai vazio — o
+ * seed não escreve `mtu` nenhum. */
 function configDoEnlace(v: {
   vid: number;
   cliente: string;

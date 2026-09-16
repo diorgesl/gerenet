@@ -129,16 +129,30 @@ def _reserva(session: Session, circuito: models.Circuit) -> dict[str, dict]:
 
 
 def _comandos_sub(
-    trunk: str, vid: int, qinq: bool, *, v4: dict | None, v6: str | None
+    trunk: str,
+    vid: int,
+    qinq: bool,
+    *,
+    v4: dict | None,
+    v6: str | None,
+    descricao: str | None,
+    velocidade_mbps: int | None,
 ) -> list[str]:
-    """Linhas de comando da subinterface (description só via session no B — §5.1)."""
+    """Linhas de comando da subinterface (§4/§5).
+
+    A `description` e o `qos car` derivam do circuito: o código e a organização
+    para a primeira, a velocidade contratada para o segundo. Velocidade nula não
+    emite QoS nenhum — o `cir` não tem de onde sair.
+    """
     contexto: dict = {
         "interface": naming.subinterface(trunk, vid),
-        "descricao": None,
+        "descricao": descricao,
         "qinq": qinq,
         "vid": vid,
         "enderecos_v4": [v4] if v4 else [],
         "enderecos_v6": [v6] if v6 else [],
+        # `cir` é kbps: 1024 Mbps viram 1024000, a mesma conta da operação (§2).
+        "cir_kbps": velocidade_mbps * 1000 if velocidade_mbps is not None else None,
     }
     return _render_template("subinterface", contexto).splitlines()
 
@@ -157,11 +171,15 @@ def _bloco_sub(session: Session, circuito: models.Circuit, device_id: int) -> li
     fams = _reserva(session, circuito)
     if not fams:
         return []
+    descricao = naming.descricao_subinterface(
+        circuito.code, circuito.organization.name, circuito.velocidade_mbps
+    )
     if circuito.vlan_mode == "unica":
         vid = fams["ipv4"]["vid"] if "ipv4" in fams else fams["ipv6"]["vid"]
         comandos = _comandos_sub(
             circuito.edge_trunk, vid, circuito.qinq,
             v4=fams.get("ipv4"), v6=fams.get("ipv6", {}).get("endereco"),
+            descricao=descricao, velocidade_mbps=circuito.velocidade_mbps,
         )
         return [BlocoRender("subinterface", "circuit", circuito.id, comandos)]
     blocos: list[BlocoRender] = []
@@ -172,6 +190,7 @@ def _bloco_sub(session: Session, circuito: models.Circuit, device_id: int) -> li
             circuito.edge_trunk, fams[fam]["vid"], circuito.qinq,
             v4=fams[fam] if fam == "ipv4" else None,
             v6=fams[fam]["endereco"] if fam == "ipv6" else None,
+            descricao=descricao, velocidade_mbps=circuito.velocidade_mbps,
         )
         blocos.append(BlocoRender("subinterface", "circuit", circuito.id, comandos))
     return blocos

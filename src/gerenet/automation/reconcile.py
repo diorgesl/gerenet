@@ -151,15 +151,23 @@ def _esperado_subinterfaces(blocos: list[BlocoRender]) -> dict[str, dict[str, li
     for bloco in blocos:
         if bloco.tipo != "subinterface" or not bloco.comandos:
             continue
-        nome = bloco.comandos[0].removeprefix("interface ")
+        nome = " ".join(bloco.comandos[0].split()).removeprefix("interface ")
         registro = esperadas.setdefault(nome, {"v4": [], "v6": []})
         for linha in bloco.comandos[1:]:
-            if linha.startswith("ip address "):
-                endereco, mascara = linha.removeprefix("ip address ").split()
+            # O prefixo é testado na linha dobrada, e não na crua: o render herda
+            # a indentação do template (`display current-configuration` escreve os
+            # sub-comandos com um espaço à esquerda), e o `startswith` na string
+            # crua não casaria. O modo de falha é silencioso e é o pior desta
+            # função: sem endereço esperado não nasce item nenhum, e a
+            # conferência diria "conforme" sobre uma ponta que sumiu do
+            # equipamento. Mesma regra e mesma forma do `_enderecos_do_bloco`.
+            dobrada = " ".join(linha.split())
+            if dobrada.startswith("ip address "):
+                endereco, mascara = dobrada.removeprefix("ip address ").split()
                 prefixlen = ipaddress.IPv4Network(f"0.0.0.0/{mascara}").prefixlen
                 registro["v4"].append(f"{endereco}/{prefixlen}")
-            elif linha.startswith("ipv6 address "):
-                registro["v6"].append(linha.removeprefix("ipv6 address "))
+            elif dobrada.startswith("ipv6 address "):
+                registro["v6"].append(dobrada.removeprefix("ipv6 address "))
     return esperadas
 
 

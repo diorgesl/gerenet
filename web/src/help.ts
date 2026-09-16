@@ -56,6 +56,7 @@ export const HELP = {
   "circuit.vrf": "Nome do VRF/VS do circuito; vazio = instância pública/global.",
   "circuit.mtu": "MTU do enlace (576–9600); coerente fim a fim no caminho do serviço.",
   "circuit.bandwidth": "Banda contratada (ex.: 1G, 10G, 500M).",
+  "circuit.velocidade_mbps": "Velocidade contratada em Mbps (ex.: 1024 = 1 Gbps). Entra na descrição da subinterface e no limitador de taxa (qos car). Uma taxa fora de 1–100000 Mbps é recusada.",
   "circuit.bfd": "BFD de intenção do enlace; no MVP o BFD efetivo vem da sessão BGP (bfd_enabled).",
   "circuit.p2p_v4_len": "Tamanho do enlace v4: /31 (padrão) ou /30, no bloco privado do site.",
   "circuit.edge_trunk": "Eth-Trunk de borda (opcional) que agrega o acesso do cliente.",
@@ -151,6 +152,7 @@ export const HELP = {
   "adocao.documento": "CNPJ/ownerid do registro (até 32 caracteres); é o que a consulta ao registro preenche quando encontra.",
   "adocao.as_set": "AS-SET do IRR (ex.: AS-64512) — o conjunto de onde as rotas do cliente são validadas.",
   "adocao.trunk": "O trunk do edge onde as subinterfaces do circuito moram. Sem ele a SoT não reproduz o bloco da subinterface do equipamento.",
+  "adocao.velocidade": "Velocidade contratada em Mbps, sugerida do QoS que o equipamento já tem. Vazio deixa o circuito sem taxa: sem ela não há descrição de velocidade nem qos car.",
   "adocao.ciente": "As diferenças listadas fariam o render mudar o equipamento. Marcar aqui registra que você assumiu, e a decisão fica na auditoria.",
   "adocao.segredo": "Caminho do segredo do peer no Vault (ex.: gerenet/bgp/100.64.10.1) — só o caminho: o valor nunca passa por esta tela. Em branco, a sessão nasce sem a senha conhecida pela SoT.",
 } as const;

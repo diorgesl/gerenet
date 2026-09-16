@@ -31,10 +31,15 @@ def _cr_upstream(db_session, up, *, acao="provision"):
 
 
 def _snapshot_peers_up(db_session, dev, peers):
-    """Snapshot success do edge com recursos mínimos (interfaces vazias; §5.1)."""
+    """Snapshot success do edge com recursos mínimos (interfaces vazias; §5.1).
+
+    O `config_backup` entra no shape como o coletor o grava (`{"backup": True}`
+    junto do arquivo) — o gate do plano o exige desde o I2.
+    """
     snap = models.DeviceSnapshot(
         device_id=dev.id, status="success",
-        resources={"interfaces": [], "bgp_peers": peers},
+        resources={"interfaces": [], "bgp_peers": peers,
+                   "config_backup": {"backup": True}},
         errors={}, raw_files={}, duration_ms=0,
     )
     db_session.add(snap)

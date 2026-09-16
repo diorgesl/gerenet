@@ -25,7 +25,8 @@ O circuito amarra cliente → POP → equipamentos → recursos. Campos:
 | QinQ | Ativa quando o acesso usa VLAN interna do cliente (dot1q + tag na borda). |
 | VRF | Nome do VRF/VS; **vazio = instância pública/global** (peers BGP na pública, §25.3). |
 | MTU | 576–9600 — coerente fim a fim no caminho do serviço. |
-| Banda | Texto (ex.: 1G, 10G, 500M). |
+| Banda | Texto (ex.: 1G, 10G, 500M) — a nota que o humano lê. |
+| Velocidade (Mbps) | A taxa contratada, em Mbps, que a máquina usa (ex.: `1024` = 1 Gbps). Vazio = "não sei a velocidade", e é o estado de todo circuito anterior a este campo. |
 | BFD | Intenção do enlace; o BFD efetivo no MVP vem da sessão BGP (`bfd_enabled`). |
 | Comprimento p2p v4 | `/31` (padrão) ou `/30`. |
 
@@ -52,6 +53,76 @@ Exemplo (spec §25.8): IPv4 `100.110.0.73` → octetos 2–4 `110.0.73` → díg
 
 Em circuito `ipv6` puro, o alocador também reserva um par IPv4 interno (só para
 derivar o sufixo — não vai para a interface).
+
+## A descrição e o QoS da subinterface
+
+A `description` da subinterface deriva do circuito:
+
+```
+description <CÓDIGO> <NOME DA ORGANIZAÇÃO> [<VELOCIDADE>]
+```
+
+| Velocidade | Linha |
+|---|---|
+| 1024 | `description CIRC-626 NETMAC [1G]` |
+| 100 | `description CIRC-500 ACME TELECOMUNICACOES [100M]` |
+| vazia | `description CIRC-500 ACME TELECOMUNICACOES` |
+
+O nome da organização vai em maiúsculas e sem acento, e cede no orçamento de 80
+caracteres se não couber — cortado seco. Os 80 são a premissa do sistema hoje;
+o limite real desta versão do VRP é o que a Etapa 3 do
+`docs/runbook-validacao-ne8000.md` confere. Velocidade múltipla de 1024 sai em
+`G`; qualquer outra sai em `M`.
+
+Com a velocidade preenchida, o render emite também o limitador de taxa nas duas
+direções, depois do `statistic enable`:
+
+```
+qos car cir <velocidade_mbps × 1000> inbound
+qos car cir <velocidade_mbps × 1000> outbound
+```
+
+O `cir` é em kbps: `1024` Mbps produzem `cir 1024000`. O render **não** emite o
+`cbs`, o `green pass` nem o `red discard`: a expectativa é que o VRP complete os
+três ao aplicar — é o que a captura real que originou o desenho mostra, e não
+uma observação do comando sendo completado —, e quem confirma é a coleta
+seguinte: se a linha do equipamento não voltar naquela forma, o bloco aparece de
+novo no plano como fora do desejado. O `cbs` e o `pir` **não são gerenciados**
+pela SoT: um `pir` que o equipamento tenha à mão não conta como divergência e
+não é apagado por uma mudança.
+
+**Circuito que já está provisionado converge numa mudança nova.** Até esta
+frente, o plano pulava a subinterface inteira pelo nome; agora ele confere
+também a descrição e o QoS, e o bloco entra no plano como qualquer outro, um
+`create`. Na execução, o re-diff o encontra já lá e fora de conformidade e o
+reemite inteiro — a palavra que o motor usa para esse bloco, `atualizar`, não
+aparece em tela nenhuma nem no histórico da mudança: o que você vê é o bloco de
+volta no plano. Reemitir endereço com o mesmo valor é inócuo no VRP, e o que a
+mudança registra é o estado desejado daquele pedaço.
+
+**A mudança não avisa se o equipamento recusar a descrição ou o QoS.** No
+provisionamento, o pós-check compara a intenção com a coleta (subinterface
+presente, endereços, peer) e **não lê o texto da configuração**: a mudança fecha
+`aplicado` do mesmo jeito. Se você provisionou e quer a certeza agora, confira a
+subinterface no equipamento ou na configuração que a coleta guardou (página
+Snapshots). O item de pós-check previsto para esse caso
+(`subinterface.conteudo`, de atenção) não chega a sair — a conferência que o
+produz só roda na remoção, e lá o bloco é um `undo`, que já resolve como
+"consta" antes da conferência de conteúdo.
+Quem conserta é a mudança seguinte: o plano reencontra a linha fora do desejado
+e reemite o bloco.
+
+**Tirar a velocidade não tira o limitador.** Apagar o campo na edição do
+circuito faz o render parar de emitir a taxa e a descrição perder o colchete.
+Numa mudança seguinte a descrição converge (o bloco é reemitido por estar fora
+de conformidade), mas o `qos car` **fica** no equipamento: nada no plano manda
+remover a taxa, então o circuito segue limitado na velocidade antiga enquanto a
+SoT diz que não há velocidade nenhuma. Tirar a velocidade de um circuito já
+provisionado é caso de **remoção e reprovisionamento** do bloco — a remoção leva
+o limitador junto com a subinterface.
+
+A descrição é **derivada**: renomear a organização não varre o parque — cada
+circuito pega o nome novo na sua próxima mudança, planejada e aprovada por si.
 
 ## Reservar recursos
 

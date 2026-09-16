@@ -76,7 +76,9 @@ def _circuito(db_session: Session, *, com_sessao: bool = True) -> int:
         )
     # Snapshot com recursos (encontrado real, sem nada deste circuito): o
     # plano da ativação sai cheio, baseline congelado — sem ele o rollback do
-    # CLI falharia com PlanoRollbackVazio (baseline ausente, §5.2).
+    # CLI falharia com PlanoRollbackVazio (baseline ausente, §5.2). O
+    # `config_backup` entra no shape como o coletor o grava (`{"backup": True}`
+    # junto do arquivo) — o gate do plano o exige desde o I2.
     db_session.add(
         models.DeviceSnapshot(
             device_id=dev.id,
@@ -85,6 +87,7 @@ def _circuito(db_session: Session, *, com_sessao: bool = True) -> int:
                 "version": {"version": "8.210", "uptime": "10 days"},
                 "interfaces": [],
                 "bgp_peers": [],
+                "config_backup": {"backup": True},
             },
         )
     )

@@ -12,7 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from gerenet.automation import naming
+from gerenet.automation import naming, subinterface
 from gerenet.automation.parsers.huawei_vrp.config_vrp import (
     ConfigVrp,
     PeerConfig,
@@ -212,6 +212,7 @@ class Proposta:
     vlan_mode: str
     p2p_v4_len: int | None
     qinq: bool = False
+    velocidade_mbps: int | None = None
     organizacao_id: int | None = None
     organizacao_sugerida: str | None = None
     site_id: int | None = None
@@ -709,6 +710,7 @@ def listar_propostas(session: Session, device_id: int) -> ResultadoPropostas:
                     # as duas famílias ou uma por família — o empilhamento é
                     # outro eixo, e o render só o emite com `Circuit.qinq`.
                     qinq=sub.qinq,
+                    velocidade_mbps=_velocidade_do_qos(sub),
                     p2p_v4_len=rede.prefixlen if (rede.version == 4 and par_p2p) else None,
                     site_id=device.site_id,
                     circuit_code_sugerido=(
@@ -796,53 +798,6 @@ class Diferenca:
     def exige_ciente(self) -> bool:
         """Só o que a SoT VAI MUDAR no equipamento gateia o aceite (design §6)."""
         return bool(self.sobrando or self.faltando)
-
-
-def _equivalencia_vrp(texto: str) -> str:
-    """Duas linhas que o VRP escreve de duas formas, na forma do render.
-
-    `vlan-type dot1q 1001` e `vlan-type dot1q vid 1001` são a mesma linha, e o
-    mesmo vale para `ipv6 address <endereço> 126` e `<endereço>/126`. O parser
-    lê as duas formas e o render escreve a segunda, então sem a equivalência
-    toda proposta com VLAN e IPv6 nasce com dois falsos `sobrando` e dois falsos
-    `faltando` no contexto da subinterface, que é onde a mudança de estado da
-    interface tem de aparecer. São a mesma linha escrita de dois jeitos, não
-    dois estados: por isso é equivalência, e não normalização de conveniência.
-    """
-    partes = texto.split()
-    if len(partes) == 3 and partes[:2] == ["vlan-type", "dot1q"] and partes[2].isdigit():
-        return f"vlan-type dot1q vid {partes[2]}"
-    if len(partes) == 4 and partes[:2] == ["ipv6", "address"] and partes[3].isdigit():
-        return f"ipv6 address {partes[2]}/{partes[3]}"
-    return texto
-
-
-def _contexto_interface(texto: str, nome: str) -> set[str]:
-    """Linhas da configuração dentro do bloco `interface <nome>`.
-
-    O cabeçalho fica de fora daqui: ele abre o contexto, não é linha dele. Quem
-    compara o nome é a conferência, e por fora — ela põe `interface <nome>` nos
-    dois lados (`conferir_fidelidade`), porque o `<trunk>.<vid>` do render
-    contra o nome do bloco lido é a única linha que denuncia um trunk errado.
-
-    Comentário (`#`, com ou sem texto) também fica de fora, e antes da regra de
-    contexto: o `_normaliza_linhas` já descarta os dois do lado do render, e um
-    comentário com texto na coluna 0 zerava o `dentro` aqui — as linhas de
-    endereço que vinham depois ficavam de fora da comparação e o render as
-    acusava como sobra.
-    """
-    linhas: set[str] = set()
-    dentro = False
-    for bruta in texto.splitlines():
-        linha = bruta.strip()
-        if not linha or linha.startswith("#"):
-            continue
-        if not bruta[:1].isspace():
-            dentro = linha == f"interface {nome}"
-            continue
-        if dentro:
-            linhas.add(_equivalencia_vrp(linha))
-    return linhas
 
 
 def _contexto_peer(texto: str, endereco: str) -> set[str]:
@@ -991,7 +946,7 @@ def _indice_definicoes(texto: str) -> dict[str, tuple[str, ...]]:
 
     Comentário é qualquer linha começando com `#`, e não só o separador
     sozinho, e ele some ANTES da regra de contexto — como no
-    `_contexto_interface` e no parser da configuração. O render deste projeto
+    `subinterface.linhas_da_interface` e no parser da configuração. O render deste projeto
     emite comentário com texto na coluna 0 dentro do bloco (`# up-full: ...`,
     `# TE: ...`), e tratá-lo como linha de topo fecharia o bloco ali mesmo: as
     linhas seguintes sairiam da leitura em silêncio e o render as acusaria como
@@ -1021,8 +976,34 @@ def _normaliza_linhas(linhas: list[str]) -> set[str]:
         texto = " ".join(linha.split())
         if not texto or texto.startswith(("#", "undo ")):
             continue
-        saida.add(_equivalencia_vrp(texto))
+        saida.add(subinterface.equivalencia_vrp(texto))
     return saida
+
+
+# O teto do campo de velocidade, em Mbps: o MESMO `le=100000` de
+# `CircuitCreate`/`CircuitUpdate` (schemas.py, §7). A leitura recusa antes de o
+# formulário recusar — um `cir 1000000000` no equipamento sugere 1000000, e a
+# revisão que aceitasse a sugestão morreria com 422 no schema, longe da causa.
+LIMITE_VELOCIDADE_MBPS = 100000
+
+
+def _velocidade_do_qos(sub) -> int | None:
+    """O `cir` do equipamento na unidade do campo, só quando ele serve (§7).
+
+    `cir` é kbps e a velocidade é Mbps: `1024000` vira `1024`. Não múltiplo de
+    1000 é captura estranha, e a sugestão fica vazia em vez de arredondar —
+    um número inventado aqui vira QoS errado no equipamento mais adiante.
+
+    O teto vale pelo mesmo motivo: acima do que o campo aceita, a sugestão
+    vazia é a resposta honesta, e um número que o `AdocaoIn` recusaria depois
+    faria o operador levar um erro de schema no lugar de uma proposta sem
+    sugestão. O limite é inclusivo, como o `le` do schema: 100 Gbps é taxa que
+    se contrata.
+    """
+    if sub.qos_cir is None or sub.qos_cir <= 0 or sub.qos_cir % 1000:
+        return None
+    mbps = sub.qos_cir // 1000
+    return mbps if mbps <= LIMITE_VELOCIDADE_MBPS else None
 
 
 def _trunk_da_subinterface(proposta: Proposta) -> str | None:
@@ -1046,6 +1027,13 @@ def _ensaio(
     session: Session, proposta: Proposta,
     perfis: dict[str, dict[str, int | None]] | None = None,
     edge_trunk: str | None = None,
+    *,
+    circuit_code: str | None = None,
+    organizacao_id: int | None = None,
+    organizacao_nome: str | None = None,
+    organizacao_kind: str | None = None,
+    autorizacoes: list[tuple[str, str]] | None = None,
+    velocidade_mbps: int | None = None,
 ) -> dict:
     """Objetos transitórios com a forma do que a adoção criaria.
 
@@ -1062,25 +1050,98 @@ def _ensaio(
     trunk que a escrita não tem daria por fiel um circuito que nasce sem bloco
     nenhum. Sem valor na revisão, o ensaio deriva o trunk do nome da subinterface
     (o que a proposta sugere), que é o comportamento de quando não há revisão.
+
+    `circuit_code`, `organizacao_id`, `organizacao_nome`, `organizacao_kind` e
+    `velocidade_mbps` são a identidade que a revisão vai gravar, e entram pela
+    mesma razão do trunk: a `description` da subinterface deriva do código do
+    circuito, do nome da organização e da velocidade (§4), e o `kind` da
+    organização é lido pelo render na hora de montar o conjunto de clientes
+    (`_autorizadas_clientes`). Sem eles, o ensaio emitiria a descrição do código
+    `ENSAIO-...` com a organização de mentira, e TODA adoção acusaria uma
+    diferença de descrição que a escrita não cria — pedindo `ciente` para assumir
+    uma linha que ninguém mudou.
+
+    `autorizacoes` é a lista de `(prefixo, família)` dos blocos que a revisão
+    traz do registro e que a adoção grava como autorização da organização nova.
+    Elas são o que faz o `_bloco_import` emitir o filtro de importação e a
+    route-policy que o peer referencia: sem elas, o ensaio renderiza um peer SEM
+    o `import route-policy` que o equipamento tem, e a linha do próprio
+    equipamento aparece como `faltando` — o `ciente` sobre a linha que esta
+    adoção escreve.
     """
     device = get_device(session, proposta.device_id)
-    org_id = proposta.organizacao_id
+    # O nome da revisão vence a organização que a proposta casou por ASN: é a
+    # organização da PROPOSTA que é heurística, e a adoção não a consulta — com
+    # `organizacao_id` vazio ela cria a da revisão, e é o nome dela que a
+    # `description` vai carregar. Só sem os dois (a leitura que ainda não tem
+    # revisão, o `show` e a rota) é que o ensaio se apoia no que a proposta leu.
+    org_id = organizacao_id or (None if organizacao_nome is not None
+                                else proposta.organizacao_id)
     if org_id is None:
+        # Sem id, a organização ainda nasceria: é o caso da revisão que cria uma
+        # nova. O nome dela vem da revisão, e não do `ENSAIO-...`, porque é ele
+        # que a `description` da subinterface carrega — e um nome de mentira
+        # aqui faria toda adoção acusar uma diferença de descrição que a escrita
+        # não cria (§7).
+        # A organização do ensaio é descartável e existe pelo que o render lê
+        # dela: o `name` (a descrição da subinterface, §4), o `kind`
+        # (`_autorizadas_clientes` deixa as operadoras fora do conjunto de
+        # clientes) e as autorizações penduradas nela. O ASN do peer ficava
+        # gravado aqui e batia na unicidade do §14.1 justamente quando a revisão
+        # cria uma organização nova para um peer cujo ASN já tem dono — o caso
+        # comum, o do cliente já cadastrado — e o ensaio morria em
+        # `AVISO_SEM_ENSAIO` antes de comparar nada. Quem recusa o ASN repetido é
+        # a escrita (`_confere_asn_livre`), com a frase do conflito; o ensaio não
+        # tem por que antecipar isso com uma frase sobre restrição de unicidade.
         org = models.Organization(
-            name=f"ENSAIO-{device.name}-{proposta.vid}",
-            asn=proposta.candidatos[0].asn_remote if proposta.candidatos else None,
+            name=organizacao_nome or f"ENSAIO-{device.name}-{proposta.vid}",
+            # O `kind` da revisão vem junto pelo mesmo motivo do nome e do
+            # código; sem ele a descartável fica no default do modelo
+            # (`downstream`) e o ensaio de uma organização operadora sairia com
+            # autorizações que a operadora não tem.
+            kind=organizacao_kind or "downstream",
         )
         session.add(org)
         session.flush()
         org_id = org.id
+    if autorizacoes:
+        # Linhas de MODELO, e não o `create_authorization`: aquele serviço faz
+        # `session.rollback()` no próprio `IntegrityError` (docstring dele), e um
+        # rollback aqui dentro leva a transação EXTERNA junto com o SAVEPOINT —
+        # exatamente o que a conferência existe para impedir (ela roda dentro da
+        # transação da adoção). O que entra é a linha que o render lê:
+        # organização, família, prefixo e a origem que a escrita grava; o
+        # `admin_status` fica no default, que é o que o `list_authorizations`
+        # filtra.
+        # A lista é deduplicada por `(família, prefixo)` — a chave da idempotência
+        # da escrita, que com a organização fixa do ensaio é o que sobra dela —,
+        # preservando a primeira ocorrência. É o que faz o ensaio e a escrita
+        # concordarem sobre QUANTAS linhas a lista vira: sem isto o prefixo
+        # repetido renderizaria o bloco duas vezes (o índice 10 e o 20 da
+        # prefix-list), e a conferência acusaria uma diferença que a escrita não
+        # cria, porque o `create_authorization` devolve a linha do primeiro.
+        vistas: set[tuple[str, str]] = set()
+        for prefixo, family in autorizacoes:
+            chave = (family, prefixo)
+            if chave in vistas:
+                continue
+            vistas.add(chave)
+            session.add(models.BgpPrefixAuthorization(
+                organization_id=org_id, family=family, prefix=prefixo, origin="registro",
+            ))
+        session.flush()
     circ = models.Circuit(
-        code=f"ENSAIO-{device.name}-{proposta.vid}", organization_id=org_id,
+        # O código da revisão: a `description` sai dele (§4), e um código de
+        # mentira acusaria diferença em toda adoção.
+        code=circuit_code or f"ENSAIO-{device.name}-{proposta.vid}",
+        organization_id=org_id,
         site_id=proposta.site_id or device.site_id, access_port="ensaio",
         edge_device_id=device.id,
         # O trunk da revisão vence; sem ela, o derivado do nome da subinterface.
         edge_trunk=edge_trunk if edge_trunk is not None else _trunk_da_subinterface(proposta),
         stack=proposta.stack, vlan_mode=proposta.vlan_mode,
         qinq=proposta.qinq,          # sem isto a fidelidade acusa diferença em todo QinQ
+        velocidade_mbps=velocidade_mbps,
         p2p_v4_len=proposta.p2p_v4_len or 31,
     )
     session.add(circ)
@@ -1115,18 +1176,21 @@ def _ensaio(
     return {"circuito": circ, "sessoes": sessoes}
 
 
-# Linhas de subinterface que o render não emite: o slot `description` do
-# template existe e nada o preenche, e não há `mtu` de subinterface.
-_NAO_GERENCIADAS_SUBINTERFACE = ("description ", "mtu ")
+# Linhas de subinterface que o render não emite. A `description` SAIU daqui: o
+# render passou a emiti-la (§4) e a SoT passou a gerenciá-la, então uma
+# descrição diferente no equipamento é diferença que exige ciente (§7). O `mtu`
+# fica: não há MTU de subinterface no modelo nem no template.
+_NAO_GERENCIADAS_SUBINTERFACE = ("mtu ",)
 
 
 def _particiona_subinterface(linhas: tuple[str, ...]) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Separa o que a SoT gerencia do que ela só não emite (design §17.1).
 
-    O render não tem `description` de subinterface (o slot existe no template e
-    nada o preenche) nem `mtu`, e numa borda real os dois estão em toda
-    subinterface. Deixá-los no `faltando` faria "diferença exige ciente"
-    degenerar em "marque sempre".
+    O que sobra é o `mtu`, que não existe no modelo nem no template, e numa
+    borda real está em toda subinterface. Deixá-lo no `faltando` faria
+    "diferença exige ciente" degenerar em "marque sempre". A `description`
+    esteve aqui até a frente da velocidade; hoje a SoT a emite (§4), e uma
+    descrição divergente é mudança de verdade.
     """
     gerenciadas, nao_gerenciadas = [], []
     for linha in linhas:
@@ -1139,6 +1203,12 @@ def conferir_fidelidade(
     session: Session, proposta: Proposta,
     *, perfis: dict[str, dict[str, int | None]] | None = None,
     edge_trunk: str | None = None,
+    circuit_code: str | None = None,
+    organizacao_id: int | None = None,
+    organizacao_nome: str | None = None,
+    organizacao_kind: str | None = None,
+    autorizacoes: list[tuple[str, str]] | None = None,
+    velocidade_mbps: int | None = None,
 ) -> list[Diferenca]:
     """O que a SoT reproduziria × o que a configuração tem (spec §9).
 
@@ -1154,6 +1224,22 @@ def conferir_fidelidade(
     escrita cria sem bloco de subinterface. É ele que o render usa para nomear a
     subinterface, e o nome entra na comparação contra o do bloco lido: um trunk
     divergente vira diferença nos dois lados, e exige `ciente`.
+
+    `circuit_code`, `organizacao_id`, `organizacao_nome` e `velocidade_mbps` são
+    o resto da identidade que a adoção vai gravar. A `description` da
+    subinterface deriva dos três primeiros (§4) e o `qos car` do quarto (§5):
+    com a identidade errada, o ensaio acusa diferença de descrição e de taxa em
+    toda adoção, e a revisão degenera em "marque o ciente sempre".
+
+    `organizacao_kind` é o `kind` da organização NOVA da revisão, e
+    `autorizacoes` são os blocos `(prefixo, família)` que ela traz do registro.
+    Os dois entram pelo mesmo princípio dos demais: o ensaio tem de ter a forma
+    exata do que a escrita produz. O `kind` é lido pelo render ao montar o
+    conjunto de clientes (`_autorizadas_clientes` exclui as operadoras), e as
+    autorizações são o que faz o `_bloco_import` emitir o filtro de importação:
+    sem elas o ensaio renderiza o peer SEM o `import route-policy` que o
+    equipamento tem, e a linha do equipamento aparece como `faltando` — o
+    `ciente` cobrado sobre a linha que a própria adoção cria.
 
     O ensaio roda o render de verdade, e não uma reimplementação da montagem
     dos comandos: é o mesmo código que a adoção usaria, então a conferência não
@@ -1215,7 +1301,12 @@ def conferir_fidelidade(
     ensaio = session.begin_nested()
     try:
         try:
-            criados = _ensaio(session, proposta, perfis, edge_trunk)
+            criados = _ensaio(
+                session, proposta, perfis, edge_trunk,
+                circuit_code=circuit_code, organizacao_id=organizacao_id,
+                organizacao_nome=organizacao_nome, organizacao_kind=organizacao_kind,
+                autorizacoes=autorizacoes, velocidade_mbps=velocidade_mbps,
+            )
         except IntegrityError:
             # Uma restrição de unicidade recusou o ensaio (a reserva que a
             # proposta pede já existe, na mesma grafia, é o caso comum): sem
@@ -1247,7 +1338,7 @@ def conferir_fidelidade(
             ))
         if proposta.subinterface is not None:
             esperado = _normaliza_linhas(comandos_sub)
-            encontrado = _contexto_interface(texto, proposta.subinterface)
+            encontrado = subinterface.linhas_da_interface(texto, proposta.subinterface)
             # O NOME da interface entra na conta, dos dois lados: o `<trunk>.<vid>`
             # que o render monta (com o trunk da revisão, que a adoção grava) e o
             # nome do bloco lido da configuração. O `discard` que estava aqui só

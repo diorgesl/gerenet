@@ -125,11 +125,16 @@ def test_render_dual_completo_ordenado(db_session: Session) -> None:
     assert all(b.objeto == "session" for b in resultado.blocos[1:])
 
     sub = resultado.blocos[0]
-    assert sub.comandos[0] == "interface Eth-Trunk127.2"
-    assert sub.comandos[1] == "vlan-type dot1q vid 2"
-    assert "ip address 100.64.0.0 255.255.255.254" in sub.comandos
-    assert "ipv6 enable" in sub.comandos
-    assert "ipv6 address 2804:194C:1000::6400:1/126" in sub.comandos
+    # As asserções leem a linha dobrada, como os leitores de produção: o render
+    # herda a indentação do template por sub-comando.
+    comandos = [" ".join(c.split()) for c in sub.comandos]
+    assert comandos[0] == "interface Eth-Trunk127.2"
+    # §4: `<CÓDIGO> <NOME DA ORG>`, na forma que o VRP escreve (maiúsculas ASCII)
+    assert comandos[1] == "description CIRC-R-1 CLIENTE RENDER"
+    assert comandos[2] == "vlan-type dot1q vid 2"
+    assert "ip address 100.64.0.0 255.255.255.254" in comandos
+    assert "ipv6 enable" in comandos
+    assert "ipv6 address 2804:194C:1000::6400:1/126" in comandos
 
     assert resultado.texto == "\n".join(b.texto for b in resultado.blocos)
 
@@ -363,11 +368,15 @@ def test_render_stack_ipv6_nao_emite_par_v4_interno(db_session: Session) -> None
     resultado = render_desejado(db_session, env["ne_id"])
     sub = next(b for b in resultado.blocos if b.tipo == "subinterface")
     # Ruling 3: o par v4 interno (notes "Par v4 interno — derivação do sufixo")
-    # nunca vira endereço de interface numa interface IPv6-only
-    assert "interface Eth-Trunk127.3" in sub.comandos
-    assert not any(l.startswith("ip address") for l in sub.comandos)
-    assert "ipv6 enable" in sub.comandos
-    assert "ipv6 address 2804:194C:1000::6400:1/126" in sub.comandos
+    # nunca vira endereço de interface numa interface IPv6-only. O prefixo é
+    # testado na linha dobrada: na linha crua, com a indentação do template, o
+    # `startswith` seria falso para TODO endereço e a asserção passaria sem
+    # medir nada.
+    comandos = [" ".join(c.split()) for c in sub.comandos]
+    assert "interface Eth-Trunk127.3" in comandos
+    assert not any(l.startswith("ip address") for l in comandos)
+    assert "ipv6 enable" in comandos
+    assert "ipv6 address 2804:194C:1000::6400:1/126" in comandos
 
 
 def test_render_duas_sessoes_mesmo_asn_afi_deduplica_definicoes(db_session: Session) -> None:
@@ -494,8 +503,12 @@ def test_subinterface_usa_a_ponta_superior_quando_a_linha_diz(db_session: Sessio
     # a sessão é o que leva o circuito ao render (render_desejado itera as
     # sessões do device); ela nasce na ponta de cima, como no circuito adotado.
     _sessao(db_session, env, circ_id, afi="ipv4", local_address=esperado, remote_address=remoto)
+    # Linha dobrada: na crua, com a indentação do template, os dois
+    # `startswith` seriam falsos — a asserção positiva falharia e a negativa
+    # passaria sem medir nada.
     linhas = [
-        linha for bloco in render_desejado(db_session, env["ne_id"]).blocos
+        " ".join(linha.split())
+        for bloco in render_desejado(db_session, env["ne_id"]).blocos
         for linha in bloco.comandos
     ]
     assert any(linha.startswith(f"ip address {esperado} ") for linha in linhas)
@@ -504,5 +517,29 @@ def test_subinterface_usa_a_ponta_superior_quando_a_linha_diz(db_session: Sessio
     # seguiria passando: é a linha do `ipv6 address` que prende a orientação.
     esperado_v6 = pontas_v6(redes[6], "superior")[0]
     inferior_v6 = pontas_v6(redes[6], "inferior")[0]
-    assert any(linha.strip() == f"ipv6 address {esperado_v6}" for linha in linhas)
-    assert not any(linha.strip() == f"ipv6 address {inferior_v6}" for linha in linhas)
+    assert any(linha == f"ipv6 address {esperado_v6}" for linha in linhas)
+    assert not any(linha == f"ipv6 address {inferior_v6}" for linha in linhas)
+
+
+def test_subinterface_qos_vem_da_velocidade_contratada(db_session: Session) -> None:
+    """O `cir` sai de `velocidade_mbps × 1000` (kbps), não de um literal.
+
+    O mesmo campo tem duas contas, e elas não são a mesma: o sufixo da
+    descrição (`naming._velocidade_legivel`) divide por 1024 — 1024 Mbps são
+    `[1G]` — enquanto o `cir` do VRP é em kbps e converte por mil. Prender as
+    duas no mesmo teste é o que impede a unificação silenciosa: um `× 1024`
+    deixaria o sufixo lendo `[1G]` e o equipamento recebendo `cir 1048576` —
+    limitador de taxa errado, invisível até alguém inspecionar o QoS na caixa.
+    """
+    from gerenet.automation.render import render_desejado
+
+    env = _ambiente(db_session)
+    circ_id = _circuito_reservado(
+        db_session, env, code="CIRC-R-VEL", stack="ipv4", velocidade_mbps=1024
+    )
+    _sessao(db_session, env, circ_id, afi="ipv4")
+
+    texto = render_desejado(db_session, env["ne_id"]).texto
+    assert "description CIRC-R-VEL CLIENTE RENDER [1G]" in texto
+    assert "qos car cir 1024000 inbound" in texto
+    assert "qos car cir 1024000 outbound" in texto

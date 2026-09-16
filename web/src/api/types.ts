@@ -104,6 +104,7 @@ export interface CircuitOut {
   vrf: string | null;
   mtu: number | null;
   bandwidth: string | null;
+  velocidade_mbps: number | null;
   bfd: boolean;
   p2p_v4_len: 30 | 31;
   description: string | null;
@@ -623,6 +624,8 @@ export interface DiscoveryPropostaOut {
   vlan_mode: string;
   p2p_v4_len: number | null;
   qinq: boolean;
+  /** A velocidade sugerida, lida do `qos car cir` do equipamento (§7). */
+  velocidade_mbps: number | null;
   organizacao_id: number | null;
   organizacao_sugerida: string | null;
   site_id: number | null;
@@ -686,6 +689,7 @@ export interface DiscoveryAdocaoIn {
   access_device_id: number;
   access_port: string;
   edge_trunk: string | null;
+  velocidade_mbps: number | null;
   organizacao_id: number | null;
   organizacao_nova: {
     name: string;

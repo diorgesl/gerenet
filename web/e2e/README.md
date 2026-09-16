@@ -144,14 +144,13 @@ reutiliza esses objetos) e um job órfão consumido depois pelo worker é no-op
   (lista de Equipamentos → "Migrar" do `ne8000-disco-01`), confere que a
   proposta do seed está lá com o "Adotar" habilitado, abre a revisão, confere
   o código sugerido, o trunk derivado e o nome da organização nova, preenche
-  o acesso, marca o `ciente` se a página pedir, adota e confere o relato, a
-  proposta fora da lista e o circuito na lista de Circuitos. A fixture de hoje
-  não pede `ciente` (a única diferença é o `description` da subinterface, que é
-  do grupo que a SoT não gerencia) — a marcação é defensiva, porque a caixa
-  só aparece quando há diferença que mudaria o equipamento. O que o fumo prova
-  é o **caminho de escrita**, e não a salvaguarda: sem diferença que gateie, o
-  aceite não é exercitado ponta a ponta — quem cobre o gate é o Vitest
-  (`Discovery.test.tsx`).
+  o acesso, marca o `ciente` (exigido: a fixture escreve a `description` fora
+  do formato do §4 de propósito, e a diferença cai no grupo que muda o
+  equipamento — o fumo exercita o gate, não só o caminho de escrita), adota e
+  confere o relato, a proposta fora da lista e o circuito na lista de
+  Circuitos. O grupo "o que a SoT não gerencia" (só o `mtu`) sai vazio, e a
+  página não desenha cabeçalho de grupo vazio. O detalhe do gate linha a linha
+  é do Vitest (`Discovery.test.tsx`).
 
 Relatório: `playwright-report/` (html) e artefatos em `test-results/`
 (ambos ignorados pelo git).

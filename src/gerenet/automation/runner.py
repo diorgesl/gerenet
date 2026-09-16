@@ -19,7 +19,7 @@ from pathlib import Path
 from redis import Redis
 from sqlalchemy.orm import Session
 
-from gerenet.automation import removal
+from gerenet.automation import removal, subinterface
 from gerenet.automation.collectors import COLLECTORS, comandos_verbose
 from gerenet.automation.netmiko_conn import connect_and_apply, connect_and_run
 from gerenet.automation.parsers.huawei_vrp.merge import merge_parsed
@@ -377,10 +377,16 @@ def _peer_asn(comandos: list[str]) -> int | None:
 
 
 def _peer_familia(comandos: list[str]) -> str | None:
-    """AFI do bloco (`ipv4-family unicast`/`ipv6-family unicast`), ou None."""
-    if any(c.startswith("ipv6-family") for c in comandos):
+    """AFI do bloco (`ipv4-family unicast`/`ipv6-family unicast`), ou None.
+
+    O prefixo é testado na linha normalizada: o render pode vir indentado (o
+    `display current-configuration` escreve os sub-comandos com um espaço), e o
+    `startswith` na string crua não casaria.
+    """
+    linhas = [" ".join(c.split()) for c in comandos]
+    if any(c.startswith("ipv6-family") for c in linhas):
         return "ipv6"
-    if any(c.startswith("ipv4-family") for c in comandos):
+    if any(c.startswith("ipv4-family") for c in linhas):
         return "ipv4"
     return None
 
@@ -394,7 +400,8 @@ def _enderecos_do_bloco(comandos: list[str]) -> dict[str, list[str]]:
     """
     v4: list[str] = []
     v6: list[str] = []
-    for linha in comandos:
+    for bruta in comandos:
+        linha = " ".join(bruta.split())
         m = re.match(r"ip address (\S+) (\S+)$", linha)
         if m:
             endereco, mascara = m.group(1), m.group(2)
@@ -443,7 +450,9 @@ def _estado_do_bloco(bloco: dict, recursos: dict, texto: str) -> str:
     maximum-prefix quando o bloco os carrega) — binding ausente/diferente é
     "conflito". ASN não confirmado ⇒ ausente (conservador §5.1.3); ASN
     DIFERENTE para a mesma (afi, peer) ⇒ "conflito" (nunca "já presente");
-    prefix_list e route-policy pelo padrão de texto no backup.
+    prefix_list e route-policy pelo padrão de texto no backup. Subinterface com
+    nome e endereços no lugar mas sem a `description` ou o QoS do bloco é
+    "atualizar": o bloco vai inteiro ao equipamento (§6).
     """
     tipo = bloco.get("tipo")
     comandos = bloco.get("comandos") or []
@@ -466,13 +475,17 @@ def _estado_do_bloco(bloco: dict, recursos: dict, texto: str) -> str:
         # nome presente SEM o endereço esperado é a divergência do §5.3, nunca
         # "já presente" (revisão T6 F1).
         esperados = _enderecos_do_bloco(comandos)
-        if not esperados:
-            return "consta"
         encontrada = encontradas[0]
         for chave, coluna in (("v4", "enderecos_v4"), ("v6", "enderecos_v6")):
             if any(esperado not in encontrada.get(coluna, []) for esperado in esperados.get(chave, [])):
                 return "conflito"
-        return "consta"
+        # Nome e endereços batem; falta saber se a `description` e o QoS do
+        # bloco estão lá — é o que separa "consta" de "atualizar" (§6).
+        if subinterface.conteudo_conforme(
+            comandos, subinterface.linhas_da_interface(texto, nome)
+        ):
+            return "consta"
+        return "atualizar"
     if tipo == "bgp_peer":
         remote = _peer_remote(comandos)
         if remote is None:
@@ -570,10 +583,17 @@ def _re_diff(blocos: list[dict], recursos: dict, texto: str) -> tuple[list[dict]
     Regras: conflito de identidade (ex.: mesmo (afi, peer) com ASN diferente)
     ⇒ aborta; tudo consta ⇒ pulado; tudo ausente ⇒ aplica; mistura de constas
     e ausentes entre creates ⇒ aborta — o plano congelado ficou desatualizado
-    (config inalterada? §12.2). Devolve (a_aplicar, a_pular, erro_divergencia).
+    (config inalterada? §12.2). `atualizar` aplica e NÃO conta como evidência
+    de plano velho (§6). Devolve (a_aplicar, a_pular, erro_divergencia).
     """
     a_aplicar: list[dict] = []
     a_pular: list[dict] = []
+    # Os dois lados do abort de plano velho (§12.2): `constam` são os creates que
+    # o plano prometia criar e já estão completos; `por_ausencia` é o que a
+    # aplicação manda por o objeto faltar ou por haver remoção a fazer. Só os
+    # blocos que NÃO são delete entram em `constam`, então ele é só de creates.
+    constam: list[dict] = []
+    por_ausencia: list[dict] = []
     for bloco in blocos:
         estado = _estado_do_bloco(bloco, recursos, texto)
         if estado == "conflito":
@@ -582,17 +602,31 @@ def _re_diff(blocos: list[dict], recursos: dict, texto: str) -> tuple[list[dict]
                 "identidade do encontrado não confere com o plano (§5.3)."
             )
         if bloco.get("acao", "create") == "delete":
-            (a_pular if estado == "ausente" else a_aplicar).append(bloco)
+            if estado == "ausente":
+                a_pular.append(bloco)
+            else:
+                a_aplicar.append(bloco)
+                por_ausencia.append(bloco)
+        elif estado == "atualizar":
+            # §6: nome e endereços batem e falta descrição ou QoS. Vai para a
+            # APLICAÇÃO — e fica FORA dos dois lados do abort logo abaixo. O
+            # objeto está no equipamento (não é ausente) e o que falta é
+            # conteúdo desta frente (não é consta). Contá-lo de qualquer um dos
+            # lados abortaria um plano legítimo com um circuito completo e outro
+            # para atualizar, que são dois creates.
+            a_aplicar.append(bloco)
         elif estado == "consta":
             a_pular.append(bloco)
+            constam.append(bloco)
         else:
             a_aplicar.append(bloco)
-    if a_aplicar and any(bloco.get("acao", "create") == "create" for bloco in a_pular):
+            por_ausencia.append(bloco)
+    if por_ausencia and constam:
         # Só create consta+ausente no mesmo plano é divergência (plano congelado
         # desatualizado, §12.2). Remove (delete) parcial é natural: pular o que
         # já não existe e remover o que existe é a própria idempotência (§3.2) —
         # sem abort, o step reexecutável converge sem reconciliar o plano.
-        bloco = next(b for b in a_pular if b.get("acao", "create") == "create")
+        bloco = constam[0]
         return [], [], (
             f"Estado divergente no objeto {bloco['tipo']} (#{bloco.get('objeto_id')}): apenas "
             "parte do plano consta do encontrado (config inalterada? §12.2) — "
@@ -636,6 +670,16 @@ def _verifica_aplicados(step: ChangeStep, snap: DeviceSnapshot) -> list[dict]:
                 "tipo": f"{bloco['tipo']}.ausente", "severidade": "critica",
                 "esperado": f"{objeto} presente", "encontrado": f"{objeto} ausente",
                 "acao": "Aplicar manualmente e revalidar.",
+            })
+        elif estado == "atualizar":
+            # §6: o bloco está lá pelo que o pós-check mede (nome + endereços);
+            # o que não chegou foi a descrição ou o QoS. Atenção, e não crítica:
+            # o que é crítico é o objeto não estar no equipamento.
+            items.append({
+                "tipo": f"{bloco['tipo']}.conteudo", "severidade": "atencao",
+                "esperado": f"{objeto} com a descrição e o QoS do plano",
+                "encontrado": f"{objeto} sem a descrição ou o QoS",
+                "acao": "Conferir a configuração da subinterface no equipamento.",
             })
     return items
 

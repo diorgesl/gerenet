@@ -14,7 +14,7 @@ from gerenet.domain.services.bgp_sessions import create_session
 from gerenet.domain.services.circuits import create_circuit
 from gerenet.domain.services.errors import ConflictError, ValidationError
 from gerenet.domain.services.ipam import reservar_adocao
-from gerenet.domain.services.organizations import create_organization
+from gerenet.domain.services.organizations import _confere_nome_livre, create_organization
 from gerenet.domain.services.prefix_authorizations import create_authorization
 from gerenet.domain.validators import endereco_canonico
 
@@ -233,11 +233,47 @@ def adotar_proposta(session: Session, *, proposta, revisao: schemas.AdocaoIn, ac
             "A revisão não cobre " + ", ".join(faltando) + " do enlace: sem a sessão, o "
             "peer fica fora da SoT e a descoberta devolve o mesmo enlace para sempre."
         )
+    # O nome da organização nova é conferido ANTES da conferência de fidelidade:
+    # o ensaio cria a organização descartável com esse nome (é ele que a
+    # `description` da subinterface carrega) e o `flush` dele bate na unicidade
+    # do §14.1 quando o nome já tem dono. Sem esta guarda a recusa chegava como
+    # `AVISO_SEM_ENSAIO` — a frase que manda o operador procurar reserva de VLAN
+    # e de endereço —, e a escrita, que é quem recusa de verdade, nunca era
+    # alcançada para dizer o nome do conflito. O `create_organization` confere o
+    # mesmo antes do `flush` dele; aqui a adoção não passa pelo serviço antes da
+    # conferência, então a checagem é feita por ela.
+    if revisao.organizacao_id is None and revisao.organizacao_nova is not None:
+        _confere_nome_livre(session, revisao.organizacao_nova.name)
+    # O mesmo movimento do `_confere_nome_livre`, um passo adiante: o input
+    # contraditório (blocos de prefixo + organização EXISTENTE) era recusado na
+    # escrita, e só depois da conferência — o operador via a mensagem do
+    # `ciente`, marcava o aceite por hábito e só então descobria o que havia
+    # para corrigir. A guarda lê dois campos da revisão e não toca a sessão, e
+    # por isso a ordem entre ela e a conferência é escolha, não dependência.
+    if revisao.autorizacoes and revisao.organizacao_id is not None:
+        raise ValidationError(
+            "As autorizações de prefixo só entram com a organização nova: para uma "
+            "organização existente, cadastre os blocos na página dela."
+        )
     # O que o operador escolheu entra na conferência: sem os perfis o ensaio não
     # renderiza o corpo da política de exportação, que é justamente o que ele
     # escolhe errado; sem o trunk, a comparação não vale para o que vai gravar.
+    # A identidade (o código, a organização, a velocidade e o `kind` dela) entra
+    # pela mesma razão: é dela que a `description` da subinterface e o `qos car`
+    # saem, e um ensaio com a identidade do `ENSAIO-...` acusaria diferença em
+    # toda adoção. As autorizações entram porque são elas que fazem o ensaio
+    # emitir o filtro de importação: sem elas, o `import route-policy` que o
+    # equipamento tem apareceria como diferença e o `ciente` seria cobrado sobre
+    # a linha que esta mesma escrita cria.
     perfis = perfis_da_revisao(revisao)
-    difs = conferir_fidelidade(session, proposta, perfis=perfis, edge_trunk=revisao.edge_trunk)
+    difs = conferir_fidelidade(
+        session, proposta, perfis=perfis, edge_trunk=revisao.edge_trunk,
+        circuit_code=revisao.circuit_code, organizacao_id=revisao.organizacao_id,
+        organizacao_nome=revisao.organizacao_nova.name if revisao.organizacao_nova else None,
+        organizacao_kind=revisao.organizacao_nova.kind if revisao.organizacao_nova else None,
+        autorizacoes=[(b.prefix, b.family) for b in revisao.autorizacoes],
+        velocidade_mbps=revisao.velocidade_mbps,
+    )
     ensaio = [d for d in difs if d.contexto == "ensaio"]
     if ensaio:
         # A `explicacao` é a frase escrita para o operador (o ensaio recusado, o
@@ -267,11 +303,6 @@ def adotar_proposta(session: Session, *, proposta, revisao: schemas.AdocaoIn, ac
         raise ValidationError(
             "Informe a organização: escolha uma existente ou crie a nova com o ASN "
             f"{asn_remoto}."
-        )
-    if revisao.autorizacoes and revisao.organizacao_id is not None:
-        raise ValidationError(
-            "As autorizações de prefixo só entram com a organização nova: para uma "
-            "organização existente, cadastre os blocos na página dela."
         )
 
     # O `stack` sai das sessões que vão nascer, e não do que a proposta sugeriu: o
@@ -321,6 +352,7 @@ def adotar_proposta(session: Session, *, proposta, revisao: schemas.AdocaoIn, ac
                 edge_device_id=proposta.device_id, edge_trunk=revisao.edge_trunk,
                 stack=stack, vlan_mode=proposta.vlan_mode, qinq=proposta.qinq,
                 p2p_v4_len=proposta.p2p_v4_len or 31, vrf=proposta.vrf,
+                velocidade_mbps=revisao.velocidade_mbps,
             ),
             actor=actor, commit=False,
         )

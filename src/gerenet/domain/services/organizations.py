@@ -25,6 +25,24 @@ def _confere_asn_livre(session: Session, asn: int | None, ignorando_id: int | No
         raise ConflictError(f"Já existe organização com ASN {asn}.")
 
 
+def _confere_nome_livre(session: Session, nome: str | None, ignorando_id: int | None = None) -> None:
+    """Nome único mesmo entre desativados, como o ASN (§14.1).
+
+    A frase é a MESMA do `IntegrityError` do `create_organization`: quem chama
+    fora do serviço — a adoção, que não passa por ele para conferir — devolve o
+    mesmo diagnóstico, e não um "conflito de integridade" genérico. A checagem
+    vem antes do `flush` porque o `flush` falho deixa a transação inutilizável
+    (o `rollback` do serviço levaria a transação de quem chamou junto).
+    """
+    if nome is None:
+        return
+    stmt = select(models.Organization).where(models.Organization.name == nome)
+    if ignorando_id is not None:
+        stmt = stmt.where(models.Organization.id != ignorando_id)
+    if session.scalars(stmt).first() is not None:
+        raise ConflictError(f"Já existe organização com o nome {nome}.")
+
+
 def create_organization(
     session: Session, data: OrganizationCreate, *, actor: str, commit: bool = True
 ) -> models.Organization:
@@ -32,6 +50,7 @@ def create_organization(
     dump = data.model_dump()
     _valida_asn(dump.get("asn"))
     _confere_asn_livre(session, dump.get("asn"))
+    _confere_nome_livre(session, data.name)
     org = models.Organization(**dump)
     session.add(org)
     try:

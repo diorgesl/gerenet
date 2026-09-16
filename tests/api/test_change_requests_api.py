@@ -89,7 +89,9 @@ def _cria_cenario(
     if com_snapshot:
         # Snapshot com recursos (encontrado real, sem nada deste circuito): o
         # plano da ativação sai cheio, baseline congelado e aviso None (T3:
-        # tem_recursos).
+        # tem_recursos). O `config_backup` entra no shape como o coletor o
+        # grava (`{"backup": True}` junto do arquivo) — o gate do plano o exige
+        # desde o I2.
         db_session.add(
             models.DeviceSnapshot(
                 device_id=ne.id,
@@ -98,6 +100,7 @@ def _cria_cenario(
                     "version": {"version": "8.210", "uptime": "10 days"},
                     "interfaces": [],
                     "bgp_peers": [],
+                    "config_backup": {"backup": True},
                 },
             )
         )

@@ -10,15 +10,21 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from gerenet.automation import removal, render
+from gerenet.automation import removal, render, subinterface
 from gerenet.domain import models
 from gerenet.domain.services.bgp_sessions import list_sessions
 from gerenet.domain.services.errors import ValidationError
 
-_RECURSOS_MINIMOS = ("interfaces", "bgp_peers")
+# `config_backup` entra no gate porque o `_ja_existe` da subinterface lê o TEXTO
+# da configuração (`removal.texto_backup`): sem ele o diff não conferiria nada e
+# ainda assim diria ter conferido — o bloco que já está no equipamento entra no
+# plano como `create` e, na execução (com a coleta boa), o re-diff §5.3 aborta
+# com "apenas parte do plano consta (config inalterada?)", mandando o operador
+# procurar no equipamento um problema que veio do plano.
+_RECURSOS_MINIMOS = ("interfaces", "bgp_peers", "config_backup")
 _SEM_RECURSOS_AVISO = (
-    "Snapshot sem recursos de interfaces/peers: skip do diff vazio; "
-    "a execução re-coleta antes do re-diff (§5.1)."
+    "Snapshot sem recursos de interfaces/peers/backup da configuração: skip do "
+    "diff vazio; a execução re-coleta antes do re-diff (§5.1)."
 )
 
 
@@ -68,10 +74,16 @@ def _peer_asn(comandos: list[str]) -> int | None:
 
 
 def _peer_familia(comandos: list[str]) -> str | None:
-    """AFI do bloco (`ipv4-family unicast`/`ipv6-family unicast`), ou None."""
-    if any(c.startswith("ipv6-family") for c in comandos):
+    """AFI do bloco (`ipv4-family unicast`/`ipv6-family unicast`), ou None.
+
+    O prefixo é testado na linha normalizada: o render pode vir indentado (o
+    `display current-configuration` escreve os sub-comandos com um espaço), e o
+    `startswith` na string crua não casaria.
+    """
+    linhas = [" ".join(c.split()) for c in comandos]
+    if any(c.startswith("ipv6-family") for c in linhas):
         return "ipv6"
-    if any(c.startswith("ipv4-family") for c in comandos):
+    if any(c.startswith("ipv4-family") for c in linhas):
         return "ipv4"
     return None
 
@@ -81,7 +93,16 @@ def _ja_existe(bloco: render.BlocoRender, recursos: dict, texto: str) -> bool:
     if bloco.tipo == "subinterface":
         comandos = bloco.comandos or [""]
         nome = comandos[0].split(None, 1)[1] if " " in comandos[0] else ""
-        return nome in {i.get("nome") for i in recursos.get("interfaces", [])}
+        if nome not in {i.get("nome") for i in recursos.get("interfaces", [])}:
+            return False
+        # O nome está lá, mas o bloco pode estar sem a `description` e o QoS
+        # desta frente (§6): quem responde é o texto da configuração coletada.
+        # Backup ausente devolve conjunto vazio, e daí o bloco ENTRA no plano —
+        # é a direção conservadora: refazer um bloco idempotente é melhor do que
+        # dar por presente o que ninguém conseguiu conferir.
+        return subinterface.conteudo_conforme(
+            bloco.comandos, subinterface.linhas_da_interface(texto, nome)
+        )
     if bloco.tipo == "prefix_list":
         partes = bloco.comandos[0].split() if bloco.comandos else []
         if len(partes) >= 3 and partes[0] == "ip" and partes[1].endswith("-prefix"):

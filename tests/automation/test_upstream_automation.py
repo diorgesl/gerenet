@@ -30,9 +30,15 @@ def _peers_up(
 
 
 def _snapshot_up(session, edge_device: models.Device, peers: list[dict]) -> models.DeviceSnapshot:
-    """Snapshot success do edge com recursos mínimos (interfaces vazias; §5.1)."""
+    """Snapshot success do edge com recursos mínimos (interfaces vazias; §5.1).
+
+    O `config_backup` entra no shape como o coletor o grava (`{"backup": True}`
+    junto do arquivo) — o gate do plano o exige desde o I2.
+    """
     snap = models.DeviceSnapshot(
-        device_id=edge_device.id, status="success", resources={"interfaces": [], "bgp_peers": peers},
+        device_id=edge_device.id, status="success",
+        resources={"interfaces": [], "bgp_peers": peers,
+                   "config_backup": {"backup": True}},
         errors={}, raw_files={}, duration_ms=0,
     )
     session.add(snap)

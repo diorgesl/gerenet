@@ -273,6 +273,7 @@ export type CircuitCreateIn = {
   vrf?: string | null;
   mtu?: number | null;
   bandwidth?: string | null;
+  velocidade_mbps?: number | null;
   bfd?: boolean;
   p2p_v4_len?: 30 | 31;
   description?: string | null;
@@ -853,6 +854,27 @@ export function useDiscoveryDesdesignorar() {
   return mutation;
 }
 
+/** A identidade que a conferência usa: o que a adoção VAI gravar e que o ensaio
+ * precisa ter para a comparação valer (§6 do design da velocidade).
+ *
+ * Tudo texto (menos o id da organização) de propósito: a assinatura que
+ * invalida o aceite compara o que o operador DIGITOU. Com o número já
+ * normalizado, `0100` e `100` seriam a mesma coisa, e o aceite viajaria contra
+ * um diff que a tela nunca mostrou. */
+export type IdentidadeDaConferencia = {
+  edgeTrunk: string;
+  circuitCode: string;
+  organizacaoId: number;
+  organizacaoNome: string;
+  velocidade: string;
+  /** Os blocos marcados na revisão, já na forma `família:prefixo` do query
+   * string — a MESMA lista que o POST de adoção manda, e a que faz o
+   * `_bloco_import` emitir o filtro de importação. Marcar ou desmarcar uma
+   * caixa muda o que o ensaio renderiza, então entra na assinatura do aceite
+   * como os outros campos: o `ciente` não viaja sobre um diff que ninguém viu. */
+  autorizacoes: string[];
+};
+
 /** Os perfis entram na chave de propósito: trocar um `select` de perfil refaz a
  * conferência, porque o corpo da política de exportação muda com ele. */
 export const useFidelidade = (
@@ -860,15 +882,28 @@ export const useFidelidade = (
   vrf: string | null,
   subinterface: string | null,
   perfis: Record<string, { import?: number; export?: number }> = {},
-  edgeTrunk: string | null = null,
+  identidade: IdentidadeDaConferencia | null = null,
 ) =>
   useQuery({
-    queryKey: ["fidelidade", deviceId, vrf, subinterface, perfis, edgeTrunk],
+    queryKey: ["fidelidade", deviceId, vrf, subinterface, perfis, identidade],
     queryFn: () => {
       const qs = new URLSearchParams({ device_id: String(deviceId) });
       if (vrf) qs.set("vrf", vrf);
       if (subinterface) qs.set("subinterface", subinterface);
-      if (edgeTrunk) qs.set("edge_trunk", edgeTrunk);
+      if (identidade) {
+        if (identidade.edgeTrunk) qs.set("edge_trunk", identidade.edgeTrunk);
+        if (identidade.circuitCode) qs.set("circuit_code", identidade.circuitCode);
+        if (identidade.organizacaoId > 0) {
+          qs.set("organizacao_id", String(identidade.organizacaoId));
+        }
+        if (identidade.organizacaoNome) qs.set("organizacao_nome", identidade.organizacaoNome);
+        if (identidade.velocidade) qs.set("velocidade_mbps", identidade.velocidade);
+        // Um `append` por bloco, e não um `set`: a lista é repetida na query
+        // (`?autorizacoes=ipv4:...&autorizacoes=ipv6:...`), e o `set` deixaria
+        // só o último como autorização do ensaio — a prévia voltaria a acusar o
+        // filtro que a adoção cria por conta dos demais.
+        for (const bloco of identidade.autorizacoes) qs.append("autorizacoes", bloco);
+      }
       for (const [afi, p] of Object.entries(perfis)) {
         if (p.import) qs.set(`import_${afi}`, String(p.import));
         if (p.export) qs.set(`export_${afi}`, String(p.export));

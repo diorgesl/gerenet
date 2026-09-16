@@ -288,3 +288,61 @@ def test_comentario_com_texto_nao_fecha_o_bloco_derivado() -> None:
     assert {p.address for p in config.peers} == {"10.0.0.9", "100.64.10.1"}
     assert _por_endereco(config, "100.64.10.1").habilitado is True
     assert config.avisos == ()
+
+
+def test_le_o_qos_car_da_subinterface() -> None:
+    """O `cir` é a taxa que o equipamento aplica; a revisão da adoção a sugere
+    como velocidade do circuito (§7)."""
+    config = parse_config_vrp(
+        "interface Eth-Trunk127.626\n"
+        " vlan-type dot1q 626\n"
+        " description CIRC-626 NETMAC [1G]\n"
+        " statistic enable\n"
+        " qos car cir 1024000 cbs 18700000 green pass red discard inbound\n"
+        " qos car cir 1024000 cbs 18700000 green pass red discard outbound\n"
+    )
+    (sub,) = config.subinterfaces
+    assert sub.qos_cir == 1024000
+
+
+def test_qos_car_com_cir_diferente_nas_direcoes_nao_tem_cir() -> None:
+    """M1 — `cir` diferente nas duas direções não dá taxa para sugerir.
+
+    A sugestão da revisão grava a taxa no circuito e o render passa a emitir
+    esse número nas DUAS direções: uma delas sem lastro no equipamento. É a
+    mesma recusa dos outros dois casos que não inventam número (o `cir` não
+    múltiplo de 1000 e o acima do teto). O caso comum — as duas linhas do
+    render com o mesmo valor — continua sugerindo aquele valor.
+    """
+    def _config(cir_in: str, cir_out: str) -> str:
+        return (
+            "interface Eth-Trunk127.626\n"
+            " vlan-type dot1q 626\n"
+            f" qos car cir {cir_in} cbs 18700000 green pass red discard inbound\n"
+            f" qos car cir {cir_out} cbs 18700000 green pass red discard outbound\n"
+        )
+
+    (divergente,) = parse_config_vrp(_config("1024000", "2000000")).subinterfaces
+    assert divergente.qos_cir is None
+
+    (igual,) = parse_config_vrp(_config("1024000", "1024000")).subinterfaces
+    assert igual.qos_cir == 1024000
+
+
+def test_subinterface_sem_qos_nao_tem_cir() -> None:
+    config = parse_config_vrp(
+        "interface Eth-Trunk127.100\n vlan-type dot1q 100\n statistic enable\n"
+    )
+    (sub,) = config.subinterfaces
+    assert sub.qos_cir is None
+
+
+def test_qos_car_com_valor_torto_vira_aviso() -> None:
+    """A mesma tolerância do `mtu`: a leitura avisa e segue, em vez de estourar
+    na configuração inteira por causa de uma linha."""
+    config = parse_config_vrp(
+        "interface Eth-Trunk127.100\n vlan-type dot1q 100\n qos car cir xyz inbound\n"
+    )
+    (sub,) = config.subinterfaces
+    assert sub.qos_cir is None
+    assert any("qos car" in a for a in config.avisos)
