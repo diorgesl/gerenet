@@ -9,7 +9,8 @@ Regras de segurança:
   (`undo peer <ip> enable`) — não derruba o par alheio. Qualquer sessão de
   outro circuito (ativa OU desativada) protege: a config dela pode existir.
 - `undo route-policy`/`undo ip-prefix` só quando nenhuma outra sessão do mesmo
-  (asn_remote, afi) os referencia no device — nomes §25.4 derivam do ASN.
+  (asn_remote, afi) os referencia no device — o nome da RP é o efetivo (§4.1: o
+  importado quando a sessão o tem, senão o do §25.4, derivado do ASN).
 - Definições §25.4 e peers são deduplicados por (tipo, nome)/(afi, remote):
   re-peering (sessão ativa + legada desativada no mesmo circuito) gera um UNDO
   por definição, espelhando o `_apensa_definicao` do render forward.
@@ -20,6 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from gerenet.automation import naming
+from gerenet.automation.render import _nome_rp_export, _nome_rp_import
 from gerenet.automation.snapshots import texto_backup
 from gerenet.domain import models
 from gerenet.domain.services.bgp_sessions import list_sessions
@@ -97,7 +99,8 @@ def blocos_remocao(
                 "comandos": [f"bgp {sessao.asn_local}", f"undo peer {sessao.remote_address}"],
             })
 
-    # 2) route-policy export/import + prefix-lists (nome por ASN+afi §25.4).
+    # 2) route-policy export/import + prefix-lists (nome efetivo da RP §4.1; as
+    # prefix-lists seguem no nome por ASN+afi §25.4).
     # Dedup por (tipo, nome)/(afi, nome): re-peering no mesmo circuito gera UM
     # undo por definição — espelha o _apensa_definicao do render forward.
     prefix_lists: dict[tuple[str, str], int] = {}  # (afi, nome) -> id da 1ª sessão
@@ -112,7 +115,7 @@ def blocos_remocao(
         if nomes_compartilhados:
             continue
         afi = sessao.afi
-        nome_export = naming.rp_export(sessao.asn_remote, afi)
+        nome_export = _nome_rp_export(sessao)
         if (
             _tem_route_policy(texto, nome_export)
             and ("route_policy_export", nome_export) not in definicoes_vistas
@@ -123,7 +126,7 @@ def blocos_remocao(
                 "objeto_id": sessao.id, "acao": "delete",
                 "comandos": [f"undo route-policy {nome_export}"],
             })
-        nome_import = naming.rp_import(sessao.asn_remote, afi)
+        nome_import = _nome_rp_import(sessao)
         if (
             _tem_route_policy(texto, nome_import)
             and ("route_policy_import", nome_import) not in definicoes_vistas

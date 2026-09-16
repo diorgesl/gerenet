@@ -61,7 +61,7 @@ def _circuito(db_session, ambiente, *, code="circ-001", stack="ipv4", org=None):
 
 def _sessao(
     db_session, circ, dev, *, afi="ipv4", remote="100.64.1.2", local=None, ativa=True,
-    asn_remote=64512,
+    asn_remote=64512, import_route_policy=None, export_route_policy=None,
 ):
     from gerenet.domain.schemas import BgpSessionCreate
     from gerenet.domain.services.bgp_sessions import create_session, disable_session
@@ -73,6 +73,8 @@ def _sessao(
             circuit_id=circ.id, device_id=dev.id, afi=afi,
             local_address=local_address, remote_address=remote,
             asn_local=65000, asn_remote=asn_remote,
+            import_route_policy=import_route_policy,
+            export_route_policy=export_route_policy,
         ),
         actor="cli",
     )
@@ -222,6 +224,65 @@ def test_remocao_dedupe_sessoes_do_mesmo_circuito(db_session, tmp_path):
     assert sum(b["tipo"] == "route_policy_export" for b in blocos) == 1
     assert sum(b["tipo"] == "route_policy_import" for b in blocos) == 1
     assert sum(b["tipo"] == "prefix_list" for b in blocos) == 1
+
+
+def test_remocao_usa_o_nome_importado_da_politica(db_session, tmp_path):
+    """§4.1: o undo da RP sai com o nome lido no equipamento, não com o do §25.4.
+
+    O portão `_tem_route_policy` confere o nome contra o backup coletado: com o
+    nome do §25.4 o bloco nem era emitido, e a definição ficava órfã na caixa.
+    """
+    amb = _ambiente(db_session)
+    circ = _circuito(db_session, amb)
+    _sessao(
+        db_session, circ, amb["dev"],
+        import_route_policy="RP-DO-EQUIPAMENTO-IN",
+        export_route_policy="RP-DO-EQUIPAMENTO-OUT",
+    )
+    snap = _snapshot(
+        db_session, amb["dev"], tmp_path=tmp_path,
+        backup=(
+            "route-policy RP-DO-EQUIPAMENTO-IN permit node 10\n"
+            "route-policy RP-DO-EQUIPAMENTO-OUT permit node 10\n"
+        ),
+        peers=[{"afi": "ipv4", "peer": "100.64.1.2", "asn": 64512, "estado": "Established"}],
+        interfaces=[],
+    )
+    blocos = removal.blocos_remocao(db_session, circ, amb["dev"].id, snapshot=snap)
+    assert [b["tipo"] for b in blocos] == [
+        "bgp_peer", "route_policy_export", "route_policy_import",
+    ]
+    por_tipo = {b["tipo"]: b["comandos"] for b in blocos}
+    assert por_tipo["route_policy_import"] == ["undo route-policy RP-DO-EQUIPAMENTO-IN"]
+    assert por_tipo["route_policy_export"] == ["undo route-policy RP-DO-EQUIPAMENTO-OUT"]
+    # o nome do §25.4 não sobra em bloco nenhum
+    emitido = " ".join(c for b in blocos for c in b["comandos"])
+    assert naming.rp_import(64512, "ipv4") not in emitido
+    assert naming.rp_export(64512, "ipv4") not in emitido
+
+
+def test_remocao_sem_politica_importada_mantem_o_nome_do_25_4(db_session, tmp_path):
+    """§4.1: com as duas colunas nulas, o undo segue com o nome derivado do ASN."""
+    amb = _ambiente(db_session)
+    circ = _circuito(db_session, amb)
+    _sessao(db_session, circ, amb["dev"])
+    snap = _snapshot(
+        db_session, amb["dev"], tmp_path=tmp_path,
+        backup=(
+            f"route-policy {naming.rp_import(64512, 'ipv4')} permit node 10\n"
+            f"route-policy {naming.rp_export(64512, 'ipv4')} permit node 10\n"
+        ),
+        peers=[{"afi": "ipv4", "peer": "100.64.1.2", "asn": 64512, "estado": "Established"}],
+        interfaces=[],
+    )
+    blocos = removal.blocos_remocao(db_session, circ, amb["dev"].id, snapshot=snap)
+    por_tipo = {b["tipo"]: b["comandos"] for b in blocos}
+    assert por_tipo["route_policy_import"] == [
+        f"undo route-policy {naming.rp_import(64512, 'ipv4')}"
+    ]
+    assert por_tipo["route_policy_export"] == [
+        f"undo route-policy {naming.rp_export(64512, 'ipv4')}"
+    ]
 
 
 def test_remocao_recursos_incompletos_nao_gera_plano(db_session, tmp_path):
