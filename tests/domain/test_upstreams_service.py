@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from gerenet.domain import models
 from gerenet.domain.schemas import UpstreamCreate, UpstreamUpdate
 from gerenet.domain.services import upstreams as svc
+from gerenet.domain.services.bgp_sessions import disable_session
 from gerenet.domain.services.circuits import disable_circuit
 from gerenet.domain.services.errors import ConflictError, NotFoundError, ValidationError
 
@@ -222,6 +223,28 @@ def test_vincular_recusa_sessao_ativa_que_anuncia_a_default(session, up, circuit
     (o `flush` e o `registrar` não chegam a rodar)."""
     bgp_session_principal.default_route_advertise = True
     session.commit()
+    antes = _audit_tipos(session)
+
+    with pytest.raises(ValidationError, match="default-route-advertise"):
+        svc.vincular_circuito(session, up.id, circuito_up.id, papel="principal", ordem=1,
+                              actor="cli")
+
+    assert session.scalar(select(models.UpstreamCircuit).where(
+        models.UpstreamCircuit.circuit_id == circuito_up.id)) is None
+    assert svc.upstream_do_circuito(session, circuito_up.id) is None
+    assert _audit_tipos(session) == antes
+
+
+def test_vincular_recusa_sessao_desativada_que_anuncia_a_default(session, up, circuito_up,
+                                                                 bgp_session_principal):
+    """A sessão desativada conta: desativar não apaga o anúncio, e reativar depois
+    não passa pela guarda (`update_session` só decide o que o payload pode mudar).
+    O vínculo fecharia o buraco e a linha voltaria ao equipamento no primeiro plano.
+    O reparo é o mesmo da sessão ativa — desligar o anúncio enquanto o vínculo
+    ainda não existe —, e a recusa não deixa rastro."""
+    bgp_session_principal.default_route_advertise = True
+    session.commit()
+    disable_session(session, bgp_session_principal.id, actor="cli")
     antes = _audit_tipos(session)
 
     with pytest.raises(ValidationError, match="default-route-advertise"):

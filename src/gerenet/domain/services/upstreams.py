@@ -239,19 +239,21 @@ def vincular_circuito(session: Session, upstream_id: int, circuit_id: int, *, pa
     # proíbe — com a linha marcada, o render emitiria `peer X default-route-advertise`
     # no enlace de upstream (a guarda de escopo vive no serviço, e o caminho de
     # reparo é desligar o anúncio antes, enquanto o vínculo ainda não existe).
+    # A sessão desativada conta: reativá-la depois não passa pela guarda (`update_session`
+    # só decide o que o payload pode mudar), e a linha voltaria ao equipamento.
     if session.scalar(
         select(models.BgpSession)
         .where(
             models.BgpSession.circuit_id == circuit_id,
-            models.BgpSession.admin_status.is_(True),
             models.BgpSession.default_route_advertise.is_(True),
         )
         .limit(1)
     ) is not None:
         raise ValidationError(
-            f"O circuito {circ.code} tem sessão ativa que anuncia a default "
-            "(`default-route-advertise`), e o anúncio é do caminho de cliente: "
-            "desligue o anúncio na sessão antes de vinculá-lo a um upstream."
+            f"O circuito {circ.code} tem sessão que anuncia a default "
+            "(`default-route-advertise`), e o anúncio é do caminho de cliente: com "
+            "o vínculo, a linha volta ao equipamento assim que a sessão é "
+            "reativada. Desligue o anúncio na sessão antes de vinculá-lo a um upstream."
         )
     _valida_conjunto_sem_principal(session, up, novo_papel=papel)
 
