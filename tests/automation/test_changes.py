@@ -76,11 +76,17 @@ def _sessao(db_session, circ, amb, *, perfil_full=True):
     )
 
 
-def _snapshot_encontrado(db_session, amb, tmp_path: Path, *, asn_peer=64512):
+def _snapshot_encontrado(db_session, amb, tmp_path: Path, *, asn_peer=64512, com_backup=True):
     """Snapshot cujo estado ENCONTRADO é exatamente o desejado (render aplicado).
 
     `asn_peer` permite divergir o ASN do peer encontrado (negative control do
     skip §5.1.3: mesmo IP com ASN diferente NÃO consta do encontrado).
+
+    `com_backup=False` monta o snapshot SEM o recurso `config_backup` — a
+    coleta que não produziu o texto da configuração (o gate do plano o exige
+    desde o I2). A chave em `resources` é a que o coletor grava junto com o
+    arquivo (`recursos[nome] = {"backup": True}`), e sem ela o snapshot não é
+    a forma que uma coleta bem-sucedida produz.
     """
     r = render.render_desejado(db_session, amb["dev"].id)
     arquivo = tmp_path / "cfg.txt"
@@ -104,8 +110,9 @@ def _snapshot_encontrado(db_session, amb, tmp_path: Path, *, asn_peer=64512):
                 {"afi": "ipv4", "peer": b.comandos[1].split()[1], "asn": asn_peer}
                 for b in r.blocos if b.tipo == "bgp_peer"
             ],
+            **({"config_backup": {"backup": True}} if com_backup else {}),
         },
-        raw_files={"config_backup": [str(arquivo)]},
+        raw_files={"config_backup": [str(arquivo)]} if com_backup else {},
     )
     db_session.add(snap)
     db_session.commit()
@@ -149,6 +156,31 @@ def test_plan_provision_pula_blocos_ja_presentes(db_session, tmp_path):
     assert plano[0].blocos == []
     assert plano[0].baseline_snapshot_id == snap.id
     assert plano[0].aviso is None
+
+
+def test_plan_provision_sem_config_backup_cai_no_caminho_sem_recursos(db_session, tmp_path):
+    """I2 — o gate do plano tem de exigir o texto da configuração.
+
+    O `_ja_existe` da subinterface lê o texto (`removal.texto_backup`): sem o
+    recurso `config_backup` o diff não conferiu nada e ainda assim diria ter
+    conferido — o bloco que já está no equipamento entra no plano como `create`
+    e, na execução, com a coleta boa, o re-diff §5.3 aborta com "apenas parte do
+    plano consta", mandando o operador procurar no equipamento um problema que
+    veio do plano.
+
+    Com o recurso no gate, o plano cai no caminho que já existe para recurso
+    faltando: os blocos vão inteiros, com o aviso, e SEM baseline — a execução
+    re-coleta antes do re-diff, em vez de o plano fingir que conferiu.
+    """
+    amb = _ambiente(db_session)
+    circ = _circuito(db_session, amb)
+    _sessao(db_session, circ, amb)
+    _snapshot_encontrado(db_session, amb, tmp_path, com_backup=False)
+    plano = changes.plan_provision(db_session, circ)
+    assert plano[0].aviso == changes._SEM_RECURSOS_AVISO
+    assert plano[0].baseline_snapshot_id is None
+    assert [b["tipo"] for b in plano[0].blocos] == TIPOS_ESPERADOS
+    assert all(b["acao"] == "create" for b in plano[0].blocos)
 
 
 def test_plan_provision_ignora_comentarios(db_session, tmp_path):

@@ -121,10 +121,14 @@ def test_listar_escopo_upstream_filtra_e_traz_nome(
 
 
 def _snapshot_peers(db_session: Session, dev: models.Device, peers: list[dict]) -> None:
-    """Coleta do edge com os peers das sessões: o plano de remoção sai do ENCONTRADO."""
+    """Coleta do edge com os peers das sessões: o plano de remoção sai do ENCONTRADO.
+
+    O `config_backup` entra no shape como o coletor o grava (`{"backup": True}`
+    junto do arquivo) — o gate do plano o exige desde o I2.
+    """
     db_session.add(models.DeviceSnapshot(
         device_id=dev.id, status="success",
-        resources={"interfaces": [], "bgp_peers": peers},
+        resources={"interfaces": [], "bgp_peers": peers, "config_backup": {"backup": True}},
     ))
     db_session.commit()
 

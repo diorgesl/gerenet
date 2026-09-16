@@ -15,10 +15,16 @@ from gerenet.domain import models
 from gerenet.domain.services.bgp_sessions import list_sessions
 from gerenet.domain.services.errors import ValidationError
 
-_RECURSOS_MINIMOS = ("interfaces", "bgp_peers")
+# `config_backup` entra no gate porque o `_ja_existe` da subinterface lê o TEXTO
+# da configuração (`removal.texto_backup`): sem ele o diff não conferiria nada e
+# ainda assim diria ter conferido — o bloco que já está no equipamento entra no
+# plano como `create` e, na execução (com a coleta boa), o re-diff §5.3 aborta
+# com "apenas parte do plano consta (config inalterada?)", mandando o operador
+# procurar no equipamento um problema que veio do plano.
+_RECURSOS_MINIMOS = ("interfaces", "bgp_peers", "config_backup")
 _SEM_RECURSOS_AVISO = (
-    "Snapshot sem recursos de interfaces/peers: skip do diff vazio; "
-    "a execução re-coleta antes do re-diff (§5.1)."
+    "Snapshot sem recursos de interfaces/peers/backup da configuração: skip do "
+    "diff vazio; a execução re-coleta antes do re-diff (§5.1)."
 )
 
 

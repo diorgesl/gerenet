@@ -66,7 +66,11 @@ def _cria_cr(db_session, circ, *, acao="provision", usuario="operador"):
 
 
 def _snapshot_encontrado(db_session, dev, tmp_path):
-    """Snapshot cujo ENCONTRADO é o render do desejado (para o path real do rollback)."""
+    """Snapshot cujo ENCONTRADO é o render do desejado (para o path real do rollback).
+
+    O `config_backup` entra no shape como o coletor o grava (`{"backup": True}`
+    junto do arquivo) — o gate do plano o exige desde o I2.
+    """
     from gerenet.automation import render
     r = render.render_desejado(db_session, dev.id)
     arquivo = tmp_path / "cfg.txt"
@@ -82,6 +86,7 @@ def _snapshot_encontrado(db_session, dev, tmp_path):
                 {"afi": "ipv4", "peer": b.comandos[1].split()[1], "asn": 64512}
                 for b in r.blocos if b.tipo == "bgp_peer"
             ],
+            "config_backup": {"backup": True},
         },
         raw_files={"config_backup": [str(arquivo)]},
     )
