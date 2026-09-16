@@ -46,13 +46,31 @@ def test_subinterface_com_qos_nas_duas_direcoes() -> None:
 
 
 def test_subinterface_sem_velocidade_nao_emite_qos() -> None:
-    texto = _render(
-        "subinterface",
+    """Item 13 — o golden exato, e não a pertinência.
+
+    `assert "qos car" not in texto` mede uma substring, e este arquivo é de
+    goldens exatos: ele passaria com o template reordenado, com o
+    `statistic enable` fora, ou com qualquer outra linha mudando de lugar, e
+    nada acusaria. O texto inteiro pinado mede o template.
+
+    A segunda chamada prende o ZERO: o guard é `{% if cir_kbps %}` e `0 × 1000`
+    é falso, então o `cir_kbps=0` tem de sair igual ao nulo. Se alguém trocar o
+    guard por `is not none`, o `qos car cir 0` que apareceria aqui é o que o VRP
+    recusaria no equipamento — e recusar a linha é diferente de ignorá-la.
+    """
+    ctx = dict(
         interface="Eth-Trunk127.4024", descricao=None, qinq=False, vid=4024,
         enderecos_v4=[{"endereco": "100.64.0.1", "mascara": "255.255.255.254"}],
-        enderecos_v6=[], cir_kbps=None,
+        enderecos_v6=[],
     )
-    assert "qos car" not in texto
+    esperado = (
+        "interface Eth-Trunk127.4024\n"
+        "vlan-type dot1q vid 4024\n"
+        "ip address 100.64.0.1 255.255.255.254\n"
+        "statistic enable"
+    )
+    assert _render("subinterface", **ctx, cir_kbps=None) == esperado
+    assert _render("subinterface", **ctx, cir_kbps=0) == esperado
 
 
 def test_subinterface_qinq_0x88a8() -> None:
