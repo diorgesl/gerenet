@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import BgpSessions from "./BgpSessions";
 import BgpSessionDetail from "./BgpSessionDetail";
 import { AuthProvider } from "@/auth/auth-context";
@@ -22,6 +22,13 @@ function opcoes() {
     status: 200,
     headers: { "Content-Type": "application/json" },
   };
+}
+
+function corpoDaChamada(metodo: string, url: string) {
+  const chamadas = vi.mocked(fetch).mock.calls as unknown as [string, RequestInit][];
+  const chamada = chamadas.find((c) => c[0] === url && c[1]?.method === metodo);
+  if (!chamada) throw new Error(`a página não enviou o ${metodo} de ${url}.`);
+  return JSON.parse(String(chamada[1].body)) as Record<string, unknown>;
 }
 
 beforeAll(() => {
@@ -60,6 +67,10 @@ beforeAll(() => {
         return new Response(JSON.stringify({ id: 2, ...body, has_password: false, admin_status: true }), { status: 201, headers: { "Content-Type": "application/json" } });
       }
       if (url === "/api/v1/bgp-sessions/1/communities") return new Response(JSON.stringify(associadas), opcoes());
+      if (url === "/api/v1/bgp-sessions/1" && method === "PATCH") {
+        const body = JSON.parse(String(init?.body));
+        return new Response(JSON.stringify({ ...sessao, ...body, has_password: hasPassword }), opcoes());
+      }
       if (url === "/api/v1/bgp-sessions/1" && method === "GET") return new Response(JSON.stringify({ ...sessao, has_password: hasPassword }), opcoes());
       if (url === "/api/v1/bgp-sessions") return new Response(JSON.stringify([{ ...sessao, has_password: hasPassword }]), opcoes());
       if (url === "/api/v1/circuits") return new Response(JSON.stringify([circ]), opcoes());
@@ -107,6 +118,13 @@ function renderDetail() {
 }
 
 describe("BgpSessions", () => {
+  // O stub do fetch é instalado uma vez só, no `beforeAll`: sem o clear as
+  // chamadas de um teste ficam no histórico do seguinte, e o `corpoDaChamada`
+  // acharia o POST/PATCH de outro teste.
+  beforeEach(() => {
+    vi.mocked(fetch).mockClear();
+  });
+
   it("lista sessões e cria nova pela API", async () => {
     renderList();
     expect(await screen.findByText("100.64.40.1 ↔ 100.64.40.2")).toBeInTheDocument();
@@ -220,5 +238,53 @@ describe("BgpSessions", () => {
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByLabelText(/^Route-policy de importação/)).toHaveValue("RP-64512-IMPORT-V4");
     expect(within(dialog).getByLabelText(/^Route-policy de exportação/)).toHaveValue("");
+  });
+
+  // O efeito: o que sai no corpo do POST/PATCH. Os rótulos dos dois formulários
+  // são distinguidos aqui pelos valores, não pela apresentação.
+  it("o cadastro manda os três campos, e a criação segue no rótulo de cliente", async () => {
+    sessao.upstream_id = null;
+    renderList();
+    await screen.findByText("100.64.40.1 ↔ 100.64.40.2");
+    // Sem diálogo aberto, os rótulos da página são os do formulário de criação —
+    // que o R6 mantém sempre no ramo de cliente (o CircuitOut da listagem não
+    // traz o vínculo).
+    expect(screen.getByLabelText(/^Anunciar rota default ao cliente/)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/^Aceitar rota default do provedor/)).not.toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByLabelText(/^Circuito \*/), "1");
+    await userEvent.selectOptions(screen.getByLabelText(/^Equipamento \*/), "2");
+    await userEvent.type(screen.getByLabelText(/^Endereço local \*/), "100.64.42.1");
+    await userEvent.type(screen.getByLabelText(/^Endereço remoto \*/), "100.64.42.2");
+    await userEvent.type(screen.getByLabelText(/^Route-policy de importação/), "RP-64512-IMPORT-V4");
+    await userEvent.click(screen.getByLabelText(/^Anunciar rota default ao cliente/));
+    await userEvent.click(screen.getByRole("button", { name: "Cadastrar" }));
+    await waitFor(() => {
+      expect(corpoDaChamada("POST", "/api/v1/bgp-sessions")).toMatchObject({
+        default_route_advertise: true,
+        import_route_policy: "RP-64512-IMPORT-V4",
+        export_route_policy: null, // vazio no formulário vira null, não ""
+      });
+    });
+  });
+
+  it("a edição manda os três campos, e o nome esvaziado sai null para limpar a coluna", async () => {
+    sessao.upstream_id = null;
+    sessao.default_route_advertise = false;
+    sessao.import_route_policy = "RP-64512-IMPORT-V4";
+    sessao.export_route_policy = "RP-64512-EXPORT-V4";
+    renderList();
+    await screen.findByText("100.64.40.1 ↔ 100.64.40.2");
+    await userEvent.click(screen.getByRole("button", { name: "Editar" }));
+    const dialog = screen.getByRole("dialog");
+    await userEvent.clear(within(dialog).getByLabelText(/^Route-policy de importação/));
+    await userEvent.click(within(dialog).getByLabelText(/^Anunciar rota default ao cliente/));
+    await userEvent.click(within(dialog).getByRole("button", { name: "Salvar" }));
+    await waitFor(() => {
+      expect(corpoDaChamada("PATCH", "/api/v1/bgp-sessions/1")).toMatchObject({
+        default_route_advertise: true,
+        import_route_policy: null, // esvaziado: "" seria 422 no lugar de limpar
+        export_route_policy: "RP-64512-EXPORT-V4", // intocado volta como veio
+      });
+    });
   });
 });

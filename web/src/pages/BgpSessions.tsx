@@ -514,7 +514,7 @@ export default function BgpSessions() {
             <FormField label="Route-policy de importação" help={help("bgp.import_route_policy")}>
               <input
                 value={formEdit.import_route_policy}
-                maxLength={64}
+                maxLength={63}
                 placeholder="RP-<ASN>-IMPORT-<AFI>"
                 onChange={(e) => setFormEdit({ ...formEdit, import_route_policy: e.target.value })}
               />
@@ -522,7 +522,7 @@ export default function BgpSessions() {
             <FormField label="Route-policy de exportação" help={help("bgp.export_route_policy")}>
               <input
                 value={formEdit.export_route_policy}
-                maxLength={64}
+                maxLength={63}
                 placeholder="RP-<ASN>-EXPORT-<AFI>"
                 onChange={(e) => setFormEdit({ ...formEdit, export_route_policy: e.target.value })}
               />
