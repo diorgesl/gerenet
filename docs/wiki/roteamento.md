@@ -67,8 +67,11 @@ entraria junto com o full mesmo com o flag desligado.
 
 ## Perfis de política
 
-O perfil declarado na sessão (**import** ou **export**) é o que o render
-transforma em route-policy — nunca se digita nome de política.
+O perfil declarado na sessão (**import** ou **export**) é o caminho normal: é
+ele que o render transforma em route-policy. A exceção, que a regra do §4.1 logo
+abaixo detalha, é o nome lido do equipamento e importado na
+[adoção](/wiki/descoberta): quando a sessão o tem, o render emite a definição
+sob esse nome.
 
 | Perfil | O que o render produz |
 |---|---|
@@ -102,7 +105,16 @@ aplicação do valor concreto na configuração do VRP é fase futura.
 
 Use `maximum_prefix` com **margem** (acima do limite o VRP derruba a sessão) e
 limiar percentual para aviso — essencial nos upstreams. Reforço importante de
-operação: **a importação de políticas existentes do roteador não existe ainda**;
-o que está no equipamento com nome fora do padrão (ou conteúdo divergente)
-aparece na [reconciliação](/wiki/operacao) como divergência (`peer.filtros`) —
-não há varredura que aproprie a política manual do equipamento.
+operação: o nome da política aplicada no equipamento é lido na configuração e
+pode ser importado na revisão da [adoção](/wiki/descoberta); o cadastro da
+sessão também aceita um nome. Daí em diante, é sob esse nome que o render emite
+a definição, com o corpo que a SoT monta. Nada vai ao equipamento nesse momento:
+mudar a política continua sendo
+[mudança controlada](/wiki/mudancas-controladas). O filtro aplicado no
+equipamento que não coincide com o que o render emite aparece na
+[reconciliação](/wiki/operacao) como divergência (`peer.filtros`).
+
+Dois limites ficam de pé (§11): a prefix-list interna da política importada
+continua com o nome do gerenet, e uma route-policy compartilhada por dois peers
+do mesmo equipamento não tem modelo — a adoção recusa, e, quando o caso chega
+por outro caminho, o render emite os dois blocos sob o mesmo nome.
