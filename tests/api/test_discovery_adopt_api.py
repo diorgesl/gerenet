@@ -137,7 +137,10 @@ def test_fidelidade_sob_demanda(client, db_session, tmp_path) -> None:
         models.PolicyProfile.name == "full", models.PolicyProfile.direction == "export"))
     com_perfil = client.get(f"{url}&export_ipv4={full.id}", headers=_auth()).json()
     definicao = next(d for d in com_perfil["diferencas"] if d["contexto"] == "definicao")
-    assert any("RP-64512-EXPORT-V4" in linha for linha in definicao["sobrando"])
+    # O nome da definição é o que o equipamento tem (§4.1): o ensaio monta a sessão
+    # pelo dump da proposta, e a fixture aponta a exportação para
+    # `IP-PFX-64512-EXPORT-V4` — o nome do §25.4 só sairia com a coluna nula.
+    assert any("IP-PFX-64512-EXPORT-V4" in linha for linha in definicao["sobrando"])
     assert definicao["exige_ciente"] is True
 
 
