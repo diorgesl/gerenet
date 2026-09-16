@@ -256,7 +256,10 @@ Na execução o worker, por step (device) e automaticamente:
    naquele device — **não passa ⇒ a CR vira `erro`** (sem aplicar nada às
    cegas);
 4. **Re-diff** do plano congelado × encontrado fresco (idempotência: bloco já
-   presente = pulado);
+   presente **e conforme** = pulado; o bloco da subinterface do circuito, que
+   esta frente passou a conferir pelo texto da configuração, é reemitido quando
+   a `description` ou o QoS estão fora do que o plano pede — o re-diff confere o
+   conteúdo, não só o nome);
 5. **Aplicação bloco a bloco** com detecção de erro do VRP — erro ⇒ step
    `falhou`, parada;
 6. **Pós-check** (`valida_pos_upstream`): peer listado, `Established` e
