@@ -19,7 +19,7 @@ import { FormField } from "@/components/FormField";
 import { Modal } from "@/components/Modal";
 import { TimeAgo } from "@/components/TimeAgo";
 import SolicitarMudanca from "@/components/SolicitarMudanca";
-import { TIPO_LABEL } from "./Upstreams";
+import { PRODUTO_LABEL, TIPO_LABEL } from "./Upstreams";
 
 const FORM_COMMUNITY_VAZIO = {
   purpose: "blackhole" as UpstreamCommunityOut["purpose"],
@@ -128,6 +128,10 @@ export default function UpstreamDetail() {
       <table>
         <tbody>
           <tr><th>Tipo</th><td>{TIPO_LABEL[data.tipo]}</td></tr>
+          <tr>
+            <th>Tipo de policy</th>
+            <td>{data.produto_import ? PRODUTO_LABEL[data.produto_import] : "—"}</td>
+          </tr>
           <tr><th>Operadora</th><td>{data.organization_name ?? `#${data.organization_id}`}</td></tr>
           <tr><th>Capacidade</th><td>{data.capacity ?? "—"}</td></tr>
           <tr><th>Prioridade</th><td>{data.priority ?? "—"}</td></tr>

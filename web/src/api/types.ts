@@ -530,6 +530,7 @@ export interface UpstreamOut {
   expected_prefixes_v6: number | null;
   max_prefix_margin_pct: number;
   rpki_enabled: boolean;
+  produto_import: "full" | "parcial" | "default" | null; // §7: o tipo de rota que a operadora envia
   entrada_local_preference: number | null;
   contingencia_local_preference: number | null;
   contingencia_prepend: number | null;
@@ -574,10 +575,23 @@ export type UpstreamCreateIn = {
   expected_prefixes_v6?: number | null;
   max_prefix_margin_pct?: number;
   rpki_enabled?: boolean;
+  produto_import?: "full" | "parcial" | "default" | null;
   entrada_local_preference?: number | null;
   contingencia_local_preference?: number | null;
   contingencia_prepend?: number | null;
   contingencia_notes?: string | null;
+  // O circuito de acesso do cadastro (§6, `UpstreamCircuitoIn` do backend): só
+  // identidade e acesso — a reserva de VLAN e de endereços continua na página
+  // do circuito. Só o `POST` aceita o bloco; o PATCH o recusaria.
+  circuito?: {
+    code: string;
+    site_id: number;
+    edge_device_id: number;
+    edge_trunk?: string | null;
+    access_device_id: number;
+    access_port: string;
+    velocidade_mbps?: number | null;
+  } | null;
 };
 export type UpstreamUpdateIn = Partial<UpstreamCreateIn> & { admin_status?: boolean };
 export type UpstreamCircuitIn = {

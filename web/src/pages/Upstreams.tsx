@@ -3,8 +3,22 @@ import type { FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "@/auth/auth-context";
 import { ApiError } from "@/api/client";
-import { useOrganizations, useUpstreamAtualizar, useUpstreamCriar, useUpstreams } from "@/api/hooks";
-import type { OrganizationOut, UpstreamCreateIn, UpstreamOut, UpstreamTipo } from "@/api/types";
+import {
+  useDevices,
+  useOrganizations,
+  useSites,
+  useUpstreamAtualizar,
+  useUpstreamCriar,
+  useUpstreams,
+} from "@/api/hooks";
+import type {
+  DeviceOut,
+  OrganizationOut,
+  SiteOut,
+  UpstreamCreateIn,
+  UpstreamOut,
+  UpstreamTipo,
+} from "@/api/types";
 import { DataTable } from "@/components/DataTable";
 import { FormField } from "@/components/FormField";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -20,11 +34,19 @@ export const TIPO_LABEL: Record<UpstreamTipo, string> = {
   contingencia: "Contingência",
 };
 
+// O produto da importação (§7): rótulo em PT-BR do `produto_import`.
+export const PRODUTO_LABEL: Record<"full" | "parcial" | "default", string> = {
+  full: "Full",
+  parcial: "Parcial",
+  default: "Default",
+};
+
 // Campos do UpstreamCreate (schemas.py:756-770) — strings vazias para os
 // numéricos (mesmo padrão do Circuits.tsx: num() converte na submissão).
 type FormUpstream = {
   name: string;
   tipo: UpstreamTipo;
+  produto_import: "" | "full" | "parcial" | "default";
   organization_id: string;
   capacity: string;
   priority: string;
@@ -37,11 +59,22 @@ type FormUpstream = {
   contingencia_local_preference: string;
   contingencia_prepend: string;
   contingencia_notes: string;
+  // O acesso (§6): o circuito vinculado como principal, criado junto com o
+  // upstream. Só o dialog de criação usa este bloco.
+  acesso: boolean;
+  circuito_code: string;
+  site_id: string;
+  edge_device_id: string;
+  edge_trunk: string;
+  access_device_id: string;
+  access_port: string;
+  velocidade_mbps: string;
 };
 
 const FORM_VAZIO: FormUpstream = {
   name: "",
   tipo: "transito",
+  produto_import: "",
   organization_id: "",
   capacity: "",
   priority: "",
@@ -54,14 +87,26 @@ const FORM_VAZIO: FormUpstream = {
   contingencia_local_preference: "",
   contingencia_prepend: "",
   contingencia_notes: "",
+  acesso: false,
+  circuito_code: "",
+  site_id: "",
+  edge_device_id: "",
+  edge_trunk: "",
+  access_device_id: "",
+  access_port: "",
+  velocidade_mbps: "",
 };
 
 const num = (v: string) => (v === "" ? null : Number(v));
 
-function paraPayload(f: FormUpstream): UpstreamCreateIn {
-  return {
+// `comAcesso` é o caminho da criação: o bloco `circuito` só existe no `POST`
+// (o `UpstreamUpdate` do PATCH não tem o campo e o `extra="forbid"` do backend
+// recusaria a edição inteira).
+function paraPayload(f: FormUpstream, comAcesso = false): UpstreamCreateIn {
+  const payload: UpstreamCreateIn = {
     name: f.name,
     tipo: f.tipo,
+    produto_import: f.produto_import || null,
     capacity: f.capacity || null,
     priority: num(f.priority),
     cost: f.cost || null,
@@ -75,6 +120,18 @@ function paraPayload(f: FormUpstream): UpstreamCreateIn {
     contingencia_prepend: num(f.contingencia_prepend),
     contingencia_notes: f.contingencia_notes || null,
   };
+  if (comAcesso && f.acesso) {
+    payload.circuito = {
+      code: f.circuito_code,
+      site_id: Number(f.site_id),
+      edge_device_id: Number(f.edge_device_id),
+      edge_trunk: f.edge_trunk || null,
+      access_device_id: Number(f.access_device_id),
+      access_port: f.access_port,
+      velocidade_mbps: num(f.velocidade_mbps),
+    };
+  }
+  return payload;
 }
 
 // Campos do formulário compartilhados entre o dialog de criação e o de edição
@@ -100,6 +157,17 @@ function CamposUpstream({
           <option value="ix">IX</option>
           <option value="pni">PNI</option>
           <option value="contingencia">Contingência</option>
+        </select>
+      </FormField>
+      <FormField label="Tipo de policy" help={help("upstream.produto_import")}>
+        <select
+          value={form.produto_import}
+          onChange={(e) => set("produto_import", e.target.value as FormUpstream["produto_import"])}
+        >
+          <option value="">—</option>
+          <option value="full">Full</option>
+          <option value="parcial">Parcial</option>
+          <option value="default">Default</option>
         </select>
       </FormField>
       <FormField label="Operadora *" help={help("upstream.organization_id")}>
@@ -169,11 +237,109 @@ function CamposUpstream({
   );
 }
 
+// A seção de acesso do cadastro (§6): equipamento e porta por onde a operadora
+// chega. Com a caixa marcada, o circuito nasce na mesma chamada e vinculado
+// como principal — a reserva de VLAN e de endereços continua na página do
+// circuito, que tem o assistente. Só o dialog de criação a monta.
+function SecaoAcesso({
+  form,
+  onChange,
+  sites,
+  devices,
+}: {
+  form: FormUpstream;
+  onChange: (f: FormUpstream) => void;
+  sites: SiteOut[];
+  devices: DeviceOut[];
+}) {
+  const set = <K extends keyof FormUpstream>(campo: K, valor: FormUpstream[K]) => onChange({ ...form, [campo]: valor });
+  return (
+    <>
+      <FormField label="Acesso" help={help("upstream.acesso")}>
+        <input
+          type="checkbox"
+          checked={form.acesso}
+          onChange={(e) => set("acesso", e.target.checked)}
+        />
+      </FormField>
+      {form.acesso && (
+        <fieldset>
+          <legend>Acesso</legend>
+          <FormField label="Código do circuito *" help={help("circuit.code")}>
+            <input
+              value={form.circuito_code}
+              onChange={(e) => set("circuito_code", e.target.value)}
+              maxLength={64}
+              required
+            />
+          </FormField>
+          <FormField label="Site *" help={help("circuit.site_id")}>
+            <select value={form.site_id} onChange={(e) => set("site_id", e.target.value)} required>
+              <option value="">—</option>
+              {sites.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Edge *" help={help("circuit.edge_device_id")}>
+            <select value={form.edge_device_id} onChange={(e) => set("edge_device_id", e.target.value)} required>
+              <option value="">—</option>
+              {devices.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Eth-Trunk do edge" help={help("circuit.edge_trunk")}>
+            <input value={form.edge_trunk} onChange={(e) => set("edge_trunk", e.target.value)} />
+          </FormField>
+          <FormField label="Equipamento de acesso *" help={help("circuit.access_device_id")}>
+            <select
+              value={form.access_device_id}
+              onChange={(e) => set("access_device_id", e.target.value)}
+              required
+            >
+              <option value="">—</option>
+              {devices.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Porta de acesso *" help={help("circuit.access_port")}>
+            <input
+              value={form.access_port}
+              onChange={(e) => set("access_port", e.target.value)}
+              maxLength={64}
+              required
+            />
+          </FormField>
+          <FormField label="Velocidade (Mbps)" help={help("circuit.velocidade_mbps")}>
+            <input
+              type="number"
+              min={1}
+              max={100000}
+              value={form.velocidade_mbps}
+              onChange={(e) => set("velocidade_mbps", e.target.value)}
+            />
+          </FormField>
+        </fieldset>
+      )}
+    </>
+  );
+}
+
 export default function Upstreams() {
   const { podeEscrever } = useAuth();
   const [incluirInativos, setIncluirInativos] = useState(false);
   const { data, isLoading, error } = useUpstreams({ includeDisabled: incluirInativos });
   const { data: organizations } = useOrganizations();
+  const { data: sites } = useSites();
+  const { data: devices } = useDevices();
   const criar = useUpstreamCriar();
   const atualizar = useUpstreamAtualizar();
 
@@ -195,7 +361,7 @@ export default function Upstreams() {
     e.preventDefault();
     setErro(null);
     try {
-      await criar.mutateAsync(paraPayload(form));
+      await criar.mutateAsync(paraPayload(form, true));
       setForm(FORM_VAZIO);
       setCriando(false);
     } catch (err) {
@@ -207,6 +373,7 @@ export default function Upstreams() {
     setFormEdit({
       name: u.name,
       tipo: u.tipo,
+      produto_import: u.produto_import ?? "",
       organization_id: String(u.organization_id),
       capacity: u.capacity ?? "",
       priority: u.priority === null ? "" : String(u.priority),
@@ -220,6 +387,16 @@ export default function Upstreams() {
         u.contingencia_local_preference === null ? "" : String(u.contingencia_local_preference),
       contingencia_prepend: u.contingencia_prepend === null ? "" : String(u.contingencia_prepend),
       contingencia_notes: u.contingencia_notes ?? "",
+      // O acesso é só da criação — a edição abre a seção limpa e não a usa (o
+      // vínculo de um upstream que já existe fica no detalhe).
+      acesso: false,
+      circuito_code: "",
+      site_id: "",
+      edge_device_id: "",
+      edge_trunk: "",
+      access_device_id: "",
+      access_port: "",
+      velocidade_mbps: "",
     });
     setErroEdit(null);
     setEditando(u);
@@ -329,6 +506,7 @@ export default function Upstreams() {
         <Modal aberto titulo="Novo upstream" onFechar={() => setCriando(false)}>
           <form onSubmit={onSubmit} className="grid-form">
             <CamposUpstream form={form} onChange={setForm} operadoras={operadoras} />
+            <SecaoAcesso form={form} onChange={setForm} sites={sites ?? []} devices={devices ?? []} />
             <div className="dialog-actions">
               <button type="button" onClick={() => setCriando(false)} disabled={criar.isPending}>
                 Cancelar

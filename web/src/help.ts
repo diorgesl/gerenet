@@ -113,6 +113,7 @@ export const HELP = {
   // Upstreams
   "upstream.name": "Nome único do upstream (2–128 caracteres; ex.: transito-telco-01).",
   "upstream.tipo": "trânsito, IX, PNI ou contingência.",
+  "upstream.produto_import": "Tipo de rota que a operadora envia: full, parcial ou default. Preenchido, é ele que decide o produto da importação; vazio, o produto sai do tipo do upstream (trânsito/IX → full, PNI → parcial, contingência → default).",
   "upstream.organization_id": "Organização dona da conectividade — somente organizações do tipo operadora.",
   "upstream.capacity": "Capacidade contratada (ex.: 10 Gbps).",
   "upstream.priority": "Prioridade da conectividade (1 = maior), para seleção de rota preferida.",
@@ -125,6 +126,7 @@ export const HELP = {
   "upstream.contingencia_local_preference": "Local-preference aplicado quando o upstream é contingência (tipicamente menor que a da conectividade principal).",
   "upstream.contingencia_prepend": "Prepend no AS-PATH quando o upstream é contingência (0–10) — desvaloriza os anúncios.",
   "upstream.contingencia_notes": "Observações livres sobre o contexto de contingência.",
+  "upstream.acesso": "Equipamento e porta por onde a operadora chega. Preenchido, o circuito nasce junto com o upstream e fica vinculado como principal. A reserva de VLAN e de endereços continua na página do circuito.",
 
   // VSI (multiponto, §9.3)
   "vsi.domain": "Domínio MPLS do serviço; o VSI-ID é único dentro dele.",
