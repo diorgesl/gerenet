@@ -39,7 +39,7 @@ def _ambiente(db_session):
     return {"site": site, "dev": dev, "org": org}
 
 
-def _circuito(db_session, ambiente, *, code="circ-001", stack="ipv4", org=None):
+def _circuito(db_session, ambiente, *, code="circ-001", stack="ipv4", org=None, vrf=None):
     from gerenet.domain.schemas import CircuitCreate
     from gerenet.domain.services.circuits import create_circuit
     from gerenet.domain.services.ipam import reservar_circuito
@@ -51,7 +51,7 @@ def _circuito(db_session, ambiente, *, code="circ-001", stack="ipv4", org=None):
             site_id=ambiente["site"].id,
             access_device_id=ambiente["dev"].id, access_port="GE0/0/1",
             edge_device_id=ambiente["dev"].id, stack=stack, vlan_mode="unica",
-            edge_trunk="GE1/0/0", p2p_v4_len=31,
+            edge_trunk="GE1/0/0", p2p_v4_len=31, vrf=vrf,
         ),
         actor="cli",
     )
@@ -339,6 +339,57 @@ def test_remocao_nao_desfaz_politica_de_outro_asn_com_o_mesmo_nome(db_session, t
     assert "prefix_list" in tipos
     assert "route_policy_import" not in tipos
     assert "route_policy_export" not in tipos
+    emitido = " ".join(c for b in blocos for c in b["comandos"])
+    assert "undo route-policy RP-OPERADORA-IN" not in emitido
+    assert "undo route-policy RP-OPERADORA-OUT" not in emitido
+
+
+def test_remocao_cruzada_nao_derruba_a_politica_da_outra_direcao(db_session, tmp_path):
+    """§4.1: a definição é uma só no VRP — a guarda cruza import e export.
+
+    O controle vem primeiro: esta sessão, este backup e nenhuma sessão cruzada
+    no device, e os dois undos saem. Depois entra a sessão de outro circuito
+    (ASN diferente e VRF própria, que é o que a deixa ativa sem conflitar com a
+    linha do alvo) usando o nome do import no EXPORT e o nome do export no
+    IMPORT: nenhum dos dois undos pode sair, porque nos dois casos a definição
+    derrubada seria a mesma que a outra sessão referencia.
+    """
+    from gerenet.domain.schemas import OrganizationCreate
+    from gerenet.domain.services.organizations import create_organization
+
+    amb = _ambiente(db_session)
+    circ = _circuito(db_session, amb)
+    _sessao(
+        db_session, circ, amb["dev"],
+        import_route_policy="RP-OPERADORA-IN", export_route_policy="RP-OPERADORA-OUT",
+    )
+    snap = _snapshot(
+        db_session, amb["dev"], tmp_path=tmp_path,
+        backup=(
+            "route-policy RP-OPERADORA-IN permit node 10\n"
+            "route-policy RP-OPERADORA-OUT permit node 10\n"
+        ),
+        peers=[{"afi": "ipv4", "peer": "100.64.1.2", "asn": 64512, "estado": "Established"}],
+        interfaces=[],
+    )
+    blocos = removal.blocos_remocao(db_session, circ, amb["dev"].id, snapshot=snap)
+    por_tipo = {b["tipo"]: b["comandos"] for b in blocos}
+    assert por_tipo["route_policy_import"] == ["undo route-policy RP-OPERADORA-IN"]
+    assert por_tipo["route_policy_export"] == ["undo route-policy RP-OPERADORA-OUT"]
+
+    # A sessão cruzada: outro circuito, outro ASN, e os nomes trocados de direção.
+    org2 = create_organization(
+        db_session, OrganizationCreate(name="operadora-y", asn=64513), actor="cli"
+    )
+    circ2 = _circuito(db_session, amb, code="circ-002", org=org2, vrf="vpn-cruzada")
+    _sessao(
+        db_session, circ2, amb["dev"], remote="100.64.1.99", local="100.64.2.1",
+        asn_remote=64513,
+        import_route_policy="RP-OPERADORA-OUT", export_route_policy="RP-OPERADORA-IN",
+    )
+    blocos = removal.blocos_remocao(db_session, circ, amb["dev"].id, snapshot=snap)
+    # O bloco do peer continua saindo: o laço passou pela sessão.
+    assert [b["tipo"] for b in blocos] == ["bgp_peer"]
     emitido = " ".join(c for b in blocos for c in b["comandos"])
     assert "undo route-policy RP-OPERADORA-IN" not in emitido
     assert "undo route-policy RP-OPERADORA-OUT" not in emitido

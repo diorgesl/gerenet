@@ -11,7 +11,8 @@ Regras de segurança:
 - `undo route-policy` só quando nenhuma outra sessão do device referencia a MESMA
   definição — o que decide é o nome EFETIVO da RP (§4.1: o importado quando a
   sessão o tem, senão o do §25.4), nunca o par (asn_remote, afi), que deixou de
-  ser igualdade de nome desde que a coluna importada passou a mandar.
+  ser igualdade de nome desde que a coluna importada passou a mandar. A
+  comparação cruza import e export: no VRP a definição é uma só, sem direção.
 - `undo ip-prefix` idem, e ali o nome continua derivando do ASN do par (§25.4):
   o par (asn_remote, afi) é, sim, a igualdade dos nomes das prefix-lists.
 - Definições §25.4 e peers são deduplicados por (tipo, nome)/(afi, remote):
@@ -53,20 +54,21 @@ def _outras_sessoes(
     ]
 
 
-def _rp_export_em_uso(outras: list[models.BgpSession], nome: str) -> bool:
-    """Outra sessão do device referencia a MESMA definição de export (§4.1)?"""
-    return any(
-        outra.asn_remote is not None and _nome_rp_export(outra) == nome
-        for outra in outras
-    )
+def _rp_em_uso(outras: list[models.BgpSession], nome: str) -> bool:
+    """Outra sessão do device referencia a MESMA definição de RP (§4.1)?
 
+    A definição é uma só no VRP — não tem direção. Por isso a comparação cruza
+    import e export: o mesmo nome usado nas duas direções é o mesmo objeto, e
+    derrubá-lo levaria a política da outra sessão junto.
+    """
+    def referencia(outra: models.BgpSession) -> bool:
+        if outra.import_route_policy == nome or outra.export_route_policy == nome:
+            return True
+        if outra.asn_remote is None:
+            return False
+        return nome in (_nome_rp_import(outra), _nome_rp_export(outra))
 
-def _rp_import_em_uso(outras: list[models.BgpSession], nome: str) -> bool:
-    """Outra sessão do device referencia a MESMA definição de import (§4.1)?"""
-    return any(
-        outra.asn_remote is not None and _nome_rp_import(outra) == nome
-        for outra in outras
-    )
+    return any(referencia(outra) for outra in outras)
 
 
 def _asn_afi_em_uso(outras: list[models.BgpSession], sessao: models.BgpSession) -> bool:
@@ -131,7 +133,8 @@ def blocos_remocao(
             })
 
     # 2) route-policy export/import + prefix-lists, cada um com a sua guarda: a RP
-    # é protegida pelo nome EFETIVO (§4.1) e a prefix-list pelo par (asn_remote,
+    # é protegida pelo nome EFETIVO, cruzando import e export (`_rp_em_uso` — a
+    # definição não tem direção no VRP), e a prefix-list pelo par (asn_remote,
     # afi), que para ela ainda é igualdade de nome (§25.4).
     # Dedup por (tipo, nome)/(afi, nome): re-peering no mesmo circuito gera UM
     # undo por definição — espelha o _apensa_definicao do render forward.
@@ -144,7 +147,7 @@ def blocos_remocao(
         nome_export = _nome_rp_export(sessao)
         if (
             _tem_route_policy(texto, nome_export)
-            and not _rp_export_em_uso(outras, nome_export)
+            and not _rp_em_uso(outras, nome_export)
             and ("route_policy_export", nome_export) not in definicoes_vistas
         ):
             definicoes_vistas.add(("route_policy_export", nome_export))
@@ -156,7 +159,7 @@ def blocos_remocao(
         nome_import = _nome_rp_import(sessao)
         if (
             _tem_route_policy(texto, nome_import)
-            and not _rp_import_em_uso(outras, nome_import)
+            and not _rp_em_uso(outras, nome_import)
             and ("route_policy_import", nome_import) not in definicoes_vistas
         ):
             definicoes_vistas.add(("route_policy_import", nome_import))

@@ -34,12 +34,13 @@ Cada item é tipado com **severidade** (`critica` / `atencao` / `aviso`) e traz
 | `peer.ausente` | crítica | Sessão ativa no SoT sem peer configurado/estabelecido. |
 | `peer.asn` | crítica | ASN do peer diverge do cadastrado. |
 | `peer.estado` | atenção | Peer fora de `Established` — conferir se é transitório. |
-| `peer.filtros` | crítica | Filtro aplicado diverge do renderizado (nomes §25.4). |
+| `peer.filtros` | crítica | Filtro aplicado diverge do renderizado (nome efetivo da política). |
 | `peer.shutdown_admin` | atenção | Sessão em shutdown admin não deveria estar `Established`. |
 | `peer.orfaos` | atenção | Peer coletado sem sessão ativa cadastrada. |
 | `circuito.sem_trunk` | aviso | Cadastrar `edge_trunk` do circuito para comparar a subinterface. |
 
-A justificativa dos itens (ex.: `peer.filtros` acusa nomes fora do padrão)
+A justificativa dos itens (ex.: `peer.filtros` acusa política aplicada diferente
+da renderizada, pelo nome efetivo, que pode ser o importado do equipamento)
 depende do recurso estar presente no snapshot — sem o recurso, a página mostra
 um aviso de comparação parcial, e não uma divergência inventada.
 
