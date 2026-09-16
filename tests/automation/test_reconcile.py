@@ -607,3 +607,39 @@ def test_circuito_liberado_nao_vira_sem_trunk(db_session: Session) -> None:
     )
     itens = reconciliar_device(db_session, env["ne_id"]).items
     assert [i.tipo for i in itens] == []
+
+
+def _blocos_subinterface(comandos: list[str]) -> list:
+    from gerenet.automation.render import BlocoRender
+
+    return [BlocoRender(tipo="subinterface", objeto="circuit", objeto_id=1, comandos=comandos)]
+
+
+def test_esperado_subinterfaces_le_a_linha_indentada_do_bloco() -> None:
+    """C1, o sítio que faltou — o endereço esperado tem de sair do bloco indentado.
+
+    O render herda a indentação do template (o `display current-configuration`
+    escreve os sub-comandos com um espaço à esquerda). Testado na string CRUA,
+    `" ip address ...".startswith("ip address ")` é falso: o registro sai com v4
+    e v6 vazios, o laço de `reconciliar_device` não gera item nenhum, e a ponta
+    que sumiu do equipamento vira silêncio com a conferência respondendo
+    "conforme" — o pior modo de falha desta função. O irmão `_enderecos_do_bloco`
+    (runner) dobra a linha desde o C1, e a docstring dele já prometia a mesma
+    normalização aqui; este ficou para trás.
+    """
+    from gerenet.automation.reconcile import _esperado_subinterfaces
+
+    indentado = _blocos_subinterface([
+        "interface Eth-Trunk127.626",
+        " description CIRC-626 NETMAC [1G]",
+        " ip address 100.110.0.13 255.255.255.252",
+        " ipv6 address 2001:DB8:1::1/126",
+    ])
+    esperado = {
+        "Eth-Trunk127.626": {"v4": ["100.110.0.13/30"], "v6": ["2001:DB8:1::1/126"]}
+    }
+    assert _esperado_subinterfaces(indentado) == esperado
+    # A forma plana dá o MESMO resultado: quem indenta é o render, não o
+    # equipamento, então as duas grafias têm de ser lidas como uma só.
+    plano = _blocos_subinterface([" ".join(c.split()) for c in indentado[0].comandos])
+    assert _esperado_subinterfaces(plano) == esperado
