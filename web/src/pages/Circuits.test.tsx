@@ -12,7 +12,9 @@ const site = { id: 1, name: "SPO", city: "São Paulo", uf: "SP", p2p_ipv4_block:
 const dev1 = { id: 1, name: "sw-01", management_address: "10.9.0.1", site_id: 1, model: null, family: "S6730", role: "acesso", asn: null, tags: [], ssh_port: 22, vendor: "Huawei", vrp_version: null, comm_status: "ok", admin_status: true, last_collected_at: null };
 const dev2 = { id: 2, name: "ne-01", management_address: "10.9.0.2", site_id: 1, model: null, family: "NE8000", role: "edge", asn: 64600, tags: [], ssh_port: 22, vendor: "Huawei", vrp_version: null, comm_status: "ok", admin_status: true, last_collected_at: null };
 // A velocidade entra na fixture porque é ela que o inicializador da edição lê:
-// sem o campo, `String(undefined)` faria o campo renderizar "undefined".
+// com o campo presente, o `toHaveValue(1024)` é o que prende o `abrirEdicao` —
+// sem ele o formulário reabriria vazio (o `type="number"` sanitiza texto não
+// numérico para vazio, e não para "undefined").
 const circ = { id: 1, code: "CIRC-01", organization_id: 1, site_id: 1, access_device_id: 1, access_port: "GE0/0/1", edge_device_id: 2, backup_edge_device_id: null, stack: "dual", vlan_mode: "unica", qinq: false, vrf: null, mtu: 1500, bandwidth: "1G", velocidade_mbps: 1024, bfd: true, p2p_v4_len: 31, description: null, notes: null, edge_trunk: null, admin_status: true };
 
 beforeAll(() => {
@@ -101,8 +103,8 @@ describe("Circuits", () => {
         velocidade_mbps: 1024,
       });
     });
-    // E a edição reabre com o que está na SoT — não com o "undefined" de um
-    // inicializador que só tratasse o nulo.
+    // E a edição reabre com o que está na SoT — é o valor daqui que prende o
+    // inicializador do `abrirEdicao`, não uma sanitização do campo.
     await userEvent.click(screen.getByRole("button", { name: "Editar" }));
     expect(within(screen.getByRole("dialog")).getByLabelText(/^Velocidade \(Mbps\)/)).toHaveValue(1024);
   });
