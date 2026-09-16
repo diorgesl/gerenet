@@ -229,12 +229,13 @@ def _aplica_sub(reg: dict, linha: str, avisos: list[str]) -> None:
             reg["mtu"] = mtu
     elif linha.startswith("qos car cir "):
         # `qos car cir <cir> [cbs <...> green pass red discard] inbound|outbound`:
-        # o `cir` é o quarto token nas duas formas, e as duas direções carregam o
-        # mesmo valor. A primeira ocorrência vence.
-        if reg["qos_cir"] is None and len(partes) > 3:
+        # o `cir` é o quarto token nas duas formas. As direções são guardadas
+        # como vêm, e quem resolve é o `_monta_sub`: o mesmo valor nas duas é a
+        # taxa do enlace, e valores diferentes não dão taxa para sugerir.
+        if len(partes) > 3:
             cir = _int_tolerante(partes[3], avisos, linha)
             if cir is not None:
-                reg["qos_cir"] = cir
+                reg["qos_cir_vistos"].add(cir)
     elif linha.startswith("ip address ") and not linha.startswith("ip address 0.0.0.0"):
         par = _par_v4(linha.split())
         if par is not None:
@@ -246,9 +247,14 @@ def _aplica_sub(reg: dict, linha: str, avisos: list[str]) -> None:
 
 
 def _monta_sub(reg: dict) -> Subinterface:
+    # Um `cir` só (uma direção, ou as duas com o mesmo valor) é a taxa do
+    # enlace. Valores DIFERENTES nas duas direções não dão taxa para sugerir: a
+    # sugestão viraria a velocidade do circuito e o render passaria a emitir
+    # esse número nas duas direções — uma delas sem lastro no equipamento.
+    vistos = reg["qos_cir_vistos"]
     return Subinterface(
         nome=reg["nome"], vid=reg["vid"], qinq=reg["qinq"], descricao=reg["descricao"],
-        mtu=reg["mtu"], qos_cir=reg["qos_cir"],
+        mtu=reg["mtu"], qos_cir=next(iter(vistos)) if len(vistos) == 1 else None,
         enderecos_v4=tuple(reg["v4"]), enderecos_v6=tuple(reg["v6"]),
     )
 
@@ -299,7 +305,8 @@ def parse_config_vrp(texto: str) -> ConfigVrp:
             secao_desconhecida = False
             if linha.startswith("interface "):
                 iface = {"nome": linha.split(" ", 1)[1], "vid": None, "qinq": False,
-                         "descricao": None, "mtu": None, "qos_cir": None, "v4": [], "v6": []}
+                         "descricao": None, "mtu": None, "qos_cir_vistos": set(),
+                         "v4": [], "v6": []}
             elif linha.startswith("bgp "):
                 viu_bgp = True
                 asn_bloco = _int_tolerante(linha.split(" ", 1)[1].split()[0], avisos, linha)
