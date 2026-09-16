@@ -40,6 +40,7 @@ class PeerConfig:
     bfd: bool
     graceful_restart: bool
     shutdown: bool
+    default_route_advertise: bool
     habilitado: bool
 
 
@@ -83,6 +84,7 @@ def _novo_peer(endereco: str, vrf: str | None, asn_local: int) -> dict:
         "bfd": False,
         "graceful_restart": False,
         "shutdown": False,
+        "default_route_advertise": False,
         "habilitado": False,
     }
 
@@ -122,6 +124,19 @@ def _aplica_peer(reg: dict, resto: list[str], linha: str, avisos: list[str]) -> 
             holdtime = _int_tolerante(resto[resto.index("hold") + 1], avisos, linha)
             if holdtime is not None:
                 reg["holdtime"] = holdtime
+    elif "default-route-advertise" in resto:
+        # ANTES do ramo do `route-policy`: o VRP aceita
+        # `peer X default-route-advertise route-policy <nome>`, e esse `resto`
+        # tem `route-policy` na lista — na ordem antiga ele cairia no ramo da
+        # importação e gravaria como import uma política que não é a de
+        # importação. O nome acoplado não é modelado (§11 do design): o que
+        # resta dele vira aviso, e o anúncio fica marcado.
+        reg["default_route_advertise"] = True
+        if len(resto) > resto.index("default-route-advertise") + 1:
+            avisos.append(
+                f"linha {linha!r}: o parâmetro depois de `default-route-advertise` "
+                "não é gerenciado por este sistema (importado como aviso)."
+            )
     elif "route-policy" in resto and resto.index("route-policy") + 1 < len(resto):
         nome = resto[resto.index("route-policy") + 1]
         if "export" in resto:

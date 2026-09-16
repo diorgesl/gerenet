@@ -346,3 +346,56 @@ def test_qos_car_com_valor_torto_vira_aviso() -> None:
     (sub,) = config.subinterfaces
     assert sub.qos_cir is None
     assert any("qos car" in a for a in config.avisos)
+
+
+def test_le_o_default_route_advertise_do_peer() -> None:
+    """§3.4: a linha marca a chave; ela não é política de importação."""
+    config = parse_config_vrp(
+        "bgp 65001\n"
+        " peer 100.64.10.1 as-number 64512\n"
+        " ipv4-family unicast\n"
+        "  peer 100.64.10.1 enable\n"
+        "  peer 100.64.10.1 default-route-advertise\n"
+    )
+    (peer,) = config.peers
+    assert peer.default_route_advertise is True
+    assert peer.import_route_policy is None
+    assert config.avisos == ()
+
+
+def test_default_route_advertise_com_politica_acoplada_vira_aviso() -> None:
+    """§3.4: o VRP aceita `default-route-advertise route-policy <nome>`, e o
+    ramo da política de importação engoliria esse resto se viesse antes. O nome
+    acoplado não é modelado — vira aviso, e a chave do anúncio fica marcada."""
+    config = parse_config_vrp(
+        "bgp 65001\n"
+        " peer 100.64.10.1 as-number 64512\n"
+        " ipv4-family unicast\n"
+        "  peer 100.64.10.1 enable\n"
+        "  peer 100.64.10.1 default-route-advertise route-policy RP-X\n"
+    )
+    (peer,) = config.peers
+    assert peer.default_route_advertise is True
+    assert peer.import_route_policy is None
+    assert any("default-route-advertise" in aviso for aviso in config.avisos)
+
+
+def test_import_route_policy_segue_no_ramo_da_importacao() -> None:
+    """Regressão da ordem dos ramos (§3.4): a linha da política não pode cair no
+    ramo novo."""
+    config = parse_config_vrp(
+        "bgp 65001\n"
+        " peer 100.64.10.1 as-number 64512\n"
+        " peer 100.64.10.1 route-policy RP-Y import\n"
+    )
+    (peer,) = config.peers
+    assert peer.import_route_policy == "RP-Y"
+    assert peer.default_route_advertise is False
+
+
+def test_a_fixture_do_ne8000_marca_o_anuncio_da_default() -> None:
+    """O peer CLIENTE-BETA da fixture passa a anunciar a default (Task 3)."""
+    config = parse_config_vrp(FIXTURE.read_text(encoding="utf-8"))
+    assert _por_endereco(config, "100.64.10.4").default_route_advertise is True
+    assert _por_endereco(config, "100.64.10.1").default_route_advertise is False
+    assert config.avisos == ()
