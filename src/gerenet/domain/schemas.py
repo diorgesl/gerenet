@@ -1150,6 +1150,11 @@ class AdocaoSessaoIn(BaseModel):
     import_profile_id: int | None = None
     export_profile_id: int | None = None
     password_ref: str | None = Field(default=None, max_length=255)
+    # §4.3: o nome lido no equipamento, importado quando o operador quiser. Em
+    # `_DO_OPERADOR` porque é ele que decide entre manter e limpar — o valor da
+    # proposta é sugestão, e limpar devolve os nomes do §25.4.
+    import_route_policy: str | None = Field(default=None, pattern=NOME_DE_POLITICA_RE)
+    export_route_policy: str | None = Field(default=None, pattern=NOME_DE_POLITICA_RE)
 
 
 class AdocaoAutorizacaoIn(BaseModel):

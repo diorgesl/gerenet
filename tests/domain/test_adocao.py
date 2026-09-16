@@ -850,3 +850,49 @@ def test_a_colisao_de_nome_da_organizacao_diz_o_motivo(db_session, tmp_path) -> 
     assert str(recusa.value) == "Já existe organização com o nome Cliente Alfa."
     assert db_session.scalars(select(models.Organization)).all() == [dona]
     assert db_session.query(models.Circuit).count() == 0
+
+
+def test_a_revisao_silenciosa_limpa_os_nomes_lidos(db_session, tmp_path) -> None:
+    """§4.3: o valor da proposta é sugestão; quem decide é o operador. Sem nomes
+    na revisão, a coluna fica nula e o render deriva os nomes do §25.4."""
+    _site, dev = _ambiente(db_session, tmp_path)
+    proposta = _proposta(db_session, dev)
+    assert proposta.sessoes[0]["import_route_policy"] == "RP-64512-IMPORT-V4"
+    assert proposta.sessoes[0]["export_route_policy"] == "IP-PFX-64512-EXPORT-V4"
+
+    revisao = _revisao(dev, sessoes=[
+        AdocaoSessaoIn(afi="ipv4", password_ref=CAMINHO_SENHA),
+        AdocaoSessaoIn(afi="ipv6"),
+    ])
+    circ_id = adotar_proposta(db_session, proposta=proposta, revisao=revisao, actor="cli")
+    v4 = db_session.scalar(select(models.BgpSession).where(
+        models.BgpSession.circuit_id == circ_id, models.BgpSession.afi == "ipv4"
+    ))
+    v6 = db_session.scalar(select(models.BgpSession).where(
+        models.BgpSession.circuit_id == circ_id, models.BgpSession.afi == "ipv6"
+    ))
+    assert (v4.import_route_policy, v4.export_route_policy) == (None, None)
+    assert (v6.import_route_policy, v6.export_route_policy) == (None, None)
+
+
+def test_a_revisao_importa_os_nomes_que_trouxe(db_session, tmp_path) -> None:
+    """§4.3: quem decide é o operador — os nomes da revisão vencem os lidos, e
+    valem só para a família que os trouxe."""
+    _site, dev = _ambiente(db_session, tmp_path)
+    proposta = _proposta(db_session, dev)
+
+    revisao = _revisao(dev, sessoes=[
+        AdocaoSessaoIn(afi="ipv4", password_ref=CAMINHO_SENHA,
+                       import_route_policy="RP-OPERADOR-IN",
+                       export_route_policy="RP-OPERADOR-OUT"),
+        AdocaoSessaoIn(afi="ipv6"),
+    ])
+    circ_id = adotar_proposta(db_session, proposta=proposta, revisao=revisao, actor="cli")
+    v4 = db_session.scalar(select(models.BgpSession).where(
+        models.BgpSession.circuit_id == circ_id, models.BgpSession.afi == "ipv4"
+    ))
+    v6 = db_session.scalar(select(models.BgpSession).where(
+        models.BgpSession.circuit_id == circ_id, models.BgpSession.afi == "ipv6"
+    ))
+    assert (v4.import_route_policy, v4.export_route_policy) == ("RP-OPERADOR-IN", "RP-OPERADOR-OUT")
+    assert (v6.import_route_policy, v6.export_route_policy) == (None, None)

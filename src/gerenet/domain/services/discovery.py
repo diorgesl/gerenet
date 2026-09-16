@@ -120,6 +120,7 @@ def esquecer_ignorado(
 # construtor). `circuit_id` e `device_id` são do circuito que nasce na adoção.
 _DO_OPERADOR = (
     "circuit_id", "device_id", "import_profile_id", "export_profile_id", "password_ref",
+    "import_route_policy", "export_route_policy",
 )
 
 
@@ -151,6 +152,8 @@ def _sessao_da_proposta(
         import_profile_id=overrides.import_profile_id,
         export_profile_id=overrides.export_profile_id,
         password_ref=overrides.password_ref,
+        import_route_policy=overrides.import_route_policy,
+        export_route_policy=overrides.export_route_policy,
     )
 
 
