@@ -972,6 +972,37 @@ class UpstreamUpdate(BaseModel):
         return _valida_margem(v)
 
 
+class UpstreamCircuitoIn(BaseModel):
+    """O circuito de acesso do cadastro do upstream (§6).
+
+    Só identidade e acesso: a reserva de VLAN e de endereços continua na página
+    do circuito, que já tem o assistente, e o vínculo não exige reserva. A
+    organização do circuito é a do upstream — não há campo para ela aqui, e é
+    por isso que um `organization_id` a mais seria recusado.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(min_length=1, max_length=64)
+    site_id: int
+    edge_device_id: int
+    edge_trunk: str | None = Field(default=None, max_length=64)
+    access_device_id: int
+    access_port: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9/\-]+$")
+    velocidade_mbps: int | None = Field(default=None, gt=0, le=100000)
+
+
+class UpstreamCreateIn(UpstreamCreate):
+    """O corpo do `POST /api/v1/upstreams`: o upstream e, opcional, o acesso (§6).
+
+    Herda os campos do `UpstreamCreate` em vez de aninhá-los, para o contrato de
+    hoje (os campos do upstream na raiz do corpo) seguir valendo — quem já
+    postava sem o bloco não muda nada.
+    """
+
+    circuito: UpstreamCircuitoIn | None = None
+
+
 class UpstreamCommunityCreate(BaseModel):
     purpose: Literal["blackhole", "prepend", "lp", "info"]
     value: str = Field(min_length=2, max_length=64)

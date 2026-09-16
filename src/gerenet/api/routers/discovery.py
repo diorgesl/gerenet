@@ -18,6 +18,7 @@ from gerenet.domain import schemas
 from gerenet.domain.services.devices import get_device
 from gerenet.domain.services.discovery import (
     adotar_proposta,
+    bloco_do_upstream,
     esquecer_ignorado,
     ignorar_candidato,
     listar_ignorados,
@@ -188,6 +189,14 @@ def fidelidade(
     organizacao_id: int | None = None,
     organizacao_nome: str | None = None,
     velocidade_mbps: int | None = None,
+    organizacao_kind: str | None = None,
+    upstream_id: int | None = None,
+    upstream_tipo: str | None = None,
+    upstream_produto: str | None = None,
+    upstream_papel: str = "principal",
+    upstream_expected_v4: int | None = None,
+    upstream_expected_v6: int | None = None,
+    upstream_margem: int = 20,
     # O `Query()` explícito é o que faz a LISTA repetida ser lida da query string
     # nesta versão do FastAPI: sem o `Annotated`, `list[str]` chega sempre vazio
     # (conferido em sonda), e a conferência seguiria sem os blocos sem nada
@@ -204,9 +213,18 @@ def fidelidade(
     estaria comparando algo diferente do que a adoção vai gravar.
 
     Os parâmetros de identidade (`edge_trunk`, `circuit_code`,
-    `organizacao_id`/`organizacao_nome`, `velocidade_mbps`) são o que a revisão
-    vai GRAVAR: o ensaio roda com eles para comparar exatamente o que a adoção
-    produziria.
+    `organizacao_id`/`organizacao_nome`, `organizacao_kind`, `velocidade_mbps`)
+    são o que a revisão vai GRAVAR: o ensaio roda com eles para comparar
+    exatamente o que a adoção produziria. O `organizacao_kind` entra na mesma
+    conta pelo que o render lê dele: sem o kind o ensaio cai em `downstream`, e
+    a prévia de um enlace de operadora acusaria as diferenças do caminho de
+    cliente que a adoção não vai criar — o operador marcaria `ciente` por uma
+    linha que nunca muda.
+
+    O bloco `upstream_*` (design §5.4) é o outro lado da mesma moeda: com
+    `upstream_id` os valores saem do upstream da SoT, e sem ele dos argumentos,
+    que é a criação da revisão. Sem bloco nenhum o enlace é de cliente, e o
+    ensaio renderiza por esse caminho.
 
     `autorizacoes` são os blocos que a revisão marcou, um por entrada, na forma
     `família:prefixo` (`?autorizacoes=ipv4:138.121.28.0/22`): sem eles o ensaio
@@ -224,6 +242,14 @@ def fidelidade(
             session, proposta, perfis=perfis, edge_trunk=edge_trunk,
             circuit_code=circuit_code, organizacao_id=organizacao_id,
             organizacao_nome=organizacao_nome, velocidade_mbps=velocidade_mbps,
+            organizacao_kind=organizacao_kind,
+            upstream=bloco_do_upstream(
+                session, upstream_id=upstream_id, tipo=upstream_tipo,
+                produto_import=upstream_produto, papel=upstream_papel,
+                expected_prefixes_v4=upstream_expected_v4,
+                expected_prefixes_v6=upstream_expected_v6,
+                max_prefix_margin_pct=upstream_margem,
+            ),
             autorizacoes=_blocos_do_query(autorizacoes),
         )
     except NotFoundError as exc:

@@ -13,11 +13,13 @@ from gerenet.domain.schemas import (
     OrganizationCreate,
     PrefixAuthorizationCreate,
     SiteCreate,
+    UpstreamCreate,
 )
 from gerenet.domain.services.devices import create_device
 from gerenet.domain.services.organizations import create_organization
 from gerenet.domain.services.prefix_authorizations import create_authorization
 from gerenet.domain.services.sites import create_site, link_device
+from gerenet.domain.services.upstreams import create_upstream
 
 FIXTURE = Path("tests/fixtures/huawei_vrp/ne8000_display_current_configuration.txt")
 # Dois peers na mesma VRF, nenhum deles em subinterface: são duas propostas órfãs
@@ -467,3 +469,30 @@ def test_adopt_recusa_bloco_conflitante(client: TestClient, db_session, tmp_path
 
     assert resp.status_code == 409
     assert "Cliente Beta" in resp.json()["detail"]
+
+
+def test_a_conferencia_de_upstream_recebe_o_bloco_por_query(client: TestClient, db_session,
+                                                            tmp_path: Path) -> None:
+    """§5.4: sem o bloco o diff de um enlace de operadora acusa tudo; com ele, a
+    rota monta o ensaio pelo caminho de upstream."""
+    ambiente = _ambiente(db_session, tmp_path)
+    operadora = create_organization(
+        db_session,
+        OrganizationCreate(name="Operadora Conf", asn=64533, kind="operadora"),
+        actor="cli",
+    )
+    up = create_upstream(db_session, UpstreamCreate(
+        name="up-conf", tipo="transito", organization_id=operadora.id,
+    ), actor="cli")
+
+    url = (f"/api/v1/discovery/fidelidade?device_id={ambiente['dev'].id}"
+           "&subinterface=Eth-Trunk127.1001")
+    sem_bloco = client.get(url, headers=_auth())
+    com_bloco = client.get(f"{url}&upstream_id={up.id}", headers=_auth())
+    assert sem_bloco.status_code == com_bloco.status_code == 200
+    # O bloco muda o que a conferência compara: o ensaio passa a montar o vínculo
+    # e a renderizar pelo caminho de upstream. Sem ele o render trata o enlace
+    # como cliente (prefix-list de importação pelas autorizações, export pelo
+    # produto), e o grupo do peer sai de outro caminho — as duas respostas não
+    # podem ser iguais.
+    assert com_bloco.json()["diferencas"] != sem_bloco.json()["diferencas"]

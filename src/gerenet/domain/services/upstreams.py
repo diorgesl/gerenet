@@ -3,11 +3,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from gerenet.domain import models
+from gerenet.domain import models, schemas
 from gerenet.domain.audit import registrar
 from gerenet.domain.schemas import UpstreamCreate, UpstreamUpdate
 from gerenet.domain.services.bgp_sessions import list_sessions
-from gerenet.domain.services.circuits import get_circuit
+from gerenet.domain.services.circuits import create_circuit, get_circuit
 from gerenet.domain.services.errors import ConflictError, NotFoundError, ValidationError
 from gerenet.domain.services.organizations import get_organization
 
@@ -90,6 +90,50 @@ def create_upstream(session: Session, data: UpstreamCreate, *, actor: str,
         raise ConflictError(f"Já existe um upstream com o nome {data.name}.") from None
     if commit:
         session.refresh(up)
+    return up
+
+
+def criar_com_circuito(
+    session: Session, data: schemas.UpstreamCreate,
+    circuito: schemas.UpstreamCircuitoIn | None = None, *, actor: str, commit: bool = True,
+) -> models.Upstream:
+    """Cadastra o upstream e, com o bloco de acesso, o circuito vinculado (§6).
+
+    Uma transação: o upstream, o circuito e o vínculo principal nascem juntos,
+    ou nada nasce. O circuito nasce sem reserva — quem reserva VLAN e endereços é
+    a página do circuito.
+    """
+    up = create_upstream(session, data, actor=actor, commit=False)
+    if circuito is None:
+        if commit:
+            session.commit()
+            session.refresh(up)
+        return up
+    try:
+        circ = create_circuit(
+            session,
+            schemas.CircuitCreate(
+                code=circuito.code, organization_id=data.organization_id,
+                site_id=circuito.site_id, access_device_id=circuito.access_device_id,
+                access_port=circuito.access_port, edge_device_id=circuito.edge_device_id,
+                edge_trunk=circuito.edge_trunk, velocidade_mbps=circuito.velocidade_mbps,
+            ),
+            actor=actor, commit=False,
+        )
+        vincular_circuito(session, up.id, circ.id, papel="principal", ordem=1,
+                          actor=actor, commit=False)
+        if commit:
+            session.commit()
+            session.refresh(up)
+    except Exception:
+        # Qualquer recusa depois do upstream desfaz o que já foi gravado: sem
+        # isto o upstream ficaria pendente na transação de quem chamou. O
+        # `if commit` é o que impede esta limpeza de levar junto a transação de
+        # um chamador que compôs com `commit=False` — a mesma fronteira dos
+        # outros serviços.
+        if commit:
+            session.rollback()
+        raise
     return up
 
 

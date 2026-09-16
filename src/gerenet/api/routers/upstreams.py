@@ -21,6 +21,7 @@ from gerenet.domain.schemas import (
     UpstreamCommunityCreate,
     UpstreamCommunityOut,
     UpstreamCreate,
+    UpstreamCreateIn,
     UpstreamDetailOut,
     UpstreamOut,
     UpstreamUpdate,
@@ -93,16 +94,21 @@ def listar(
 
 @router.post("", response_model=UpstreamOut, status_code=201)
 def criar(
-    data: UpstreamCreate, session: SessionDep, actor: Annotated[Actor, Depends(require_actor)]
+    data: UpstreamCreateIn, session: SessionDep, actor: Annotated[Actor, Depends(require_actor)]
 ) -> object:
+    """Cadastra o upstream — e, com o bloco `circuito`, o acesso já vinculado (§6)."""
+    # O `UpstreamCreate` é reconstruído sem o bloco: o `model_dump()` do serviço
+    # vira `models.Upstream(**dump)`, e uma chave a mais estoura o construtor.
+    dados = UpstreamCreate(**data.model_dump(exclude={"circuito"}))
     try:
-        return _out_upstream(svc.create_upstream(session, data, actor=actor.nome))
+        up = svc.criar_com_circuito(session, dados, data.circuito, actor=actor.nome)
     except ConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _out_upstream(up)
 
 
 @router.get("/{upstream_id}", response_model=UpstreamDetailOut)

@@ -7,6 +7,7 @@
 """
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from gerenet.api.main import create_app
@@ -376,3 +377,74 @@ def test_change_request_expoe_upstream_id_e_nome(
 
     lista = client.get("/api/v1/change-requests", headers=_auth()).json()
     assert [r["upstream_name"] for r in lista] == ["transito-f5"]
+
+
+# ---- upstreams: o acesso no cadastro (§6) --------------------------------
+
+
+def _corpo_com_acesso(env: dict, *, nome: str, code: str) -> dict:
+    return {
+        "name": nome, "tipo": "transito", "organization_id": env["org_id"],
+        "produto_import": "full",
+        "circuito": {
+            "code": code, "site_id": env["site_id"], "edge_device_id": env["ne_id"],
+            "edge_trunk": "Eth-Trunk127", "access_device_id": env["sw_id"],
+            "access_port": "GE0/0/1", "velocidade_mbps": 1024,
+        },
+    }
+
+
+def test_post_com_bloco_de_circuito_cria_e_vincula(client: TestClient, db_session: Session) -> None:
+    """§6: o acesso entra no cadastro do upstream e o circuito nasce vinculado
+    como principal, na mesma chamada."""
+    env = _ambiente(db_session)
+    resp = client.post("/api/v1/upstreams", headers=_auth(),
+                       json=_corpo_com_acesso(env, nome="up-com-acesso", code="CIRC-ACESSO"))
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["produto_import"] == "full"
+
+    circ = db_session.scalar(select(models.Circuit).where(models.Circuit.code == "CIRC-ACESSO"))
+    assert (circ.velocidade_mbps, circ.edge_trunk) == (1024, "Eth-Trunk127")
+    assert circ.organization_id == env["org_id"]
+    vinculo = db_session.scalar(select(models.UpstreamCircuit).where(
+        models.UpstreamCircuit.circuit_id == circ.id
+    ))
+    assert (vinculo.upstream_id, vinculo.papel, vinculo.ordem) == (resp.json()["id"], "principal", 1)
+
+
+def test_o_bloco_de_circuito_que_falha_nao_deixa_upstream(client: TestClient,
+                                                          db_session: Session) -> None:
+    """A transação é uma só: o mesmo código de circuito na segunda chamada
+    derruba os dois, e o upstream não fica órfão."""
+    env = _ambiente(db_session)
+    primeira = client.post("/api/v1/upstreams", headers=_auth(),
+                           json=_corpo_com_acesso(env, nome="up-primeiro", code="CIRC-REPETIDO"))
+    assert primeira.status_code == 201, primeira.text
+
+    segunda = client.post("/api/v1/upstreams", headers=_auth(),
+                          json=_corpo_com_acesso(env, nome="up-sem-circuito", code="CIRC-REPETIDO"))
+    assert segunda.status_code in (409, 422), segunda.text
+    assert db_session.scalars(select(models.Upstream).where(
+        models.Upstream.name == "up-sem-circuito"
+    )).all() == []
+
+
+def test_o_bloco_de_circuito_recusa_organization_id(client: TestClient, db_session: Session) -> None:
+    """`extra="forbid"` no bloco: a organização do circuito é a do upstream, e um
+    campo a mais passaria calado."""
+    env = _ambiente(db_session)
+    corpo = _corpo_com_acesso(env, nome="up-com-org-no-bloco", code="CIRC-ORG")
+    corpo["circuito"]["organization_id"] = env["org_id"]
+    resp = client.post("/api/v1/upstreams", headers=_auth(), json=corpo)
+    assert resp.status_code == 422, resp.text
+
+
+def test_o_post_sem_bloco_continua_igual(client: TestClient, db_session: Session) -> None:
+    """O contrato de hoje não muda: os campos do upstream na raiz do corpo."""
+    env = _ambiente(db_session)
+    resp = client.post("/api/v1/upstreams", headers=_auth(), json={
+        "name": "up-sem-acesso", "tipo": "ix", "organization_id": env["org_id"],
+    })
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["produto_import"] is None
+    assert db_session.scalars(select(models.UpstreamCircuit)).all() == []
