@@ -30,7 +30,9 @@ beforeAll(() => {
     source_address: null, asn_local: 64600, asn_remote: 64512, description: null, import_profile_id: null,
     export_profile_id: null, maximum_prefix: 100, maximum_prefix_threshold: 80, local_preference: 100,
     med: null, prepend: null, keepalive: 30, holdtime: 90, bfd_enabled: true, graceful_restart: false,
-    shutdown: false, allow_default_route: false, has_password: false, admin_status: true,
+    shutdown: false, allow_default_route: false, default_route_advertise: false,
+    import_route_policy: null, export_route_policy: null, upstream_id: null,
+    has_password: false, admin_status: true,
   };
   associadas = [];
   hasPassword = false;
@@ -184,5 +186,39 @@ describe("BgpSessions", () => {
       const chamadas = vi.mocked(fetch).mock.calls as unknown as [string, RequestInit][];
       expect(chamadas.some((c) => c[0] === "/api/v1/bgp-sessions/1/password" && c[1]?.method === "POST")).toBe(true);
     });
+  });
+
+  // O formulário de criação fica na mesma página: os rótulos são procurados
+  // dentro do diálogo, como no teste de edição acima.
+  it("mostra o anúncio ao cliente e não o do provedor, na sessão sem vínculo", async () => {
+    sessao.upstream_id = null;
+    renderList();
+    await screen.findByText("100.64.40.1 ↔ 100.64.40.2");
+    await userEvent.click(screen.getByRole("button", { name: "Editar" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByLabelText(/^Anunciar rota default ao cliente/)).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText(/^Aceitar rota default do provedor/)).not.toBeInTheDocument();
+  });
+
+  it("mostra o aceite do provedor e não o anúncio, na sessão de upstream", async () => {
+    sessao.upstream_id = 7;
+    renderList();
+    await screen.findByText("100.64.40.1 ↔ 100.64.40.2");
+    await userEvent.click(screen.getByRole("button", { name: "Editar" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByLabelText(/^Aceitar rota default do provedor/)).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText(/^Anunciar rota default ao cliente/)).not.toBeInTheDocument();
+  });
+
+  it("o nome da route-policy lido do equipamento aparece no diálogo de edição", async () => {
+    sessao.upstream_id = null;
+    sessao.import_route_policy = "RP-64512-IMPORT-V4";
+    sessao.export_route_policy = null;
+    renderList();
+    await screen.findByText("100.64.40.1 ↔ 100.64.40.2");
+    await userEvent.click(screen.getByRole("button", { name: "Editar" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByLabelText(/^Route-policy de importação/)).toHaveValue("RP-64512-IMPORT-V4");
+    expect(within(dialog).getByLabelText(/^Route-policy de exportação/)).toHaveValue("");
   });
 });

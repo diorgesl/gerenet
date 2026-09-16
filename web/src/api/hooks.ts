@@ -345,6 +345,9 @@ export type BgpSessionCreateIn = {
   graceful_restart?: boolean;
   shutdown?: boolean;
   allow_default_route?: boolean;
+  default_route_advertise?: boolean;
+  import_route_policy?: string | null;
+  export_route_policy?: string | null;
 };
 export const useBgpSessionCriar = () => useCriar<BgpSessionCreateIn, BgpSessionOut>("bgp-sessions", "/api/v1/bgp-sessions");
 export const useBgpSessionAtualizar = () =>

@@ -144,6 +144,10 @@ export interface BgpSessionOut {
   graceful_restart: boolean;
   shutdown: boolean;
   allow_default_route: boolean;
+  default_route_advertise: boolean; // anúncio da default AO peer (§3.3) — só na sessão de cliente
+  import_route_policy: string | null; // nome da route-policy lido do equipamento (§4.1); null = padrão do gerenet
+  export_route_policy: string | null;
+  upstream_id: number | null; // vínculo do circuito com o upstream — o render despacha por ele (§3.6)
   has_password: boolean;
   admin_status: boolean;
   organization_kind: string | null; // kind da organização do circuito — preenchido no router (fase 5)

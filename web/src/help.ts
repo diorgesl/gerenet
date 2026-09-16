@@ -85,7 +85,10 @@ export const HELP = {
   "bgp.bfd_enabled": "BFD sobre a sessão BGP — detecção rápida de queda do peer.",
   "bgp.graceful_restart": "Habilita graceful restart (reinício sem queda de rotas).",
   "bgp.shutdown": "Sessão provisionada mas desligada (shutdown) — não estabelece peering.",
-  "bgp.allow_default_route": "Aceita rota default (0.0.0.0/0 ou ::/0) do peer — entra antes das autorizações na prefix-list.",
+  "bgp.allow_default_route": "Sessão de upstream: aceita a rota default (0.0.0.0/0 ou ::/0) que o provedor anuncia. Só aparece na sessão de upstream.",
+  "bgp.default_route_advertise": "Sessão de cliente: anuncia a rota default (0.0.0.0/0 ou ::/0) AO cliente (`peer X default-route-advertise`). Só aparece na sessão de cliente.",
+  "bgp.import_route_policy": "Nome da route-policy de importação como está no equipamento. Preenchido, o gerenet emite a definição sob esse nome — e passa a gerenciar o corpo dela. Vazio, o nome volta ao padrão do gerenet (RP-<ASN>-IMPORT-<AFI>).",
+  "bgp.export_route_policy": "Idem para a route-policy de exportação (RP-<ASN>-EXPORT-<AFI> quando vazio).",
   "bgp.password": "Senha MD5 do peering — segredo: nunca exibida em texto claro (espelha apenas has_password).",
 
   // Policy profiles

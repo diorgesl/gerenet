@@ -45,6 +45,10 @@ const FORM_VAZIO = {
   graceful_restart: false,
   shutdown: false,
   allow_default_route: false,
+  default_route_advertise: false,
+  import_route_policy: "",
+  export_route_policy: "",
+  upstream_id: null as number | null,
 };
 
 type FormEdit = typeof FORM_VAZIO;
@@ -150,6 +154,10 @@ export default function BgpSessions() {
       graceful_restart: s.graceful_restart,
       shutdown: s.shutdown,
       allow_default_route: s.allow_default_route,
+      default_route_advertise: s.default_route_advertise,
+      import_route_policy: s.import_route_policy ?? "",
+      export_route_policy: s.export_route_policy ?? "",
+      upstream_id: s.upstream_id,
     });
     setErroEdit(null);
     setEditando(s);
@@ -184,6 +192,9 @@ export default function BgpSessions() {
         graceful_restart: formEdit.graceful_restart,
         shutdown: formEdit.shutdown,
         allow_default_route: formEdit.allow_default_route,
+        default_route_advertise: formEdit.default_route_advertise,
+        import_route_policy: formEdit.import_route_policy.trim() || null,
+        export_route_policy: formEdit.export_route_policy.trim() || null,
       });
       setEditando(null);
     } catch (err) {
@@ -218,6 +229,9 @@ export default function BgpSessions() {
         graceful_restart: form.graceful_restart,
         shutdown: form.shutdown,
         allow_default_route: form.allow_default_route,
+        default_route_advertise: form.default_route_advertise,
+        import_route_policy: form.import_route_policy.trim() || null,
+        export_route_policy: form.export_route_policy.trim() || null,
       });
       setForm(FORM_VAZIO);
     } catch (err) {
@@ -294,6 +308,22 @@ export default function BgpSessions() {
               ))}
             </select>
           </FormField>
+          <FormField label="Route-policy de importação" help={help("bgp.import_route_policy")}>
+            <input
+              value={form.import_route_policy}
+              maxLength={63}
+              placeholder="RP-<ASN>-IMPORT-<AFI>"
+              onChange={(e) => setForm({ ...form, import_route_policy: e.target.value })}
+            />
+          </FormField>
+          <FormField label="Route-policy de exportação" help={help("bgp.export_route_policy")}>
+            <input
+              value={form.export_route_policy}
+              maxLength={63}
+              placeholder="RP-<ASN>-EXPORT-<AFI>"
+              onChange={(e) => setForm({ ...form, export_route_policy: e.target.value })}
+            />
+          </FormField>
           <FormField label="Maximum-prefix" help={help("bgp.maximum_prefix")}>
             <input type="number" value={form.maximum_prefix} onChange={(e) => setForm({ ...form, maximum_prefix: e.target.value })} />
           </FormField>
@@ -324,9 +354,27 @@ export default function BgpSessions() {
           <FormField label="Shutdown" help={help("bgp.shutdown")}>
             <input type="checkbox" checked={form.shutdown} onChange={(e) => setForm({ ...form, shutdown: e.target.checked })} />
           </FormField>
-          <FormField label="Default route" help={help("bgp.allow_default_route")}>
-            <input type="checkbox" checked={form.allow_default_route} onChange={(e) => setForm({ ...form, allow_default_route: e.target.checked })} />
-          </FormField>
+          {/* O vínculo do upstream só vem no detalhe do circuito (o CircuitOut da
+              listagem não o traz): na criação `upstream_id` é sempre null e o
+              formulário cai no rótulo de cliente — o par de rótulos por escopo
+              vale, de fato, para o diálogo de edição. */}
+          {form.upstream_id === null ? (
+            <FormField label="Anunciar rota default ao cliente" help={help("bgp.default_route_advertise")}>
+              <input
+                type="checkbox"
+                checked={form.default_route_advertise}
+                onChange={(e) => setForm({ ...form, default_route_advertise: e.target.checked })}
+              />
+            </FormField>
+          ) : (
+            <FormField label="Aceitar rota default do provedor" help={help("bgp.allow_default_route")}>
+              <input
+                type="checkbox"
+                checked={form.allow_default_route}
+                onChange={(e) => setForm({ ...form, allow_default_route: e.target.checked })}
+              />
+            </FormField>
+          )}
           <button className="primary" type="submit" disabled={criar.isPending}>
             Cadastrar
           </button>
@@ -463,6 +511,22 @@ export default function BgpSessions() {
                 ))}
               </select>
             </FormField>
+            <FormField label="Route-policy de importação" help={help("bgp.import_route_policy")}>
+              <input
+                value={formEdit.import_route_policy}
+                maxLength={64}
+                placeholder="RP-<ASN>-IMPORT-<AFI>"
+                onChange={(e) => setFormEdit({ ...formEdit, import_route_policy: e.target.value })}
+              />
+            </FormField>
+            <FormField label="Route-policy de exportação" help={help("bgp.export_route_policy")}>
+              <input
+                value={formEdit.export_route_policy}
+                maxLength={64}
+                placeholder="RP-<ASN>-EXPORT-<AFI>"
+                onChange={(e) => setFormEdit({ ...formEdit, export_route_policy: e.target.value })}
+              />
+            </FormField>
             <FormField label="Maximum-prefix" help={help("bgp.maximum_prefix")}>
               <input type="number" value={formEdit.maximum_prefix} onChange={(e) => setFormEdit({ ...formEdit, maximum_prefix: e.target.value })} />
             </FormField>
@@ -493,9 +557,23 @@ export default function BgpSessions() {
             <FormField label="Shutdown" help={help("bgp.shutdown")}>
               <input type="checkbox" checked={formEdit.shutdown} onChange={(e) => setFormEdit({ ...formEdit, shutdown: e.target.checked })} />
             </FormField>
-            <FormField label="Default route" help={help("bgp.allow_default_route")}>
-              <input type="checkbox" checked={formEdit.allow_default_route} onChange={(e) => setFormEdit({ ...formEdit, allow_default_route: e.target.checked })} />
-            </FormField>
+            {formEdit.upstream_id === null ? (
+              <FormField label="Anunciar rota default ao cliente" help={help("bgp.default_route_advertise")}>
+                <input
+                  type="checkbox"
+                  checked={formEdit.default_route_advertise}
+                  onChange={(e) => setFormEdit({ ...formEdit, default_route_advertise: e.target.checked })}
+                />
+              </FormField>
+            ) : (
+              <FormField label="Aceitar rota default do provedor" help={help("bgp.allow_default_route")}>
+                <input
+                  type="checkbox"
+                  checked={formEdit.allow_default_route}
+                  onChange={(e) => setFormEdit({ ...formEdit, allow_default_route: e.target.checked })}
+                />
+              </FormField>
+            )}
             <div className="dialog-actions">
               <button type="button" onClick={() => setEditando(null)} disabled={atualizar.isPending}>
                 Cancelar
