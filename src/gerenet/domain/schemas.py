@@ -232,6 +232,12 @@ class PrefixAuthorizationCreate(BaseModel):
     notes: str | None = None
 
 
+# §4.5: o limite é o do VRP e o conjunto de caracteres é o que o parser lê de
+# volta sem ambiguidade. O nome pode deixar de derivar do ASN do par (exceção
+# registrada ao §25.4), mas o tamanho e a grafia não mudam.
+NOME_DE_POLITICA_RE = r"^[A-Za-z0-9_.\-]{1,63}$"
+
+
 class BgpSessionCreate(BaseModel):
     circuit_id: int
     device_id: int
@@ -255,6 +261,14 @@ class BgpSessionCreate(BaseModel):
     graceful_restart: bool = False
     shutdown: bool = False
     allow_default_route: bool = False
+    # §3.3: o anúncio da default AO peer. O `allow_default_route` acima continua
+    # sendo o outro sentido (aceitar a default que o peer manda).
+    default_route_advertise: bool = False
+    # §4.1: nomes de route-policy lidos do equipamento; nulos, o render deriva
+    # do ASN do par (§25.4). O `pattern` é o teto e a grafia do VRP, não o padrão
+    # de nomes do §25.4: um nome de equipamento fora do padrão da casa entra.
+    import_route_policy: str | None = Field(default=None, pattern=NOME_DE_POLITICA_RE)
+    export_route_policy: str | None = Field(default=None, pattern=NOME_DE_POLITICA_RE)
     # O caminho do segredo no Vault, nunca o valor (`models.BgpSession.password_ref`).
     # A revisão da adoção escolhe o caminho e o `create_session` o grava pelo
     # `model_dump`; a senha em si continua entrando só pelo `set_password`.
@@ -286,6 +300,9 @@ class BgpSessionUpdate(BaseModel):
     graceful_restart: bool | None = None
     shutdown: bool | None = None
     allow_default_route: bool | None = None
+    default_route_advertise: bool | None = None
+    import_route_policy: str | None = Field(default=None, pattern=NOME_DE_POLITICA_RE)
+    export_route_policy: str | None = Field(default=None, pattern=NOME_DE_POLITICA_RE)
     admin_status: bool | None = None
 
 
@@ -394,9 +411,15 @@ class BgpSessionOut(BaseModel):
     graceful_restart: bool
     shutdown: bool
     allow_default_route: bool
+    default_route_advertise: bool
+    import_route_policy: str | None = None
+    export_route_policy: str | None = None
     has_password: bool  # property do modelo — o valor nunca trafega aqui
     admin_status: bool
     organization_kind: str | None = None  # derivado da organização do circuito da sessão (router/fase 5)
+    # §3.6: o vínculo do circuito, e não o `kind` da organização: é por ele que
+    # o render despacha, e uma operadora sem vínculo cai no caminho de cliente.
+    upstream_id: int | None = None
 
 
 class PrefixAuthorizationOut(BaseModel):
@@ -909,6 +932,8 @@ class UpstreamCreate(BaseModel):
     expected_prefixes_v6: int | None = None
     max_prefix_margin_pct: int = Field(default=20, ge=0, le=100)
     rpki_enabled: bool = True
+    # §7: o tipo de rota que a operadora envia. Nulo ⇒ o produto sai do tipo.
+    produto_import: Literal["full", "parcial", "default"] | None = None
     entrada_local_preference: int | None = None
     contingencia_local_preference: int | None = None
     contingencia_prepend: int | None = Field(default=None, ge=0, le=10)
@@ -934,6 +959,7 @@ class UpstreamUpdate(BaseModel):
     # valores absurdos iam direto ao banco (design §9: margem 0-100, prepend 0-10).
     max_prefix_margin_pct: int | None = Field(default=None, ge=0, le=100)
     rpki_enabled: bool | None = None
+    produto_import: Literal["full", "parcial", "default"] | None = None
     entrada_local_preference: int | None = None
     contingencia_local_preference: int | None = None
     contingencia_prepend: int | None = Field(default=None, ge=0, le=10)
@@ -944,6 +970,37 @@ class UpstreamUpdate(BaseModel):
     @classmethod
     def _margem(cls, v: int | None) -> int | None:
         return _valida_margem(v)
+
+
+class UpstreamCircuitoIn(BaseModel):
+    """O circuito de acesso do cadastro do upstream (§6).
+
+    Só identidade e acesso: a reserva de VLAN e de endereços continua na página
+    do circuito, que já tem o assistente, e o vínculo não exige reserva. A
+    organização do circuito é a do upstream — não há campo para ela aqui, e é
+    por isso que um `organization_id` a mais seria recusado.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(min_length=1, max_length=64)
+    site_id: int
+    edge_device_id: int
+    edge_trunk: str | None = Field(default=None, max_length=64)
+    access_device_id: int
+    access_port: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9/\-]+$")
+    velocidade_mbps: int | None = Field(default=None, gt=0, le=100000)
+
+
+class UpstreamCreateIn(UpstreamCreate):
+    """O corpo do `POST /api/v1/upstreams`: o upstream e, opcional, o acesso (§6).
+
+    Herda os campos do `UpstreamCreate` em vez de aninhá-los, para o contrato de
+    hoje (os campos do upstream na raiz do corpo) seguir valendo — quem já
+    postava sem o bloco não muda nada.
+    """
+
+    circuito: UpstreamCircuitoIn | None = None
 
 
 class UpstreamCommunityCreate(BaseModel):
@@ -999,6 +1056,7 @@ class UpstreamOut(BaseModel):
     expected_prefixes_v6: int | None
     max_prefix_margin_pct: int
     rpki_enabled: bool
+    produto_import: str | None
     entrada_local_preference: int | None
     contingencia_local_preference: int | None
     contingencia_prepend: int | None
@@ -1127,6 +1185,18 @@ class AdocaoSessaoIn(BaseModel):
     import_profile_id: int | None = None
     export_profile_id: int | None = None
     password_ref: str | None = Field(default=None, max_length=255)
+    # §5.1: o anúncio da default é decisão da revisão — o valor LIDO na
+    # configuração é o default, e só ele. Sem isto a adoção de um enlace de
+    # operadora que anuncia (`peer X default-route-advertise` na config) não tem
+    # saída: o valor lido entra na sessão, o circuito já nasce com o vínculo, a
+    # guarda `_recusa_anuncio_em_upstream` recusa e a transação inteira volta —
+    # o operador ficaria sem poder desligar o anúncio que ele vê no diff.
+    default_route_advertise: bool | None = None
+    # §4.3: o nome lido no equipamento, importado quando o operador quiser. Em
+    # `_DO_OPERADOR` porque é ele que decide entre manter e limpar — o valor da
+    # proposta é sugestão, e limpar devolve os nomes do §25.4.
+    import_route_policy: str | None = Field(default=None, pattern=NOME_DE_POLITICA_RE)
+    export_route_policy: str | None = Field(default=None, pattern=NOME_DE_POLITICA_RE)
 
 
 class AdocaoAutorizacaoIn(BaseModel):
@@ -1141,6 +1211,57 @@ class AdocaoAutorizacaoIn(BaseModel):
 
     prefix: str = Field(min_length=1, max_length=64)
     family: Literal["ipv4", "ipv6"]
+
+
+class AdocaoUpstreamIn(BaseModel):
+    """O bloco do upstream da revisão (design §5.2), em duas formas.
+
+    Por vínculo (`upstream_id`) ou por criação (o resto dos campos, com `name` e
+    `tipo` obrigatórios). `extra="forbid"` como os irmãos: o corpo vem de um
+    `--json` e a chave digitada errado passaria calada. `produto_import` entra
+    aqui porque a operadora não tem prefix-list própria (§7): o que a descreve é
+    o produto, e é ele que o ensaio da conferência precisa ter em mãos.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    upstream_id: int | None = None
+    name: str | None = Field(default=None, min_length=2, max_length=128)
+    tipo: Literal["transito", "ix", "pni", "contingencia"] | None = None
+    capacity: str | None = Field(default=None, max_length=32)
+    priority: int | None = None
+    cost: str | None = Field(default=None, max_length=32)
+    expected_prefixes_v4: int | None = None
+    expected_prefixes_v6: int | None = None
+    max_prefix_margin_pct: int = Field(default=20, ge=0, le=100)
+    rpki_enabled: bool = True
+    entrada_local_preference: int | None = None
+    produto_import: Literal["full", "parcial", "default"] | None = None
+    # `contingencia_*` não estão na lista do §5.2 e entram por uma razão só: sem
+    # eles, o ensaio de um upstream NOVO com papel de contingência não teria o LP
+    # e o prepend que a escrita vai gravar e acusaria diferença que não existe.
+    contingencia_local_preference: int | None = None
+    contingencia_prepend: int | None = Field(default=None, ge=0, le=10)
+    papel: Literal["principal", "contingencia"] = "principal"
+    ordem: int = 1
+
+    @model_validator(mode="after")
+    def _uma_das_formas(self) -> "AdocaoUpstreamIn":
+        """Ou o vínculo, ou a criação — não os dois e não nenhum."""
+        criacao = self.name is not None or self.tipo is not None
+        if self.upstream_id is not None:
+            if criacao:
+                raise ValueError(
+                    "O bloco do upstream é por vínculo (upstream_id) ou por criação "
+                    "(name e tipo), não os dois."
+                )
+            return self
+        if self.name is None or self.tipo is None:
+            raise ValueError(
+                "Informe o `upstream_id` ou os campos de criação do upstream "
+                "(`name` e `tipo`)."
+            )
+        return self
 
 
 class AdocaoIn(BaseModel):
@@ -1173,6 +1294,8 @@ class AdocaoIn(BaseModel):
     organizacao_nova: OrganizationCreate | None = None
     autorizacoes: list[AdocaoAutorizacaoIn] = Field(default_factory=list)
     sessoes: list[AdocaoSessaoIn] = Field(default_factory=list)
+    # §5.1: organização operadora e bloco de upstream andam juntos.
+    upstream: AdocaoUpstreamIn | None = None
     ciente: bool = False
 
     @field_validator("edge_trunk", mode="before")

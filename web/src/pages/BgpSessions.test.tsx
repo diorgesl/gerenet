@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import BgpSessions from "./BgpSessions";
 import BgpSessionDetail from "./BgpSessionDetail";
 import { AuthProvider } from "@/auth/auth-context";
@@ -24,13 +24,22 @@ function opcoes() {
   };
 }
 
+function corpoDaChamada(metodo: string, url: string) {
+  const chamadas = vi.mocked(fetch).mock.calls as unknown as [string, RequestInit][];
+  const chamada = chamadas.find((c) => c[0] === url && c[1]?.method === metodo);
+  if (!chamada) throw new Error(`a página não enviou o ${metodo} de ${url}.`);
+  return JSON.parse(String(chamada[1].body)) as Record<string, unknown>;
+}
+
 beforeAll(() => {
   sessao = {
     id: 1, circuit_id: 1, device_id: 2, afi: "ipv4", local_address: "100.64.40.1", remote_address: "100.64.40.2",
     source_address: null, asn_local: 64600, asn_remote: 64512, description: null, import_profile_id: null,
     export_profile_id: null, maximum_prefix: 100, maximum_prefix_threshold: 80, local_preference: 100,
     med: null, prepend: null, keepalive: 30, holdtime: 90, bfd_enabled: true, graceful_restart: false,
-    shutdown: false, allow_default_route: false, has_password: false, admin_status: true,
+    shutdown: false, allow_default_route: false, default_route_advertise: false,
+    import_route_policy: null, export_route_policy: null, upstream_id: null,
+    has_password: false, admin_status: true,
   };
   associadas = [];
   hasPassword = false;
@@ -58,6 +67,10 @@ beforeAll(() => {
         return new Response(JSON.stringify({ id: 2, ...body, has_password: false, admin_status: true }), { status: 201, headers: { "Content-Type": "application/json" } });
       }
       if (url === "/api/v1/bgp-sessions/1/communities") return new Response(JSON.stringify(associadas), opcoes());
+      if (url === "/api/v1/bgp-sessions/1" && method === "PATCH") {
+        const body = JSON.parse(String(init?.body));
+        return new Response(JSON.stringify({ ...sessao, ...body, has_password: hasPassword }), opcoes());
+      }
       if (url === "/api/v1/bgp-sessions/1" && method === "GET") return new Response(JSON.stringify({ ...sessao, has_password: hasPassword }), opcoes());
       if (url === "/api/v1/bgp-sessions") return new Response(JSON.stringify([{ ...sessao, has_password: hasPassword }]), opcoes());
       if (url === "/api/v1/circuits") return new Response(JSON.stringify([circ]), opcoes());
@@ -105,6 +118,13 @@ function renderDetail() {
 }
 
 describe("BgpSessions", () => {
+  // O stub do fetch é instalado uma vez só, no `beforeAll`: sem o clear as
+  // chamadas de um teste ficam no histórico do seguinte, e o `corpoDaChamada`
+  // acharia o POST/PATCH de outro teste.
+  beforeEach(() => {
+    vi.mocked(fetch).mockClear();
+  });
+
   it("lista sessões e cria nova pela API", async () => {
     renderList();
     expect(await screen.findByText("100.64.40.1 ↔ 100.64.40.2")).toBeInTheDocument();
@@ -183,6 +203,118 @@ describe("BgpSessions", () => {
     await waitFor(() => {
       const chamadas = vi.mocked(fetch).mock.calls as unknown as [string, RequestInit][];
       expect(chamadas.some((c) => c[0] === "/api/v1/bgp-sessions/1/password" && c[1]?.method === "POST")).toBe(true);
+    });
+  });
+
+  // O formulário de criação fica na mesma página: os rótulos são procurados
+  // dentro do diálogo, como no teste de edição acima.
+  it("mostra o anúncio ao cliente e não o do provedor, na sessão sem vínculo", async () => {
+    sessao.upstream_id = null;
+    renderList();
+    await screen.findByText("100.64.40.1 ↔ 100.64.40.2");
+    await userEvent.click(screen.getByRole("button", { name: "Editar" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByLabelText(/^Anunciar rota default ao cliente/)).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText(/^Aceitar rota default do provedor/)).not.toBeInTheDocument();
+  });
+
+  it("mostra o aceite do provedor e não o anúncio, na sessão de upstream", async () => {
+    sessao.upstream_id = 7;
+    renderList();
+    await screen.findByText("100.64.40.1 ↔ 100.64.40.2");
+    await userEvent.click(screen.getByRole("button", { name: "Editar" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByLabelText(/^Aceitar rota default do provedor/)).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText(/^Anunciar rota default ao cliente/)).not.toBeInTheDocument();
+  });
+
+  it("o nome da route-policy lido do equipamento aparece no diálogo de edição", async () => {
+    sessao.upstream_id = null;
+    sessao.import_route_policy = "RP-64512-IMPORT-V4";
+    sessao.export_route_policy = null;
+    renderList();
+    await screen.findByText("100.64.40.1 ↔ 100.64.40.2");
+    await userEvent.click(screen.getByRole("button", { name: "Editar" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByLabelText(/^Route-policy de importação/)).toHaveValue("RP-64512-IMPORT-V4");
+    expect(within(dialog).getByLabelText(/^Route-policy de exportação/)).toHaveValue("");
+  });
+
+  // O efeito: o que sai no corpo do POST/PATCH. Os rótulos dos dois formulários
+  // são distinguidos aqui pelos valores, não pela apresentação.
+  it("o cadastro manda os três campos, e a criação segue no rótulo de cliente", async () => {
+    sessao.upstream_id = null;
+    renderList();
+    await screen.findByText("100.64.40.1 ↔ 100.64.40.2");
+    // Sem diálogo aberto, os rótulos da página são os do formulário de criação —
+    // que o R6 mantém sempre no ramo de cliente (o CircuitOut da listagem não
+    // traz o vínculo).
+    expect(screen.getByLabelText(/^Anunciar rota default ao cliente/)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/^Aceitar rota default do provedor/)).not.toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByLabelText(/^Circuito \*/), "1");
+    await userEvent.selectOptions(screen.getByLabelText(/^Equipamento \*/), "2");
+    await userEvent.type(screen.getByLabelText(/^Endereço local \*/), "100.64.42.1");
+    await userEvent.type(screen.getByLabelText(/^Endereço remoto \*/), "100.64.42.2");
+    await userEvent.type(screen.getByLabelText(/^Route-policy de importação/), "RP-64512-IMPORT-V4");
+    await userEvent.click(screen.getByLabelText(/^Anunciar rota default ao cliente/));
+    await userEvent.click(screen.getByRole("button", { name: "Cadastrar" }));
+    await waitFor(() => {
+      expect(corpoDaChamada("POST", "/api/v1/bgp-sessions")).toMatchObject({
+        default_route_advertise: true,
+        import_route_policy: "RP-64512-IMPORT-V4",
+        export_route_policy: null, // vazio no formulário vira null, não ""
+      });
+    });
+  });
+
+  it("a edição manda os três campos, e o nome esvaziado sai null para limpar a coluna", async () => {
+    sessao.upstream_id = null;
+    sessao.default_route_advertise = false;
+    sessao.import_route_policy = "RP-64512-IMPORT-V4";
+    sessao.export_route_policy = "RP-64512-EXPORT-V4";
+    renderList();
+    await screen.findByText("100.64.40.1 ↔ 100.64.40.2");
+    await userEvent.click(screen.getByRole("button", { name: "Editar" }));
+    const dialog = screen.getByRole("dialog");
+    await userEvent.clear(within(dialog).getByLabelText(/^Route-policy de importação/));
+    await userEvent.click(within(dialog).getByLabelText(/^Anunciar rota default ao cliente/));
+    await userEvent.click(within(dialog).getByRole("button", { name: "Salvar" }));
+    await waitFor(() => {
+      expect(corpoDaChamada("PATCH", "/api/v1/bgp-sessions/1")).toMatchObject({
+        default_route_advertise: true,
+        import_route_policy: null, // esvaziado: "" seria 422 no lugar de limpar
+        export_route_policy: "RP-64512-EXPORT-V4", // intocado volta como veio
+      });
+    });
+  });
+
+  // A outra face do mesmo campo: na sessão vinculada o checkbox do anúncio não
+  // existe, então o PATCH não pode carregar o valor lido da entidade — a guarda
+  // do §5.1 recusa o anúncio mesclado e a edição de qualquer outro campo
+  // morreria em 422 (a sessão ficaria ineditável pela interface).
+  it("a edição em escopo de upstream não manda o anúncio, e manda o que a tela exibe", async () => {
+    sessao.upstream_id = 7;
+    sessao.default_route_advertise = true; // lido do equipamento e gravado na SoT
+    sessao.allow_default_route = true;
+    sessao.description = null;
+    renderList();
+    await screen.findByText("100.64.40.1 ↔ 100.64.40.2");
+    await userEvent.click(screen.getByRole("button", { name: "Editar" }));
+    const dialog = screen.getByRole("dialog");
+    // A premissa do teste: aqui não há controle de anúncio, só o do aceite.
+    expect(within(dialog).queryByLabelText(/^Anunciar rota default ao cliente/)).not.toBeInTheDocument();
+    expect(within(dialog).getByLabelText(/^Aceitar rota default do provedor/)).toBeInTheDocument();
+    // O campo de texto do escopo: o rótulo "Descrição" também casa o tooltip
+    // do FormField (que carrega o texto de ajuda em `aria-label`), então a
+    // busca é pelo papel do campo.
+    await userEvent.type(within(dialog).getByRole("textbox", { name: /^Descrição/ }), "trocado");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Salvar" }));
+    await waitFor(() => {
+      const corpo = corpoDaChamada("PATCH", "/api/v1/bgp-sessions/1");
+      // O PATCH levou os valores da tela (não é uma asserção vazia)...
+      expect(corpo).toMatchObject({ description: "trocado", allow_default_route: true });
+      // ...e não levou o campo cujo controle não é exibido.
+      expect(corpo).not.toHaveProperty("default_route_advertise");
     });
   });
 });

@@ -3,27 +3,29 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from gerenet.domain import models
+from gerenet.domain import models, schemas
 from gerenet.domain.audit import registrar
 from gerenet.domain.schemas import UpstreamCreate, UpstreamUpdate
 from gerenet.domain.services.bgp_sessions import list_sessions
-from gerenet.domain.services.circuits import get_circuit
+from gerenet.domain.services.circuits import create_circuit, get_circuit
 from gerenet.domain.services.errors import ConflictError, NotFoundError, ValidationError
 from gerenet.domain.services.organizations import get_organization
 
 PRODUTO_IMPORT_POR_TIPO = {"transito": "up-full", "ix": "up-full",
                            "pni": "up-parcial", "contingencia": "up-default"}
 
+# O nome do perfil de importação de cada produto (§7). São vocabulários
+# diferentes: `produto_import` guarda "full"/"parcial"/"default" e o catálogo
+# chama os perfis de "up-full"/"up-parcial"/"up-default".
+PERFIL_DO_PRODUTO = {"full": "up-full", "parcial": "up-parcial",
+                     "default": "up-default"}
+
 # Campos do upstream que alimentam a propagação (§3.1): mudou algum ⇒ repropagar
 # defaults às sessões dos circuitos vinculados no update_upstream.
 _CAMPOS_PROPAGACAO = frozenset((
-    "tipo",
-    "expected_prefixes_v4",
-    "expected_prefixes_v6",
-    "max_prefix_margin_pct",
-    "entrada_local_preference",
-    "contingencia_local_preference",
-    "contingencia_prepend",
+    "tipo", "expected_prefixes_v4", "expected_prefixes_v6", "max_prefix_margin_pct",
+    "entrada_local_preference", "contingencia_local_preference", "contingencia_prepend",
+    "produto_import",
 ))
 
 
@@ -67,7 +69,10 @@ def _valida_nomes(nome: str | None) -> None:
         raise ValidationError("Nome do upstream deve ter entre 2 e 128 caracteres.")
 
 
-def create_upstream(session: Session, data: UpstreamCreate, *, actor: str) -> models.Upstream:
+def create_upstream(session: Session, data: UpstreamCreate, *, actor: str,
+                    commit: bool = True) -> models.Upstream:
+    """Cadastra o upstream; `commit=False` é para a adoção encadear a cadeia
+    inteira numa transação (design §5.3)."""
     _validar_org_operadora(session, data.organization_id)
     _valida_nomes(data.name)
     dump = data.model_dump()
@@ -77,12 +82,58 @@ def create_upstream(session: Session, data: UpstreamCreate, *, actor: str) -> mo
         session.flush()  # valida unicidade antes da auditoria
         registrar(session, tipo="upstream.create", ator=actor, objeto="upstream",
                   objeto_id=up.id, antes=None, depois=dump)
-        session.commit()  # propagação às sessões ocorre no vínculo de circuitos
-        # (vincular_circuito/update_upstream chamam propagar_defaults — §3.1)
+        if commit:
+            session.commit()  # propagação às sessões ocorre no vínculo de circuitos
+            # (vincular_circuito/update_upstream chamam propagar_defaults — §3.1)
     except IntegrityError:
         session.rollback()
         raise ConflictError(f"Já existe um upstream com o nome {data.name}.") from None
-    session.refresh(up)
+    if commit:
+        session.refresh(up)
+    return up
+
+
+def criar_com_circuito(
+    session: Session, data: schemas.UpstreamCreate,
+    circuito: schemas.UpstreamCircuitoIn | None = None, *, actor: str, commit: bool = True,
+) -> models.Upstream:
+    """Cadastra o upstream e, com o bloco de acesso, o circuito vinculado (§6).
+
+    Uma transação: o upstream, o circuito e o vínculo principal nascem juntos,
+    ou nada nasce. O circuito nasce sem reserva — quem reserva VLAN e endereços é
+    a página do circuito.
+    """
+    up = create_upstream(session, data, actor=actor, commit=False)
+    if circuito is None:
+        if commit:
+            session.commit()
+            session.refresh(up)
+        return up
+    try:
+        circ = create_circuit(
+            session,
+            schemas.CircuitCreate(
+                code=circuito.code, organization_id=data.organization_id,
+                site_id=circuito.site_id, access_device_id=circuito.access_device_id,
+                access_port=circuito.access_port, edge_device_id=circuito.edge_device_id,
+                edge_trunk=circuito.edge_trunk, velocidade_mbps=circuito.velocidade_mbps,
+            ),
+            actor=actor, commit=False,
+        )
+        vincular_circuito(session, up.id, circ.id, papel="principal", ordem=1,
+                          actor=actor, commit=False)
+        if commit:
+            session.commit()
+            session.refresh(up)
+    except Exception:
+        # Qualquer recusa depois do upstream desfaz o que já foi gravado: sem
+        # isto o upstream ficaria pendente na transação de quem chamou. O
+        # `if commit` é o que impede esta limpeza de levar junto a transação de
+        # um chamador que compôs com `commit=False` — a mesma fronteira dos
+        # outros serviços.
+        if commit:
+            session.rollback()
+        raise
     return up
 
 
@@ -166,7 +217,7 @@ def _valida_conjunto_sem_principal(session: Session, up: models.Upstream, *,
 
 
 def vincular_circuito(session: Session, upstream_id: int, circuit_id: int, *, papel: str,
-                      ordem: int, actor: str) -> models.Upstream:
+                      ordem: int, actor: str, commit: bool = True) -> models.Upstream:
     """Vincula um circuito ao upstream (§7) — os defaults caem nas sessões aqui.
 
     Regras: circuito deve existir e estar ativo; um circuito só tem um upstream
@@ -184,6 +235,26 @@ def vincular_circuito(session: Session, upstream_id: int, circuit_id: int, *, pa
     )
     if ja_linkado is not None:
         raise ConflictError("Circuito já vinculado a um upstream.")
+    # §3.5 pela origem: o vínculo não pode criar o estado que a guarda das sessões
+    # proíbe — com a linha marcada, o render emitiria `peer X default-route-advertise`
+    # no enlace de upstream (a guarda de escopo vive no serviço, e o caminho de
+    # reparo é desligar o anúncio antes, enquanto o vínculo ainda não existe).
+    # A sessão desativada conta: reativá-la depois não passa pela guarda (`update_session`
+    # só decide o que o payload pode mudar), e a linha voltaria ao equipamento.
+    if session.scalar(
+        select(models.BgpSession)
+        .where(
+            models.BgpSession.circuit_id == circuit_id,
+            models.BgpSession.default_route_advertise.is_(True),
+        )
+        .limit(1)
+    ) is not None:
+        raise ValidationError(
+            f"O circuito {circ.code} tem sessão que anuncia a default "
+            "(`default-route-advertise`), e o anúncio é do caminho de cliente: com "
+            "o vínculo, a linha volta ao equipamento assim que a sessão é "
+            "reativada. Desligue o anúncio na sessão antes de vinculá-lo a um upstream."
+        )
     _valida_conjunto_sem_principal(session, up, novo_papel=papel)
 
     session.add(models.UpstreamCircuit(
@@ -198,11 +269,13 @@ def vincular_circuito(session: Session, upstream_id: int, circuit_id: int, *, pa
                     "ordem": ordem},
         )
         propagar_defaults(session, up)
-        session.commit()
+        if commit:
+            session.commit()
     except IntegrityError:
         session.rollback()
         raise ConflictError("Circuito já vinculado a um upstream.") from None
-    session.refresh(up)
+    if commit:
+        session.refresh(up)
     return up
 
 
@@ -269,7 +342,11 @@ def propagar_defaults(session: Session, up: models.Upstream) -> list[int]:
                 if up.entrada_local_preference is not None and sessao.local_preference is None:
                     sessao.local_preference = up.entrada_local_preference
             if sessao.import_profile_id is None:
-                perfil = _perfil_import(session, PRODUTO_IMPORT_POR_TIPO[up.tipo])
+                nome_perfil = (
+                    PERFIL_DO_PRODUTO[up.produto_import] if up.produto_import
+                    else PRODUTO_IMPORT_POR_TIPO[up.tipo]
+                )
+                perfil = _perfil_import(session, nome_perfil)
                 if perfil is not None:
                     sessao.import_profile_id = perfil.id
                     alterados.append(sessao.id)

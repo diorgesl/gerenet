@@ -1496,7 +1496,11 @@ def test_o_perfil_de_exportacao_da_revisao_entra_no_ensaio(db_session, tmp_path)
     """O produto de exportação é justamente o que o operador escolhe na revisão,
     e a `Proposta` não carrega perfil nenhum: sem o mapa, o `_bloco_export` sai
     cedo e a política que a SoT passaria a emitir fica fora da conferência — o
-    caso nomeado no design §6, descoberto."""
+    caso nomeado no design §6, descoberto.
+
+    O nome da política é o que o equipamento tem (a sessão da proposta carrega o
+    `export_route_policy` lido, §4.1/§4.3): a política de exportação sai sob
+    `IP-PFX-64512-EXPORT-V4`, e não sob o nome do §25.4."""
     from gerenet.domain.services.policy_profiles import list_policy_profiles
 
     dev = _ambiente(db_session)
@@ -1515,8 +1519,8 @@ def test_o_perfil_de_exportacao_da_revisao_entra_no_ensaio(db_session, tmp_path)
         if d.contexto == "definicao"
     ]
 
-    assert not any("RP-64512-EXPORT-V4" in linha for d in sem for linha in d.sobrando)
-    assert any("RP-64512-EXPORT-V4" in linha for d in com for linha in d.sobrando)
+    assert not any("IP-PFX-64512-EXPORT-V4" in linha for d in sem for linha in d.sobrando)
+    assert any("IP-PFX-64512-EXPORT-V4" in linha for d in com for linha in d.sobrando)
     assert len(com) == len(sem) + 1
 
 
@@ -1640,3 +1644,121 @@ def test_cir_no_teto_exato_ainda_sugere_velocidade(db_session, tmp_path) -> None
                "  peer 100.64.10.1 enable\n")
     (prop,) = listar_propostas(db_session, dev.id).propostas
     assert prop.velocidade_mbps == 100000
+
+
+_CONFIG_COM_POLITICA = (
+    "interface Eth-Trunk127.601\n"
+    " vlan-type dot1q 601\n"
+    " ip address 100.64.10.0 255.255.255.254\n"
+    "bgp 65001\n"
+    " peer 100.64.10.1 as-number 64512\n"
+    " peer 100.64.10.1 route-policy RP-LIDA-IMPORT import\n"
+    " peer 100.64.10.1 export route-policy RP-LIDA-EXPORT\n"
+    " ipv4-family unicast\n"
+    "  peer 100.64.10.1 enable\n"
+    "  peer 100.64.10.1 default-route-advertise\n"
+)
+
+
+def test_a_sessao_da_proposta_carrega_o_anuncio_e_os_nomes(db_session, tmp_path) -> None:
+    """§4.3: `_sessao_de` devolve os três campos novos, e o dump da proposta é o
+    que a revisão sugere ao operador (que pode limpar os nomes)."""
+    dev = _ambiente(db_session)
+    _com_texto(db_session, dev, tmp_path, _CONFIG_COM_POLITICA)
+
+    proposta = _propostas(db_session, dev)[601]
+    (sessao,) = proposta.sessoes
+    assert sessao["default_route_advertise"] is True
+    assert sessao["import_route_policy"] == "RP-LIDA-IMPORT"
+    assert sessao["export_route_policy"] == "RP-LIDA-EXPORT"
+
+
+def test_politica_ja_em_uso_no_equipamento_vira_conflito(db_session, tmp_path) -> None:
+    """§4.4: dois peers do mesmo equipamento com o mesmo nome conviveriam sob um
+    cabeçalho só. A proposta fica inadaptável e o caminho de saída é renomear."""
+    dev = _ambiente(db_session)
+    _com_texto(db_session, dev, tmp_path, _CONFIG_COM_POLITICA)
+    # A sessão que já tem o nome nasceu pela SoT, num circuito de outro par: o
+    # candidato da fixture (100.64.10.1) fica livre para a proposta.
+    outro = _circuito_tomado(db_session, dev, code="CIRC-DONO-DO-NOME")
+    db_session.add(models.BgpSession(
+        circuit_id=outro.id, device_id=dev.id, afi="ipv4",
+        local_address="100.64.10.20", remote_address="100.64.10.21",
+        asn_local=65001, asn_remote=64999, import_route_policy="RP-LIDA-IMPORT",
+    ))
+    db_session.commit()
+
+    proposta = next(p for p in listar_propostas(db_session, dev.id).propostas if p.vid == 601)
+    assert any(c.tipo == "politica_compartilhada" for c in proposta.conflitos)
+    assert proposta.veredito == "nao_adotavel"
+
+
+def test_politica_repetida_entre_as_duas_familias_vira_conflito(db_session, tmp_path) -> None:
+    """O dual stack do mesmo enlace também não pode compartilhar o nome: os dois
+    blocos sairiam sob o mesmo cabeçalho."""
+    dev = _ambiente(db_session)
+    _com_texto(db_session, dev, tmp_path, (
+        "interface Eth-Trunk127.601\n"
+        " vlan-type dot1q 601\n"
+        " ip address 100.64.10.0 255.255.255.254\n"
+        " ipv6 enable\n"
+        " ipv6 address 2804:194C:1000::1100:73:1 126\n"
+        "bgp 65001\n"
+        " peer 100.64.10.1 as-number 64512\n"
+        " peer 100.64.10.1 route-policy RP-UNICA import\n"
+        " peer 2804:194C:1000::1100:73:2 as-number 64512\n"
+        " peer 2804:194C:1000::1100:73:2 route-policy RP-UNICA import\n"
+        " ipv4-family unicast\n"
+        "  peer 100.64.10.1 enable\n"
+        " ipv6-family unicast\n"
+        "  peer 2804:194C:1000::1100:73:2 enable\n"
+    ))
+
+    proposta = next(p for p in listar_propostas(db_session, dev.id).propostas if p.vid == 601)
+    conflito = next(c for c in proposta.conflitos if c.tipo == "politica_compartilhada")
+    assert "RP-UNICA" in conflito.descricao
+
+
+def test_o_texto_da_politica_fora_do_padrao_diz_o_que_a_importacao_faz(db_session, tmp_path) -> None:
+    """§4.2: importar o nome significa gerenciar o corpo sob ele."""
+    dev = _ambiente(db_session)
+    _com_texto(db_session, dev, tmp_path, _CONFIG_COM_POLITICA)
+
+    proposta = next(p for p in listar_propostas(db_session, dev.id).propostas if p.vid == 601)
+    pendencia = next(p for p in proposta.pendencias if p.tipo == "politica_fora_do_padrao")
+    assert "gerenciar o corpo" in pendencia.descricao
+    assert "RP-LIDA-IMPORT" in pendencia.descricao
+
+
+BLOCO_UPSTREAM = {
+    "tipo": "transito", "produto": "full", "papel": "principal",
+    "expected_prefixes_v4": None, "expected_prefixes_v6": None,
+    "max_prefix_margin_pct": 20, "entrada_local_preference": None,
+    "contingencia_local_preference": None, "contingencia_prepend": None,
+}
+
+
+def test_a_conferencia_do_enlace_de_operadora_monta_o_vinculo(db_session, tmp_path) -> None:
+    """§5.4: o bloco muda o que a conferência compara.
+
+    O que este teste prende é o `upstream` ser consumido: sem ele o ensaio
+    renderiza o enlace pelo caminho de cliente (o despacho do render é o
+    vínculo, e sem vínculo não há outro caminho), e o grupo do peer sai de
+    outras definições. Se o parâmetro fosse ignorado em silêncio, as duas
+    conferências devolveriam a mesma lista. A afirmação mais forte — que o
+    enlace de upstream sai SEM diferença que exija `ciente` — pede uma
+    configuração reproduzível inteira do caminho de upstream, e quem a tem é
+    `tests/automation/test_render_upstream.py`; repeti-la aqui seria uma
+    segunda cópia da mesma fixture.
+    """
+    dev = _ambiente(db_session)
+    _com_config(db_session, dev, tmp_path)
+    proposta = next(iter(_propostas(db_session, dev).values()))
+    perfis = {"ipv4": {"import_profile_id": None, "export_profile_id": None},
+              "ipv6": {"import_profile_id": None, "export_profile_id": None}}
+
+    sem_bloco = conferir_fidelidade(db_session, proposta, perfis=perfis)
+    com_bloco = conferir_fidelidade(db_session, proposta, perfis=perfis,
+                                    upstream=BLOCO_UPSTREAM)
+
+    assert com_bloco != sem_bloco

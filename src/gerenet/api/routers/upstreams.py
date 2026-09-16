@@ -21,6 +21,7 @@ from gerenet.domain.schemas import (
     UpstreamCommunityCreate,
     UpstreamCommunityOut,
     UpstreamCreate,
+    UpstreamCreateIn,
     UpstreamDetailOut,
     UpstreamOut,
     UpstreamUpdate,
@@ -44,17 +45,23 @@ def _out_upstream(up: models.Upstream) -> UpstreamOut:
     return UpstreamOut.model_validate(up).model_copy(update=_org_kind_nome(up))
 
 
-def _out_sessao(session: Session, sessao: models.BgpSession) -> BgpSessionOut:
+def _out_sessao(session: Session, up: models.Upstream, sessao: models.BgpSession) -> BgpSessionOut:
+    """Sessão da listagem do upstream — o vínculo é o `up` do escopo.
+
+    `_detalhe` monta a lista a partir de `up.circuitos`, então o dono do vínculo
+    já está em mãos: derivar de novo seria uma consulta por sessão para o mesmo
+    dado (e um `None` para uma sessão que está vinculada).
+    """
     circ = session.get(models.Circuit, sessao.circuit_id)
     org = circ.organization if circ else None
     return BgpSessionOut.model_validate(sessao).model_copy(
-        update={"organization_kind": org.kind if org else None}
+        update={"organization_kind": org.kind if org else None, "upstream_id": up.id}
     )
 
 
 def _detalhe(session: Session, up: models.Upstream) -> UpstreamDetailOut:
     sessoes = [
-        _out_sessao(session, s)
+        _out_sessao(session, up, s)
         for vinculo in up.circuitos
         for s in list_sessions(session, circuit_id=vinculo.circuit_id, include_disabled=False)
     ]
@@ -87,16 +94,21 @@ def listar(
 
 @router.post("", response_model=UpstreamOut, status_code=201)
 def criar(
-    data: UpstreamCreate, session: SessionDep, actor: Annotated[Actor, Depends(require_actor)]
+    data: UpstreamCreateIn, session: SessionDep, actor: Annotated[Actor, Depends(require_actor)]
 ) -> object:
+    """Cadastra o upstream — e, com o bloco `circuito`, o acesso já vinculado (§6)."""
+    # O `UpstreamCreate` é reconstruído sem o bloco: o `model_dump()` do serviço
+    # vira `models.Upstream(**dump)`, e uma chave a mais estoura o construtor.
+    dados = UpstreamCreate(**data.model_dump(exclude={"circuito"}))
     try:
-        return _out_upstream(svc.create_upstream(session, data, actor=actor.nome))
+        up = svc.criar_com_circuito(session, dados, data.circuito, actor=actor.nome)
     except ConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _out_upstream(up)
 
 
 @router.get("/{upstream_id}", response_model=UpstreamDetailOut)

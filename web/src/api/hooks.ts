@@ -345,6 +345,9 @@ export type BgpSessionCreateIn = {
   graceful_restart?: boolean;
   shutdown?: boolean;
   allow_default_route?: boolean;
+  default_route_advertise?: boolean;
+  import_route_policy?: string | null;
+  export_route_policy?: string | null;
 };
 export const useBgpSessionCriar = () => useCriar<BgpSessionCreateIn, BgpSessionOut>("bgp-sessions", "/api/v1/bgp-sessions");
 export const useBgpSessionAtualizar = () =>
@@ -873,19 +876,36 @@ export type IdentidadeDaConferencia = {
    * caixa muda o que o ensaio renderiza, então entra na assinatura do aceite
    * como os outros campos: o `ciente` não viaja sobre um diff que ninguém viu. */
   autorizacoes: string[];
+  /** O tipo da organização escolhido na revisão (§5.5): sem ele o ensaio monta
+   * a organização descartável como `downstream`, qualquer que seja a escolha do
+   * select — e o diff sai do caminho de cliente para um enlace de operadora. */
+  organizacaoKind?: "downstream" | "parceiro" | "operadora";
+  /** O bloco do upstream (§5.2), na mesma forma que o corpo da adoção manda —
+   * é ele que faz o ensaio renderizar pelo caminho do vínculo (§5.4). Ausente
+   * no enlace de cliente, que não tem bloco. */
+  upstream?:
+    | { upstream_id: number; papel: string }
+    | { name: string; tipo: string; produto_import: string | null; papel: string };
 };
 
 /** Os perfis entram na chave de propósito: trocar um `select` de perfil refaz a
- * conferência, porque o corpo da política de exportação muda com ele. */
+ * conferência, porque o corpo da política de exportação muda com ele.
+ *
+ * O `anuncios` (§5.1) entra pela mesma razão: desligar o anúncio tira a linha
+ * `peer X default-route-advertise` do ensaio, e a linha do equipamento passa a
+ * sobrar como `faltando`. A família AUSENTE do mapa é a que o operador não
+ * mexeu — sem parâmetro o ensaio segue com o valor lido da configuração, que é
+ * o que a adoção grava. */
 export const useFidelidade = (
   deviceId: number,
   vrf: string | null,
   subinterface: string | null,
   perfis: Record<string, { import?: number; export?: number }> = {},
   identidade: IdentidadeDaConferencia | null = null,
+  anuncios: Record<string, boolean> = {},
 ) =>
   useQuery({
-    queryKey: ["fidelidade", deviceId, vrf, subinterface, perfis, identidade],
+    queryKey: ["fidelidade", deviceId, vrf, subinterface, perfis, identidade, anuncios],
     queryFn: () => {
       const qs = new URLSearchParams({ device_id: String(deviceId) });
       if (vrf) qs.set("vrf", vrf);
@@ -897,7 +917,24 @@ export const useFidelidade = (
           qs.set("organizacao_id", String(identidade.organizacaoId));
         }
         if (identidade.organizacaoNome) qs.set("organizacao_nome", identidade.organizacaoNome);
+        if (identidade.organizacaoKind) {
+          qs.set("organizacao_kind", identidade.organizacaoKind);
+        }
         if (identidade.velocidade) qs.set("velocidade_mbps", identidade.velocidade);
+        // O bloco do upstream entra no ensaio como entra no corpo (§5.4): o
+        // vínculo manda o id e o papel; a criação manda o tipo, o produto e o
+        // papel — os campos que o render usa para montar as sessões do enlace.
+        // O `upstream_papel` sai nos dois ramos: no modo vincular ele é escolha
+        // da revisão, e não o papel do vínculo que já existe.
+        const up = identidade.upstream;
+        if (up && "upstream_id" in up) {
+          qs.set("upstream_id", String(up.upstream_id));
+          qs.set("upstream_papel", up.papel);
+        } else if (up) {
+          qs.set("upstream_tipo", up.tipo);
+          if (up.produto_import) qs.set("upstream_produto", up.produto_import);
+          qs.set("upstream_papel", up.papel);
+        }
         // Um `append` por bloco, e não um `set`: a lista é repetida na query
         // (`?autorizacoes=ipv4:...&autorizacoes=ipv6:...`), e o `set` deixaria
         // só o último como autorização do ensaio — a prévia voltaria a acusar o
@@ -907,6 +944,13 @@ export const useFidelidade = (
       for (const [afi, p] of Object.entries(perfis)) {
         if (p.import) qs.set(`import_${afi}`, String(p.import));
         if (p.export) qs.set(`export_${afi}`, String(p.export));
+      }
+      // Só as famílias que a revisão DECIDIU: a ausência do parâmetro é o "não
+      // decidiu" do serviço, e é ela que faz o ensaio seguir com o valor lido.
+      // Um `set` por família, e não um mapa só: o parâmetro é por família, como
+      // os quatro de perfil acima.
+      for (const [afi, valor] of Object.entries(anuncios)) {
+        qs.set(`default_route_advertise_${afi}`, String(valor));
       }
       return apiFetch<DiscoveryFidelidadeOut>(`/api/v1/discovery/fidelidade?${qs.toString()}`);
     },

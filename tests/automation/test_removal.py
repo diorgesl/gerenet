@@ -39,7 +39,7 @@ def _ambiente(db_session):
     return {"site": site, "dev": dev, "org": org}
 
 
-def _circuito(db_session, ambiente, *, code="circ-001", stack="ipv4", org=None):
+def _circuito(db_session, ambiente, *, code="circ-001", stack="ipv4", org=None, vrf=None):
     from gerenet.domain.schemas import CircuitCreate
     from gerenet.domain.services.circuits import create_circuit
     from gerenet.domain.services.ipam import reservar_circuito
@@ -51,7 +51,7 @@ def _circuito(db_session, ambiente, *, code="circ-001", stack="ipv4", org=None):
             site_id=ambiente["site"].id,
             access_device_id=ambiente["dev"].id, access_port="GE0/0/1",
             edge_device_id=ambiente["dev"].id, stack=stack, vlan_mode="unica",
-            edge_trunk="GE1/0/0", p2p_v4_len=31,
+            edge_trunk="GE1/0/0", p2p_v4_len=31, vrf=vrf,
         ),
         actor="cli",
     )
@@ -61,7 +61,7 @@ def _circuito(db_session, ambiente, *, code="circ-001", stack="ipv4", org=None):
 
 def _sessao(
     db_session, circ, dev, *, afi="ipv4", remote="100.64.1.2", local=None, ativa=True,
-    asn_remote=64512,
+    asn_remote=64512, import_route_policy=None, export_route_policy=None,
 ):
     from gerenet.domain.schemas import BgpSessionCreate
     from gerenet.domain.services.bgp_sessions import create_session, disable_session
@@ -73,6 +73,8 @@ def _sessao(
             circuit_id=circ.id, device_id=dev.id, afi=afi,
             local_address=local_address, remote_address=remote,
             asn_local=65000, asn_remote=asn_remote,
+            import_route_policy=import_route_policy,
+            export_route_policy=export_route_policy,
         ),
         actor="cli",
     )
@@ -222,6 +224,199 @@ def test_remocao_dedupe_sessoes_do_mesmo_circuito(db_session, tmp_path):
     assert sum(b["tipo"] == "route_policy_export" for b in blocos) == 1
     assert sum(b["tipo"] == "route_policy_import" for b in blocos) == 1
     assert sum(b["tipo"] == "prefix_list" for b in blocos) == 1
+
+
+def test_remocao_usa_o_nome_importado_da_politica(db_session, tmp_path):
+    """§4.1: o undo da RP sai com o nome lido no equipamento, não com o do §25.4.
+
+    O portão `_tem_route_policy` confere o nome contra o backup coletado: com o
+    nome do §25.4 o bloco nem era emitido, e a definição ficava órfã na caixa.
+    """
+    amb = _ambiente(db_session)
+    circ = _circuito(db_session, amb)
+    _sessao(
+        db_session, circ, amb["dev"],
+        import_route_policy="RP-DO-EQUIPAMENTO-IN",
+        export_route_policy="RP-DO-EQUIPAMENTO-OUT",
+    )
+    snap = _snapshot(
+        db_session, amb["dev"], tmp_path=tmp_path,
+        backup=(
+            "route-policy RP-DO-EQUIPAMENTO-IN permit node 10\n"
+            "route-policy RP-DO-EQUIPAMENTO-OUT permit node 10\n"
+        ),
+        peers=[{"afi": "ipv4", "peer": "100.64.1.2", "asn": 64512, "estado": "Established"}],
+        interfaces=[],
+    )
+    blocos = removal.blocos_remocao(db_session, circ, amb["dev"].id, snapshot=snap)
+    assert [b["tipo"] for b in blocos] == [
+        "bgp_peer", "route_policy_export", "route_policy_import",
+    ]
+    por_tipo = {b["tipo"]: b["comandos"] for b in blocos}
+    assert por_tipo["route_policy_import"] == ["undo route-policy RP-DO-EQUIPAMENTO-IN"]
+    assert por_tipo["route_policy_export"] == ["undo route-policy RP-DO-EQUIPAMENTO-OUT"]
+    # o nome do §25.4 não sobra em bloco nenhum
+    emitido = " ".join(c for b in blocos for c in b["comandos"])
+    assert naming.rp_import(64512, "ipv4") not in emitido
+    assert naming.rp_export(64512, "ipv4") not in emitido
+
+
+def test_remocao_mesmo_asn_com_nome_efetivo_diferente_ainda_desfaz_a_politica(
+    db_session, tmp_path,
+):
+    """§4.1: o compartilhamento é o NOME efetivo, não o par (asn_remote, afi).
+
+    A sessão do outro circuito tem o mesmo ASN+afi, mas política própria (a do
+    §25.4, porque as colunas dela são nulas): são definições diferentes no
+    equipamento. Tratar o ASN+afi como se fosse o nome engolia o undo e deixava
+    a definição importada órfã na caixa.
+    """
+    amb = _ambiente(db_session)
+    circ = _circuito(db_session, amb)
+    circ2 = _circuito(db_session, amb, code="circ-002")
+    # mesmo ASN+afi, nome efetivo diferente; desativada e criada antes (o serviço
+    # conflita device+afi só com sessão ativa), remote diferente do alvo.
+    _sessao(db_session, circ2, amb["dev"], remote="100.64.1.99", local="100.64.2.1", ativa=False)
+    _sessao(db_session, circ, amb["dev"], import_route_policy="RP-DO-EQUIPAMENTO-IN")
+    snap = _snapshot(
+        db_session, amb["dev"], tmp_path=tmp_path,
+        backup=(
+            f"ip ip-prefix {naming.pfx_in(64512, 'ipv4')} index 10 permit 192.0.2.0/24\n"
+            "route-policy RP-DO-EQUIPAMENTO-IN permit node 10\n"
+        ),
+        peers=[{"afi": "ipv4", "peer": "100.64.1.2", "asn": 64512, "estado": "Established"}],
+        interfaces=[],
+    )
+    blocos = removal.blocos_remocao(db_session, circ, amb["dev"].id, snapshot=snap)
+    por_tipo = {b["tipo"]: b["comandos"] for b in blocos}
+    assert por_tipo["route_policy_import"] == ["undo route-policy RP-DO-EQUIPAMENTO-IN"]
+    # A prefix-list fica de fora: o nome dela continua saindo do ASN do par
+    # (§25.4), e a sessão do circ-002 referencia a mesma `IP-PFX-64512-IN-V4`.
+    assert "prefix_list" not in por_tipo
+
+
+def test_remocao_nao_desfaz_politica_de_outro_asn_com_o_mesmo_nome(db_session, tmp_path):
+    """§4.1: nome efetivo igual em ASN diferente = uma definição, um dono.
+
+    Dois peers de operadoras distintas podem carregar a mesma política de
+    operadora (é para isso que a coluna importada existe). Derrubá-la no
+    `continue` do par antigo (asn_remote, afi) mandaria `undo route-policy` para
+    uma definição que o outro circuito ainda referencia.
+    """
+    from gerenet.domain.schemas import OrganizationCreate
+    from gerenet.domain.services.organizations import create_organization
+
+    amb = _ambiente(db_session)
+    circ = _circuito(db_session, amb)
+    org2 = create_organization(
+        db_session, OrganizationCreate(name="operadora-y", asn=64513), actor="cli"
+    )
+    circ2 = _circuito(db_session, amb, code="circ-002", org=org2)
+    # ASN diferente, mesmo nome lido: a guarda tem que olhar o NOME.
+    _sessao(
+        db_session, circ2, amb["dev"], remote="100.64.1.99", local="100.64.2.1",
+        ativa=False, asn_remote=64513,
+        import_route_policy="RP-OPERADORA-IN", export_route_policy="RP-OPERADORA-OUT",
+    )
+    _sessao(
+        db_session, circ, amb["dev"],
+        import_route_policy="RP-OPERADORA-IN", export_route_policy="RP-OPERADORA-OUT",
+    )
+    snap = _snapshot(
+        db_session, amb["dev"], tmp_path=tmp_path,
+        backup=(
+            f"ip ip-prefix {naming.pfx_in(64512, 'ipv4')} index 10 permit 192.0.2.0/24\n"
+            "route-policy RP-OPERADORA-IN permit node 10\n"
+            "route-policy RP-OPERADORA-OUT permit node 10\n"
+        ),
+        peers=[{"afi": "ipv4", "peer": "100.64.1.2", "asn": 64512, "estado": "Established"}],
+        interfaces=[],
+    )
+    blocos = removal.blocos_remocao(db_session, circ, amb["dev"].id, snapshot=snap)
+    tipos = [b["tipo"] for b in blocos]
+    # Controle: o laço passou pela sessão e a prefix-list do ASN local saiu — a
+    # guarda segurou só a definição que o outro circuito referencia.
+    assert "prefix_list" in tipos
+    assert "route_policy_import" not in tipos
+    assert "route_policy_export" not in tipos
+    emitido = " ".join(c for b in blocos for c in b["comandos"])
+    assert "undo route-policy RP-OPERADORA-IN" not in emitido
+    assert "undo route-policy RP-OPERADORA-OUT" not in emitido
+
+
+def test_remocao_cruzada_nao_derruba_a_politica_da_outra_direcao(db_session, tmp_path):
+    """§4.1: a definição é uma só no VRP — a guarda cruza import e export.
+
+    O controle vem primeiro: esta sessão, este backup e nenhuma sessão cruzada
+    no device, e os dois undos saem. Depois entra a sessão de outro circuito
+    (ASN diferente e VRF própria, que é o que a deixa ativa sem conflitar com a
+    linha do alvo) usando o nome do import no EXPORT e o nome do export no
+    IMPORT: nenhum dos dois undos pode sair, porque nos dois casos a definição
+    derrubada seria a mesma que a outra sessão referencia.
+    """
+    from gerenet.domain.schemas import OrganizationCreate
+    from gerenet.domain.services.organizations import create_organization
+
+    amb = _ambiente(db_session)
+    circ = _circuito(db_session, amb)
+    _sessao(
+        db_session, circ, amb["dev"],
+        import_route_policy="RP-OPERADORA-IN", export_route_policy="RP-OPERADORA-OUT",
+    )
+    snap = _snapshot(
+        db_session, amb["dev"], tmp_path=tmp_path,
+        backup=(
+            "route-policy RP-OPERADORA-IN permit node 10\n"
+            "route-policy RP-OPERADORA-OUT permit node 10\n"
+        ),
+        peers=[{"afi": "ipv4", "peer": "100.64.1.2", "asn": 64512, "estado": "Established"}],
+        interfaces=[],
+    )
+    blocos = removal.blocos_remocao(db_session, circ, amb["dev"].id, snapshot=snap)
+    por_tipo = {b["tipo"]: b["comandos"] for b in blocos}
+    assert por_tipo["route_policy_import"] == ["undo route-policy RP-OPERADORA-IN"]
+    assert por_tipo["route_policy_export"] == ["undo route-policy RP-OPERADORA-OUT"]
+
+    # A sessão cruzada: outro circuito, outro ASN, e os nomes trocados de direção.
+    org2 = create_organization(
+        db_session, OrganizationCreate(name="operadora-y", asn=64513), actor="cli"
+    )
+    circ2 = _circuito(db_session, amb, code="circ-002", org=org2, vrf="vpn-cruzada")
+    _sessao(
+        db_session, circ2, amb["dev"], remote="100.64.1.99", local="100.64.2.1",
+        asn_remote=64513,
+        import_route_policy="RP-OPERADORA-OUT", export_route_policy="RP-OPERADORA-IN",
+    )
+    blocos = removal.blocos_remocao(db_session, circ, amb["dev"].id, snapshot=snap)
+    # O bloco do peer continua saindo: o laço passou pela sessão.
+    assert [b["tipo"] for b in blocos] == ["bgp_peer"]
+    emitido = " ".join(c for b in blocos for c in b["comandos"])
+    assert "undo route-policy RP-OPERADORA-IN" not in emitido
+    assert "undo route-policy RP-OPERADORA-OUT" not in emitido
+
+
+def test_remocao_sem_politica_importada_mantem_o_nome_do_25_4(db_session, tmp_path):
+    """§4.1: com as duas colunas nulas, o undo segue com o nome derivado do ASN."""
+    amb = _ambiente(db_session)
+    circ = _circuito(db_session, amb)
+    _sessao(db_session, circ, amb["dev"])
+    snap = _snapshot(
+        db_session, amb["dev"], tmp_path=tmp_path,
+        backup=(
+            f"route-policy {naming.rp_import(64512, 'ipv4')} permit node 10\n"
+            f"route-policy {naming.rp_export(64512, 'ipv4')} permit node 10\n"
+        ),
+        peers=[{"afi": "ipv4", "peer": "100.64.1.2", "asn": 64512, "estado": "Established"}],
+        interfaces=[],
+    )
+    blocos = removal.blocos_remocao(db_session, circ, amb["dev"].id, snapshot=snap)
+    por_tipo = {b["tipo"]: b["comandos"] for b in blocos}
+    assert por_tipo["route_policy_import"] == [
+        f"undo route-policy {naming.rp_import(64512, 'ipv4')}"
+    ]
+    assert por_tipo["route_policy_export"] == [
+        f"undo route-policy {naming.rp_export(64512, 'ipv4')}"
+    ]
 
 
 def test_remocao_recursos_incompletos_nao_gera_plano(db_session, tmp_path):

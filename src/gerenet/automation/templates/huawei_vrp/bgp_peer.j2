@@ -24,6 +24,9 @@ bgp {{ asn_local }}
  ipv4-family unicast
 {% endif %}
   peer {{ peer }} enable
+{% if default_route_advertise %}
+  peer {{ peer }} default-route-advertise
+{% endif %}
 {% if rp_import %}
   peer {{ peer }} import route-policy {{ rp_import }}
 {% endif %}

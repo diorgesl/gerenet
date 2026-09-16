@@ -6,11 +6,12 @@ from sqlalchemy.orm import Session
 from gerenet.api.main import create_app
 from gerenet.config import Settings, set_settings
 from gerenet.domain import models
-from gerenet.domain.schemas import DeviceCreate, OrganizationCreate, SiteCreate
+from gerenet.domain.schemas import DeviceCreate, OrganizationCreate, SiteCreate, UpstreamCreate
 from gerenet.domain.services.devices import create_device
 from gerenet.domain.services.organizations import create_organization
 from gerenet.domain.services.policy_profiles import list_policy_profiles
 from gerenet.domain.services.sites import create_site, link_device
+from gerenet.domain.services.upstreams import create_upstream, vincular_circuito
 
 
 @pytest.fixture()
@@ -323,3 +324,61 @@ def test_password_set_vault_fora_do_ar_da_503(
     assert client.post(
         "/api/v1/bgp-sessions/9999/password", json={"password": "md5-x"}, headers=_auth()
     ).status_code == 404
+
+
+def test_upstream_id_na_resposta_e_anuncio_recusado(
+    client: TestClient, db_session: Session
+) -> None:
+    """§5.1/§3.6: o `upstream_id` sai do vínculo do circuito (e não do `kind` da
+    organização, que segue vindo junto), e o anúncio da default numa sessão de
+    upstream é 400 no router."""
+    env = _ambiente(db_session)
+    circ = _circuito(client, env, "CIRC-1012")
+    corpo = _sessao(client, env, circ)
+    assert corpo["upstream_id"] is None  # sessão de cliente: sem vínculo
+    assert corpo["organization_kind"] == "downstream"
+
+    operadora = create_organization(
+        db_session, OrganizationCreate(name="Operadora DRA API", asn=64515, kind="operadora"),
+        actor="cli",
+    )
+    up = create_upstream(
+        db_session,
+        UpstreamCreate(name="up-dra-api", tipo="transito", organization_id=operadora.id),
+        actor="cli",
+    )
+    vincular_circuito(db_session, up.id, circ, papel="principal", ordem=1, actor="cli")
+
+    detalhe = client.get(f"/api/v1/bgp-sessions/{corpo['id']}", headers=_auth())
+    assert detalhe.status_code == 200
+    assert detalhe.json()["upstream_id"] == up.id
+    assert detalhe.json()["organization_kind"] == "downstream"
+
+    recusa = client.post(
+        "/api/v1/bgp-sessions",
+        json={
+            "circuit_id": circ, "device_id": env["ne1_id"], "afi": "ipv4",
+            "local_address": "100.64.7.1", "remote_address": "100.64.7.2",
+            "default_route_advertise": True,
+        },
+        headers=_auth(),
+    )
+    assert recusa.status_code == 400
+    assert "default-route-advertise" in recusa.json()["detail"]
+
+
+def test_nome_de_politica_invalido_da_422(client: TestClient, db_session: Session) -> None:
+    """§4.5: a grafia e o limite do VRP são do schema — o corpo morre em 422."""
+    env = _ambiente(db_session)
+    circ = _circuito(client, env, "CIRC-1014")
+    resp = client.post(
+        "/api/v1/bgp-sessions",
+        json={
+            "circuit_id": circ, "device_id": env["ne1_id"], "afi": "ipv4",
+            "local_address": "100.64.8.1", "remote_address": "100.64.8.2",
+            "import_route_policy": "RP/INVALIDA",
+        },
+        headers=_auth(),
+    )
+    assert resp.status_code == 422
+    assert resp.json()["detail"][0]["loc"][-1] == "import_route_policy"

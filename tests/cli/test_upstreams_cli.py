@@ -189,3 +189,50 @@ def test_cli_upstream_communities_add_list_remove(db_session: Session, up: model
     removida_de_novo = runner.invoke(app, ["upstream-communities", "remove", "transito-f5", str(uc_id)])
     assert removida_de_novo.exit_code == 1
     assert "não encontrada" in removida_de_novo.output
+
+
+def test_cli_upstreams_add_produto_e_circuito(
+    db_session: Session, org_operadora: models.Organization, site_f5: models.Site,
+    edge_device: models.Device,
+) -> None:
+    """§6/§7: o produto da operadora e o acesso numa chamada só (upstream + circuito + vínculo).
+
+    Sem `--access-device` de propósito: o default é o próprio edge (§6).
+    """
+    add = runner.invoke(app, [
+        "upstreams", "add",
+        "--name", "up-cli", "--tipo", "transito",
+        "--organization-id", str(org_operadora.id), "--produto-import", "parcial",
+        "--circuito-codigo", "CIRC-CLI", "--site", str(site_f5.id),
+        "--edge-device", str(edge_device.id),
+        "--access-port", "GE0/0/2", "--velocidade-mbps", "1024",
+    ])
+    assert add.exit_code == 0, add.output
+
+    up = db_session.scalar(select(models.Upstream).where(models.Upstream.name == "up-cli"))
+    assert up is not None
+    assert up.produto_import == "parcial"
+
+    circ = db_session.scalar(select(models.Circuit).where(models.Circuit.code == "CIRC-CLI"))
+    assert circ is not None
+    assert circ.velocidade_mbps == 1024
+    assert circ.access_device_id == edge_device.id  # default sem --access-device
+
+    vinculo = db_session.scalar(select(models.UpstreamCircuit).where(
+        models.UpstreamCircuit.circuit_id == circ.id
+    ))
+    assert vinculo is not None
+    assert vinculo.upstream_id == up.id
+
+
+def test_cli_upstreams_circuito_sem_site_ou_edge_recusa(
+    db_session: Session, org_operadora: models.Organization,
+) -> None:
+    """O bloco de acesso exige site e edge — sem os dois, recusa antes de criar nada."""
+    result = runner.invoke(app, [
+        "upstreams", "add",
+        "--name", "up-cli-2", "--tipo", "ix",
+        "--organization-id", str(org_operadora.id), "--circuito-codigo", "CIRC-CLI-2",
+    ])
+    assert result.exit_code != 0
+    assert "--site" in result.output

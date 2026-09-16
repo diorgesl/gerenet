@@ -85,7 +85,10 @@ export const HELP = {
   "bgp.bfd_enabled": "BFD sobre a sessão BGP — detecção rápida de queda do peer.",
   "bgp.graceful_restart": "Habilita graceful restart (reinício sem queda de rotas).",
   "bgp.shutdown": "Sessão provisionada mas desligada (shutdown) — não estabelece peering.",
-  "bgp.allow_default_route": "Aceita rota default (0.0.0.0/0 ou ::/0) do peer — entra antes das autorizações na prefix-list.",
+  "bgp.allow_default_route": "Sessão de upstream: aceita a rota default (0.0.0.0/0 ou ::/0) que o provedor anuncia. Só aparece na sessão de upstream.",
+  "bgp.default_route_advertise": "Sessão de cliente: anuncia a rota default (0.0.0.0/0 ou ::/0) AO cliente (`peer X default-route-advertise`). Só aparece na sessão de cliente.",
+  "bgp.import_route_policy": "Nome da route-policy de importação como está no equipamento. Preenchido, o gerenet emite a definição sob esse nome — e passa a gerenciar o corpo dela. Vazio, o nome volta ao padrão do gerenet (RP-<ASN>-IMPORT-<AFI>).",
+  "bgp.export_route_policy": "Idem para a route-policy de exportação (RP-<ASN>-EXPORT-<AFI> quando vazio).",
   "bgp.password": "Senha MD5 do peering — segredo: nunca exibida em texto claro (espelha apenas has_password).",
 
   // Policy profiles
@@ -110,6 +113,7 @@ export const HELP = {
   // Upstreams
   "upstream.name": "Nome único do upstream (2–128 caracteres; ex.: transito-telco-01).",
   "upstream.tipo": "trânsito, IX, PNI ou contingência.",
+  "upstream.produto_import": "Tipo de rota que a operadora envia: full, parcial ou default. Preenchido, é ele que decide o produto da importação; vazio, o produto sai do tipo do upstream (trânsito/IX → full, PNI → parcial, contingência → default).",
   "upstream.organization_id": "Organização dona da conectividade — somente organizações do tipo operadora.",
   "upstream.capacity": "Capacidade contratada (ex.: 10 Gbps).",
   "upstream.priority": "Prioridade da conectividade (1 = maior), para seleção de rota preferida.",
@@ -122,6 +126,7 @@ export const HELP = {
   "upstream.contingencia_local_preference": "Local-preference aplicado quando o upstream é contingência (tipicamente menor que a da conectividade principal).",
   "upstream.contingencia_prepend": "Prepend no AS-PATH quando o upstream é contingência (0–10) — desvaloriza os anúncios.",
   "upstream.contingencia_notes": "Observações livres sobre o contexto de contingência.",
+  "upstream.acesso": "Equipamento e porta por onde a operadora chega. Preenchido, o circuito nasce junto com o upstream e fica vinculado como principal. A reserva de VLAN e de endereços continua na página do circuito.",
 
   // VSI (multiponto, §9.3)
   "vsi.domain": "Domínio MPLS do serviço; o VSI-ID é único dentro dele.",
@@ -148,6 +153,12 @@ export const HELP = {
   // Adoção da proposta (revisão)
   "adocao.acesso": "De que switch e porta o cliente chega: a configuração do edge não tem isso.",
   "adocao.organizacao": "A organização é casada pelo ASN do par; criar uma nova exige o nome.",
+  "adocao.kind": "downstream (cliente), parceiro ou operadora. Operadora exige o bloco de upstream: o render trata o enlace pelo vínculo, e sem ele a sessão sai pelo caminho de cliente.",
+  "adocao.upstream": "Vincular um upstream existente ou criar o novo. O circuito nasce vinculado como principal, na mesma transação.",
+  "adocao.produto_import": "Tipo de rota que a operadora envia: full, parcial ou default. É o que descreve o enlace de upstream — a operadora não tem prefix-list própria.",
+  "adocao.politica_import": "Nome da route-policy de importação como está no equipamento. Importar significa que o gerenet passa a gerenciar o corpo dela sob esse nome; limpar devolve o nome padrão do gerenet.",
+  "adocao.politica_export": "Idem para a route-policy de exportação.",
+  "adocao.anuncio_default": "Anunciar a rota default ao par, por família. A caixa abre com o que a configuração tem: desmarcada, a sessão é gravada sem a linha `default-route-advertise`. É o caminho de saída do enlace de operadora que anuncia — a sessão de upstream aceita a default do provedor, não a anuncia — e a diferença contra o equipamento continua no diff, sem ser escondida.",
   "adocao.razao_social": "Razão social do cliente, como no registro (opcional).",
   "adocao.documento": "CNPJ/ownerid do registro (até 32 caracteres); é o que a consulta ao registro preenche quando encontra.",
   "adocao.as_set": "AS-SET do IRR (ex.: AS-64512) — o conjunto de onde as rotas do cliente são validadas.",

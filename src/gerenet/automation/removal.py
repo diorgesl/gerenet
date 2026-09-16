@@ -8,8 +8,13 @@ Regras de segurança:
   referencia o mesmo remote no device; senão undo por família
   (`undo peer <ip> enable`) — não derruba o par alheio. Qualquer sessão de
   outro circuito (ativa OU desativada) protege: a config dela pode existir.
-- `undo route-policy`/`undo ip-prefix` só quando nenhuma outra sessão do mesmo
-  (asn_remote, afi) os referencia no device — nomes §25.4 derivam do ASN.
+- `undo route-policy` só quando nenhuma outra sessão do device referencia a MESMA
+  definição — o que decide é o nome EFETIVO da RP (§4.1: o importado quando a
+  sessão o tem, senão o do §25.4), nunca o par (asn_remote, afi), que deixou de
+  ser igualdade de nome desde que a coluna importada passou a mandar. A
+  comparação cruza import e export: no VRP a definição é uma só, sem direção.
+- `undo ip-prefix` idem, e ali o nome continua derivando do ASN do par (§25.4):
+  o par (asn_remote, afi) é, sim, a igualdade dos nomes das prefix-lists.
 - Definições §25.4 e peers são deduplicados por (tipo, nome)/(afi, remote):
   re-peering (sessão ativa + legada desativada no mesmo circuito) gera um UNDO
   por definição, espelhando o `_apensa_definicao` do render forward.
@@ -20,6 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from gerenet.automation import naming
+from gerenet.automation.render import _nome_rp_export, _nome_rp_import
 from gerenet.automation.snapshots import texto_backup
 from gerenet.domain import models
 from gerenet.domain.services.bgp_sessions import list_sessions
@@ -46,6 +52,35 @@ def _outras_sessoes(
         s for s in list_sessions(session, device_id=device_id, include_disabled=True)
         if s.circuit_id != circuito_id
     ]
+
+
+def _rp_em_uso(outras: list[models.BgpSession], nome: str) -> bool:
+    """Outra sessão do device referencia a MESMA definição de RP (§4.1)?
+
+    A definição é uma só no VRP — não tem direção. Por isso a comparação cruza
+    import e export: o mesmo nome usado nas duas direções é o mesmo objeto, e
+    derrubá-lo levaria a política da outra sessão junto.
+    """
+    def referencia(outra: models.BgpSession) -> bool:
+        if outra.import_route_policy == nome or outra.export_route_policy == nome:
+            return True
+        if outra.asn_remote is None:
+            return False
+        return nome in (_nome_rp_import(outra), _nome_rp_export(outra))
+
+    return any(referencia(outra) for outra in outras)
+
+
+def _asn_afi_em_uso(outras: list[models.BgpSession], sessao: models.BgpSession) -> bool:
+    """Outra sessão do device compartilha o par (asn_remote, afi) da sessão?
+
+    Vale para as prefix-lists, cujo nome segue derivando do ASN do par (§25.4);
+    para a RP quem decide é o nome efetivo (`_rp_*_em_uso`).
+    """
+    return any(
+        outra.asn_remote == sessao.asn_remote and outra.afi == sessao.afi
+        for outra in outras
+    )
 
 
 def blocos_remocao(
@@ -97,7 +132,10 @@ def blocos_remocao(
                 "comandos": [f"bgp {sessao.asn_local}", f"undo peer {sessao.remote_address}"],
             })
 
-    # 2) route-policy export/import + prefix-lists (nome por ASN+afi §25.4).
+    # 2) route-policy export/import + prefix-lists, cada um com a sua guarda: a RP
+    # é protegida pelo nome EFETIVO, cruzando import e export (`_rp_em_uso` — a
+    # definição não tem direção no VRP), e a prefix-list pelo par (asn_remote,
+    # afi), que para ela ainda é igualdade de nome (§25.4).
     # Dedup por (tipo, nome)/(afi, nome): re-peering no mesmo circuito gera UM
     # undo por definição — espelha o _apensa_definicao do render forward.
     prefix_lists: dict[tuple[str, str], int] = {}  # (afi, nome) -> id da 1ª sessão
@@ -105,16 +143,11 @@ def blocos_remocao(
     for sessao in sorted(sessoes, key=lambda s: (s.afi, s.remote_address)):
         if sessao.asn_remote is None:
             continue
-        nomes_compartilhados = any(
-            outra.asn_remote == sessao.asn_remote and outra.afi == sessao.afi
-            for outra in outras
-        )
-        if nomes_compartilhados:
-            continue
         afi = sessao.afi
-        nome_export = naming.rp_export(sessao.asn_remote, afi)
+        nome_export = _nome_rp_export(sessao)
         if (
             _tem_route_policy(texto, nome_export)
+            and not _rp_em_uso(outras, nome_export)
             and ("route_policy_export", nome_export) not in definicoes_vistas
         ):
             definicoes_vistas.add(("route_policy_export", nome_export))
@@ -123,9 +156,10 @@ def blocos_remocao(
                 "objeto_id": sessao.id, "acao": "delete",
                 "comandos": [f"undo route-policy {nome_export}"],
             })
-        nome_import = naming.rp_import(sessao.asn_remote, afi)
+        nome_import = _nome_rp_import(sessao)
         if (
             _tem_route_policy(texto, nome_import)
+            and not _rp_em_uso(outras, nome_import)
             and ("route_policy_import", nome_import) not in definicoes_vistas
         ):
             definicoes_vistas.add(("route_policy_import", nome_import))
@@ -135,7 +169,11 @@ def blocos_remocao(
                 "comandos": [f"undo route-policy {nome_import}"],
             })
         nome_pfx = naming.pfx_in(sessao.asn_remote, afi)
-        if _tem_prefix_list(texto, afi, nome_pfx) and (afi, nome_pfx) not in prefix_lists:
+        if (
+            _tem_prefix_list(texto, afi, nome_pfx)
+            and not _asn_afi_em_uso(outras, sessao)
+            and (afi, nome_pfx) not in prefix_lists
+        ):
             prefix_lists[(afi, nome_pfx)] = sessao.id
 
     # 3) prefix-lists (1 undo por nome, atribuído à 1ª sessão que o referencia)

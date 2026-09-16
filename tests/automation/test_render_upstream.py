@@ -290,9 +290,14 @@ def test_render_upstream_nao_afasta_caminho_do_cliente(session, up_com_sessao_up
 
     resultado = render_desejado(session, edge_device.id)
     texto = resultado.texto
-    # golden do caminho de CLIENTE: allowlist de autorizações com default
-    assert "ip ip-prefix IP-PFX-64512-IN-V4 index 5 permit 0.0.0.0/0" in texto
+    # golden do caminho de CLIENTE: allowlist de autorizações, SEM a default —
+    # o index 5 saiu do caminho de cliente (§3.3: a default do cliente agora é
+    # o `default_route_advertise` no bloco do peer, e o `allow_default_route`
+    # não tem mais este caminho)
+    assert "ip ip-prefix IP-PFX-64512-IN-V4 index 5 permit 0.0.0.0/0" not in texto
     assert "ip ip-prefix IP-PFX-64512-IN-V4 index 10 permit 192.0.2.0/24" in texto
+    # e o campo antigo não acende o comando novo: sem a flag nova, nada é anunciado
+    assert "peer 100.64.20.2 default-route-advertise" not in texto
     # o `if-match` entra com o espaço da indentação do template: o que a
     # asserção prende é a adjacência (o if-match pertence àquele nó)
     assert ("route-policy RP-64512-IMPORT-V4 permit node 10\n"

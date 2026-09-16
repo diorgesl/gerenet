@@ -128,3 +128,30 @@ def test_roundtrip_sessao_e_associacao(db_session: Session) -> None:
     db_session.add(vinculo)
     db_session.commit()
     assert vinculo.id
+
+
+def test_colunas_novas_da_politica_e_do_default(db_session: Session) -> None:
+    """As quatro colunas da frente nascem no default (§3.1/§4.1/§7).
+
+    `default_route_advertise` é o anúncio ao downstream e nasce falso; os dois
+    nomes de política nascem nulos, que é o estado em que o render volta ao
+    §25.4; `produto_import` nulo mantém o produto saindo do tipo do upstream.
+    """
+    env = _ambiente(db_session)
+    sessao = models.BgpSession(
+        circuit_id=env["circuit_id"], device_id=env["ne_id"], afi="ipv4",
+        local_address="100.64.0.1", remote_address="100.64.0.2",
+        asn_local=64600, asn_remote=64512,
+    )
+    db_session.add(sessao)
+    db_session.commit()
+    assert sessao.default_route_advertise is False
+    assert sessao.import_route_policy is None
+    assert sessao.export_route_policy is None
+
+    up = models.Upstream(
+        name="rt-up", tipo="transito", organization_id=env["org_id"], admin_status=True,
+    )
+    db_session.add(up)
+    db_session.commit()
+    assert up.produto_import is None

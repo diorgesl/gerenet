@@ -3,7 +3,12 @@ import typer
 from pydantic import ValidationError as SchemaValidationError
 
 from gerenet.db import get_session
-from gerenet.domain.schemas import UpstreamCommunityCreate, UpstreamCreate, UpstreamUpdate
+from gerenet.domain.schemas import (
+    UpstreamCircuitoIn,
+    UpstreamCommunityCreate,
+    UpstreamCreate,
+    UpstreamUpdate,
+)
 from gerenet.domain.services import upstream_communities
 from gerenet.domain.services import upstreams as svc
 from gerenet.domain.services.bgp_sessions import list_sessions
@@ -64,11 +69,42 @@ def add(
         None, "--contingencia-prepend", min=0, max=10, help="Prepend da contingência (0-10)."
     ),
     contingencia_notes: str | None = typer.Option(None, "--contingencia-notes", help="Observações."),
+    produto_import: str | None = typer.Option(
+        None, "--produto-import", help="Tipo de rota da operadora: full, parcial ou default."
+    ),
+    circuito_codigo: str | None = typer.Option(
+        None, "--circuito-codigo", help="Código do circuito de acesso a criar e vincular (§6)."
+    ),
+    site: int | None = typer.Option(None, "--site", help="ID do site do circuito (§6)."),
+    edge_device: int | None = typer.Option(
+        None, "--edge-device", help="ID do roteador de borda do circuito (§6)."
+    ),
+    edge_trunk: str | None = typer.Option(None, "--edge-trunk", help="Eth-Trunk de borda."),
+    access_device: int | None = typer.Option(
+        None, "--access-device", help="ID do switch de acesso (default: o próprio edge)."
+    ),
+    access_port: str | None = typer.Option(
+        None, "--access-port", help="Porta de acesso (default GE0/0/1)."
+    ),
+    velocidade_mbps: int | None = typer.Option(
+        None, "--velocidade-mbps", help="Velocidade contratada em Mbps."
+    ),
 ) -> None:
     """Cadastra um upstream."""
+    if circuito_codigo is not None and (site is None or edge_device is None):
+        typer.echo("Erro: --circuito-codigo exige --site e --edge-device.", err=True)
+        raise typer.Exit(1)
+    bloco = (
+        UpstreamCircuitoIn(
+            code=circuito_codigo, site_id=site, edge_device_id=edge_device,
+            edge_trunk=edge_trunk, access_device_id=access_device or edge_device,
+            access_port=access_port or "GE0/0/1", velocidade_mbps=velocidade_mbps,
+        )
+        if circuito_codigo is not None else None
+    )
     with get_session() as session:
         try:
-            up = svc.create_upstream(
+            up = svc.criar_com_circuito(
                 session,
                 UpstreamCreate(
                     name=name,
@@ -85,7 +121,9 @@ def add(
                     contingencia_local_preference=contingencia_local_preference,
                     contingencia_prepend=contingencia_prepend,
                     contingencia_notes=contingencia_notes,
+                    produto_import=produto_import,
                 ),
+                bloco,
                 actor="cli",
             )
         except (GerenetError, SchemaValidationError) as exc:

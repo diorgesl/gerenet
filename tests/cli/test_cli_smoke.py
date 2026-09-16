@@ -353,6 +353,31 @@ def test_cli_bgp_sessions_password_vault_fora_do_ar(
     assert "Vault indisponível" in setar.output
 
 
+def test_cli_bgp_sessions_anuncio_e_nomes_de_politica(db_session: Session) -> None:
+    """§3.3/§4.1: o anúncio da default e os nomes de política lidos entram no `add`."""
+    env = _ambiente_bgp(db_session)
+    circ = _circuito_cli(db_session, env, "CIRC-BGP-ANUNCIO")
+
+    add = runner.invoke(
+        app,
+        [
+            "bgp-sessions", "add",
+            "--circuit-id", str(circ), "--device-id", str(env["ne_id"]),
+            "--afi", "ipv4",
+            "--local-address", "100.64.0.1", "--remote-address", "100.64.0.2",
+            "--default-route-advertise",
+            "--import-route-policy", "RP-LIDO-IN",
+            "--export-route-policy", "RP-LIDO-OUT",
+        ],
+    )
+    assert add.exit_code == 0, add.output
+
+    sessao = db_session.scalar(select(models.BgpSession))
+    assert sessao.default_route_advertise is True
+    assert sessao.import_route_policy == "RP-LIDO-IN"
+    assert sessao.export_route_policy == "RP-LIDO-OUT"
+
+
 def test_cli_autorizacoes_ciclo_de_vida(db_session: Session) -> None:
     org = create_organization(
         db_session, OrganizationCreate(name="Down CLI A", asn=64523), actor="cli"

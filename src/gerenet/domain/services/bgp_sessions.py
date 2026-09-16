@@ -93,6 +93,49 @@ def _colidente_par(
     return None
 
 
+def _recusa_anuncio_em_upstream(session: Session, circuit_id: int, anunciar: bool) -> None:
+    """§3.5: o anúncio da default é do caminho de cliente.
+
+    Import tardio: `upstreams.py` importa este módulo, e no topo o ciclo derruba
+    quem importar primeiro — a mesma forma que `adotar_proposta` usa com
+    `automation.discovery`.
+    """
+    if not anunciar:
+        return
+    from gerenet.domain.services.upstreams import upstream_do_circuito
+
+    up = upstream_do_circuito(session, circuit_id)
+    if up is not None:
+        raise ValidationError(
+            f"O circuito está vinculado ao upstream {up.name}: a sessão de upstream "
+            "aceita a default do provedor por `allow_default_route`, e não a anuncia. "
+            "`default-route-advertise` é do caminho de cliente."
+        )
+
+
+def _recusa_politicas_de_mesmo_nome(
+    *, import_route_policy: str | None, export_route_policy: str | None
+) -> None:
+    """R2: `route-policy <nome>` é UM objeto no VRP, sem direção.
+
+    Com o mesmo nome nas duas direções o render emite duas definições sob o mesmo
+    cabeçalho — a de import (permit + if-match) e a de export (permit +
+    communities) — e no VRP o segundo bloco redefine o nó 10: o que chegaria ao
+    roteador é a união dos dois corpos, errada e silenciosa. Nome nulo de um dos
+    lados não colide (e é o caminho de volta de quem já está no estado inválido).
+    """
+    if import_route_policy is None or export_route_policy is None:
+        return
+    if import_route_policy != export_route_policy:
+        return
+    raise ValidationError(
+        f"As duas direções usam a route-policy {import_route_policy}: no VRP "
+        "`route-policy <nome>` é um objeto só, sem direção, e a definição de import "
+        "seria reescrita pela de export no mesmo nó. Informe dois nomes distintos, "
+        "um por direção."
+    )
+
+
 def create_session(
     session: Session, data: BgpSessionCreate, *, actor: str, commit: bool = True
 ) -> models.BgpSession:
@@ -100,6 +143,11 @@ def create_session(
     circ = get_circuit(session, data.circuit_id)
     if circ.admin_status is False:
         raise ConflictError(f"Circuito {circ.code} desativado não recebe sessões.")
+    _recusa_anuncio_em_upstream(session, data.circuit_id, data.default_route_advertise)
+    _recusa_politicas_de_mesmo_nome(
+        import_route_policy=data.import_route_policy,
+        export_route_policy=data.export_route_policy,
+    )
     device = get_device(session, data.device_id)
     if data.device_id not in (circ.edge_device_id, circ.backup_edge_device_id):
         raise ValidationError(
@@ -236,6 +284,18 @@ def update_session(
     circ = get_circuit(session, circ_id)
     if circ.admin_status is False:
         raise ConflictError(f"Circuito {circ.code} desativado não recebe sessões.")
+    # §3.5: a guarda decide sobre o estado resultante, mas só quando o payload pode
+    # mudá-lo — um PATCH que não toca nem o anúncio nem o circuito não é uma
+    # tentativa de anunciar, e recusá-lo congelava a sessão (I-1 da revisão final).
+    if "default_route_advertise" in mudancas or "circuit_id" in mudancas:
+        _recusa_anuncio_em_upstream(
+            session, circ_id,
+            bool(mudancas.get("default_route_advertise", sessao.default_route_advertise)),
+        )
+    _recusa_politicas_de_mesmo_nome(
+        import_route_policy=mudancas.get("import_route_policy", sessao.import_route_policy),
+        export_route_policy=mudancas.get("export_route_policy", sessao.export_route_policy),
+    )
     device = get_device(session, device_id)
     if device_id not in (circ.edge_device_id, circ.backup_edge_device_id):
         raise ValidationError(

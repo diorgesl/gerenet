@@ -18,6 +18,7 @@ from gerenet.domain import schemas
 from gerenet.domain.services.devices import get_device
 from gerenet.domain.services.discovery import (
     adotar_proposta,
+    bloco_do_upstream,
     esquecer_ignorado,
     ignorar_candidato,
     listar_ignorados,
@@ -188,6 +189,14 @@ def fidelidade(
     organizacao_id: int | None = None,
     organizacao_nome: str | None = None,
     velocidade_mbps: int | None = None,
+    organizacao_kind: str | None = None,
+    upstream_id: int | None = None,
+    upstream_tipo: str | None = None,
+    upstream_produto: str | None = None,
+    upstream_papel: str = "principal",
+    upstream_expected_v4: int | None = None,
+    upstream_expected_v6: int | None = None,
+    upstream_margem: int = 20,
     # O `Query()` explícito é o que faz a LISTA repetida ser lida da query string
     # nesta versão do FastAPI: sem o `Annotated`, `list[str]` chega sempre vazio
     # (conferido em sonda), e a conferência seguiria sem os blocos sem nada
@@ -195,6 +204,8 @@ def fidelidade(
     autorizacoes: Annotated[list[str] | None, Query()] = None,
     import_ipv4: int | None = None, export_ipv4: int | None = None,
     import_ipv6: int | None = None, export_ipv6: int | None = None,
+    default_route_advertise_ipv4: bool | None = None,
+    default_route_advertise_ipv6: bool | None = None,
 ) -> schemas.FidelidadeOut:
     """O diff de UMA proposta, sob demanda: cada conferência roda o render do
     equipamento inteiro num ensaio, então ela não vai embutida na lista (design §7).
@@ -203,10 +214,26 @@ def fidelidade(
     eles o ensaio não renderiza o corpo da política de exportação, e a conferência
     estaria comparando algo diferente do que a adoção vai gravar.
 
+    Os dois `default_route_advertise_*` são a decisão da revisão sobre o anúncio
+    da default (§5.1), por família. Omitidos, valem o que a configuração tem —
+    que é justamente o "não decidiu" —, e o ensaio segue anunciando: a escolha só
+    muda o diff quando o operador de fato desliga o anúncio, e aí a linha
+    `peer X default-route-advertise` do equipamento aparece como `faltando` e
+    exige o `ciente` (é o mesmo valor que a adoção vai gravar).
+
     Os parâmetros de identidade (`edge_trunk`, `circuit_code`,
-    `organizacao_id`/`organizacao_nome`, `velocidade_mbps`) são o que a revisão
-    vai GRAVAR: o ensaio roda com eles para comparar exatamente o que a adoção
-    produziria.
+    `organizacao_id`/`organizacao_nome`, `organizacao_kind`, `velocidade_mbps`)
+    são o que a revisão vai GRAVAR: o ensaio roda com eles para comparar
+    exatamente o que a adoção produziria. O `organizacao_kind` entra na mesma
+    conta pelo que o render lê dele: sem o kind o ensaio cai em `downstream`, e
+    a prévia de um enlace de operadora acusaria as diferenças do caminho de
+    cliente que a adoção não vai criar — o operador marcaria `ciente` por uma
+    linha que nunca muda.
+
+    O bloco `upstream_*` (design §5.4) é o outro lado da mesma moeda: com
+    `upstream_id` os valores saem do upstream da SoT, e sem ele dos argumentos,
+    que é a criação da revisão. Sem bloco nenhum o enlace é de cliente, e o
+    ensaio renderiza por esse caminho.
 
     `autorizacoes` são os blocos que a revisão marcou, um por entrada, na forma
     `família:prefixo` (`?autorizacoes=ipv4:138.121.28.0/22`): sem eles o ensaio
@@ -220,11 +247,31 @@ def fidelidade(
             "ipv4": {"import_profile_id": import_ipv4, "export_profile_id": export_ipv4},
             "ipv6": {"import_profile_id": import_ipv6, "export_profile_id": export_ipv6},
         }
+        # A família que não veio na query fica FORA do mapa, e não com `None`
+        # dentro dele: a ausência é "o operador não mexeu no controle", e é ela
+        # que faz o ensaio seguir com o valor lido da configuração.
+        anuncios = {
+            afi: valor
+            for afi, valor in (
+                ("ipv4", default_route_advertise_ipv4),
+                ("ipv6", default_route_advertise_ipv6),
+            )
+            if valor is not None
+        }
         diferencas = conferir_fidelidade(
             session, proposta, perfis=perfis, edge_trunk=edge_trunk,
             circuit_code=circuit_code, organizacao_id=organizacao_id,
             organizacao_nome=organizacao_nome, velocidade_mbps=velocidade_mbps,
+            organizacao_kind=organizacao_kind,
+            upstream=bloco_do_upstream(
+                session, upstream_id=upstream_id, tipo=upstream_tipo,
+                produto_import=upstream_produto, papel=upstream_papel,
+                expected_prefixes_v4=upstream_expected_v4,
+                expected_prefixes_v6=upstream_expected_v6,
+                max_prefix_margin_pct=upstream_margem,
+            ),
             autorizacoes=_blocos_do_query(autorizacoes),
+            anuncios=anuncios,
         )
     except NotFoundError as exc:
         # O `try` cobre a conferência inteira, e não só a busca: o ensaio lê o

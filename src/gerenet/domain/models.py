@@ -423,6 +423,15 @@ class BgpSession(Base):
     graceful_restart: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     shutdown: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     allow_default_route: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # §3.1: o anúncio da default ao peer, o inverso do `allow_default_route`. O
+    # nome antigo fica: ele continua verdadeiro onde vale (a sessão de upstream
+    # aceitando a default do provedor) e renomear custaria migração de dados e
+    # de todo chamador sem trocar o que o campo faz.
+    default_route_advertise: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # §4.1: o nome da route-policy lido no equipamento. Nulo ⇒ o render volta ao
+    # nome do §25.4; preenchido ⇒ é o nome efetivo, e a definição sai sob ele.
+    import_route_policy: Mapped[str | None] = mapped_column(String(63), nullable=True)
+    export_route_policy: Mapped[str | None] = mapped_column(String(63), nullable=True)
     password_ref: Mapped[str | None] = mapped_column(String(255))  # path Vault; valor nunca no banco
 
     @property
@@ -818,6 +827,10 @@ class Upstream(Base):
     contingencia_local_preference: Mapped[int | None] = mapped_column(Integer)
     contingencia_prepend: Mapped[int | None] = mapped_column(Integer)  # 0-10
     contingencia_notes: Mapped[str | None] = mapped_column(Text())
+    # §7: o tipo de rota que a operadora envia (full, parcial, default). A
+    # operadora não tem prefix-list própria: o que a descreve é o produto.
+    # Nulo ⇒ o produto continua saindo de PRODUTO_IMPORT_POR_TIPO[up.tipo].
+    produto_import: Mapped[str | None] = mapped_column(String(16), nullable=True)
     admin_status: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

@@ -61,6 +61,7 @@ bgp 65001
   peer 100.64.10.1 enable
   peer 100.64.10.1 maximum-prefix 100 80
   peer 100.64.10.4 enable
+  peer 100.64.10.4 default-route-advertise
   peer 100.64.10.3 enable
  ipv6-family unicast
   peer 2804:194C:1000::1100:73:2 enable
