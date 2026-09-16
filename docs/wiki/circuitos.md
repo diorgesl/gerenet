@@ -70,8 +70,9 @@ description <CÓDIGO> <NOME DA ORGANIZAÇÃO> [<VELOCIDADE>]
 
 O nome da organização vai em maiúsculas e sem acento, e cede no orçamento de 80
 caracteres se não couber — cortado seco. Os 80 são a premissa do sistema hoje;
-o limite real desta versão do VRP é o que a Etapa 3 do runbook de validação
-confere. Velocidade múltipla de 1024 sai em `G`; qualquer outra sai em `M`.
+o limite real desta versão do VRP é o que a Etapa 3 do
+`docs/runbook-validacao-ne8000.md` confere. Velocidade múltipla de 1024 sai em
+`G`; qualquer outra sai em `M`.
 
 Com a velocidade preenchida, o render emite também o limitador de taxa nas duas
 direções, depois do `statistic enable`:
@@ -81,16 +82,43 @@ qos car cir <velocidade_mbps × 1000> inbound
 qos car cir <velocidade_mbps × 1000> outbound
 ```
 
-O `cir` é em kbps: `1024` Mbps produzem `cir 1024000`. O `cbs`, o `green pass`
-e o `red discard` **não** são emitidos — o VRP os completa ao aplicar.
+O `cir` é em kbps: `1024` Mbps produzem `cir 1024000`. O render **não** emite o
+`cbs`, o `green pass` nem o `red discard`: a expectativa é que o VRP complete os
+três ao aplicar — é o que a captura real que originou o desenho mostra, e não
+uma observação do comando sendo completado —, e quem confirma é a coleta
+seguinte: se a linha do equipamento não voltar naquela forma, o bloco aparece de
+novo no plano como fora do desejado. O `cbs` e o `pir` **não são gerenciados**
+pela SoT: um `pir` que o equipamento tenha à mão não conta como divergência e
+não é apagado por uma mudança.
 
 **Circuito que já está provisionado converge numa mudança nova.** Até esta
 frente, o plano pulava a subinterface inteira pelo nome; agora ele confere
 também a descrição e o QoS, e o bloco entra no plano como qualquer outro, um
-`create`. Na execução, o re-diff o encontra já lá e fora de conformidade e
-marca aquele passo como "atualizar": reemitir, não pular. O bloco vai inteiro
-ao equipamento (reemitir endereço com o mesmo valor é inócuo no VRP), e o que
-a mudança registra é o estado desejado daquele pedaço.
+`create`. Na execução, o re-diff o encontra já lá e fora de conformidade e o
+reemite inteiro — a palavra que o motor usa para esse bloco, `atualizar`, não
+aparece em tela nenhuma nem no histórico da mudança: o que você vê é o bloco de
+volta no plano. Reemitir endereço com o mesmo valor é inócuo no VRP, e o que a
+mudança registra é o estado desejado daquele pedaço.
+
+**A mudança não avisa se o equipamento recusar a descrição ou o QoS.** No
+provisionamento, o pós-check compara a intenção com a coleta (subinterface
+presente, endereços, peer) e **não lê o texto da configuração**: a mudança fecha
+`aplicado` do mesmo jeito. Se você provisionou e quer a certeza agora, confira a
+subinterface no equipamento ou na configuração que a coleta guardou (página
+Snapshots). O item de pós-check previsto para esse caso
+(`subinterface.conteudo`, de atenção) não chega a sair — a conferência que o
+produz só roda na remoção, e lá o bloco é um `undo`, que resolve antes dela.
+Quem conserta é a mudança seguinte: o plano reencontra a linha fora do desejado
+e reemite o bloco.
+
+**Tirar a velocidade não tira o limitador.** Apagar o campo na edição do
+circuito faz o render parar de emitir a taxa e a descrição perder o colchete.
+Numa mudança seguinte a descrição converge (o bloco é reemitido por estar fora
+de conformidade), mas o `qos car` **fica** no equipamento: nada no plano manda
+remover a taxa, então o circuito segue limitado na velocidade antiga enquanto a
+SoT diz que não há velocidade nenhuma. Tirar a velocidade de um circuito já
+provisionado é caso de **remoção e reprovisionamento** do bloco — a remoção leva
+o limitador junto com a subinterface.
 
 A descrição é **derivada**: renomear a organização não varre o parque — cada
 circuito pega o nome novo na sua próxima mudança, planejada e aprovada por si.
