@@ -434,9 +434,9 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   equipamento exige o `ciente`, e o aceite caduca quando a conferência é
   refeita. Fumo `web/e2e/discovery.spec.ts`: o seed (`web/e2e/setup.ts`) passou a
   escrever o snapshot com a configuração sintética de um enlace por rodada, num
-  equipamento próprio (`ne8000-disco-01` — o `ne8000-01` já tem sessão ativa e a
-  §14.1 admite uma por device/VRF/família), e desativa as sessões desse
-  equipamento antes de cada rodada. Docs: wiki `/wiki/descoberta` (o fluxo de
+  equipamento próprio (`ne8000-disco-01`, só do seed: o `ne8000-01` tem sessão
+  ativa e a rodada desativa as sessões do equipamento da descoberta), e desativa
+  as sessões desse equipamento antes de cada rodada. Docs: wiki `/wiki/descoberta` (o fluxo de
   revisão, os dois grupos do diff, quando o `ciente` é exigido e o que a adoção
   grava) e a Etapa 3 do runbook do NE8000 (adoção num equipamento não crítico,
   com a CR de remoção do circuito como rollback).

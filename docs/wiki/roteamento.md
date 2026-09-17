@@ -12,9 +12,11 @@ order: 1
 Uma sessão é cadastrada **por família** (`ipv4` ou `ipv6`), sobre um circuito.
 Regras de negócio:
 
-- **Uma sessão por equipamento + família + VRF** (a duplicidade é barrada:
-  "Já existe sessão ipv4 ativa no equipamento X (VRF …)"). O par
-  local/remoto também não pode se repetir.
+- **O peer não se repete na mesma VRF do equipamento** (a duplicidade é barrada:
+  "Já existe sessão ativa no equipamento X para o peer Y (VRF …)"), e o par
+  local/remoto também não pode estar ativo em dois lugares. Mais de uma sessão
+  no mesmo equipamento e família é legítima: cada enlace chega por um peer
+  próprio.
 - O equipamento da sessão tem que ser o **edge** (ou o contingência) do
   circuito.
 - **Peers na instância pública**: use o VRF do circuito; vazio = pública/global.
