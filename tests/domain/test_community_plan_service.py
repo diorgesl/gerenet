@@ -1,6 +1,8 @@
 """A adoção do plano (spec §9): transação única, idempotência e auditoria."""
+from dataclasses import replace
 from pathlib import Path
 
+import pytest
 from sqlalchemy import select
 
 from gerenet.domain import models
@@ -12,6 +14,7 @@ from gerenet.domain.services.community_plan import (
     validar_plano,
 )
 from gerenet.domain.services.devices import create_device
+from gerenet.domain.services.errors import ConflictError
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "huawei_vrp"
 
@@ -89,3 +92,32 @@ def test_a_validacao_roda_sobre_o_plano_adotado(db_session) -> None:
     achados = validar_plano(db_session, [device.id])
     assert obter_plano(db_session) is not None
     assert any(a.codigo == "classe_aplicada_nao_testada" and a.valor == "61785:3001" for a in achados)
+
+
+def test_segunda_adocao_com_outro_asn_recusa(db_session) -> None:
+    """R28: plano ativo de outro ASN principal recusa com `ConflictError`.
+
+    Os filhos do plano não têm recorte por plano ativo: as UNIQUEs de
+    `community_gates` (nome, papel, afi) e de `community_import_rules` (papel,
+    afi) são do vocabulário inteiro, e a `CommunityImportRule` nem tem
+    `admin_status` para desativar. Substituir o plano pediria mexer no modelo da
+    T1, então a segunda adoção recusa **antes de escrever qualquer coisa** — o
+    que mantém a transação única da §9 de pé.
+    """
+    device = _device_com_snapshot(db_session, "ne-plano-05", "comunidades_edge.txt")
+    proposta = propor_adocao(db_session, device.id)
+    adotar_plano(db_session, proposta, device_id=device.id, snapshot_id=None, actor="ana")
+    db_session.commit()
+
+    outra = replace(proposta, plano=replace(proposta.plano, asn_principal=65000))
+    with pytest.raises(ConflictError) as erro:
+        adotar_plano(db_session, outra, device_id=device.id, snapshot_id=None, actor="ana")
+    assert "61785" in str(erro.value)  # a mensagem nomeia o ASN que está ativo
+
+    ativo = db_session.scalar(
+        select(models.CommunityPlan).where(models.CommunityPlan.admin_status.is_(True))
+    )
+    assert ativo is not None and ativo.asn_principal == 61785
+    assert db_session.scalar(
+        select(models.CommunityPlan).where(models.CommunityPlan.asn_principal == 65000)
+    ) is None

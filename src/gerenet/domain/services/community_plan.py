@@ -29,7 +29,7 @@ from gerenet.automation.parsers.huawei_vrp.communities_vrp import (
 )
 from gerenet.domain import models
 from gerenet.domain.audit import registrar
-from gerenet.domain.services.errors import NotFoundError, ValidationError
+from gerenet.domain.services.errors import ConflictError, NotFoundError, ValidationError
 
 
 def _leitura_do_device(session: Session, device_id: int) -> LeituraCommunities | None:
@@ -289,13 +289,25 @@ def adotar_plano(
     Adotar duas vezes o mesmo plano não cria linha nova nem evento novo: o
     segundo `POST` devolve o plano que já está lá (ruling 5 do repositório, o
     mesmo do `disable_community`).
+
+    Plano ativo de **outro** ASN principal recusa com `ConflictError`, antes de
+    escrever qualquer coisa (R28): os filhos não têm recorte por plano ativo (as
+    UNIQUEs de `community_gates` e de `community_import_rules` valem para o
+    vocabulário inteiro e a `CommunityImportRule` nem tem `admin_status`), então
+    substituir o plano pediria mudar o modelo. A recusa mantém a transação
+    única da §9: nada é gravado, nem desativado.
     """
     existente = session.scalar(
         select(models.CommunityPlan).where(models.CommunityPlan.admin_status.is_(True))
     )
-    if existente is not None and existente.asn_principal == proposta.plano.asn_principal:
-        # Mesmo ASN principal: o plano é o mesmo; nada a transicionar, nada a auditar.
-        return existente
+    if existente is not None:
+        if existente.asn_principal == proposta.plano.asn_principal:
+            # Mesmo ASN principal: o plano é o mesmo; nada a transicionar, nada a auditar.
+            return existente
+        raise ConflictError(
+            f"Já existe plano ativo para o ASN principal {existente.asn_principal}; "
+            f"desative-o antes de adotar o plano do ASN {proposta.plano.asn_principal}."
+        )
 
     ids = _resolve_classes(
         session, proposta.plano.classes, snapshot_id=snapshot_id
@@ -303,9 +315,6 @@ def adotar_plano(
     ids_instrucoes = _resolve_instrucoes(
         session, proposta.plano.instrucoes, snapshot_id=snapshot_id
     )
-    if existente is not None:
-        existente.admin_status = False  # uma linha ativa (§4.2)
-        session.flush()
 
     plano = models.CommunityPlan(
         asn_principal=proposta.plano.asn_principal,
