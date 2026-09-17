@@ -520,16 +520,19 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   `automation/parsers/huawei_vrp/communities_vrp.py` (definições, quem aplica, quem
   testa, citações sem definição e grupos de peer — o `config_vrp.py` descarta
   `peer <nome-de-grupo>` de propósito), motor `automation/community_plan.py` com o
-  `VOCABULARIO` da §6, a proposta (poda de sessão parada, divergências de código
-  ambíguo, nome × faixa e papel duvidoso) e `validar` com as oito checagens da §8 —
+  `VOCABULARIO` da §6, a proposta (poda de sessão parada e seis divergências:
+  código ambíguo, nome × faixa, papel duvidoso, portão sem evidência, exceção sem
+  alvo e definição sem nome) e `validar` com as oito checagens da §8 —
   a checagem 1 compara **valor literal** (`61785:3001` ≠ `65000:3001`), que é o que
   produz o achado principal da §8.1. Serviço `domain/services/community_plan.py`
   (adoção numa transação só, **idempotente por ASN principal** — a segunda devolve o
   plano em vigor e diz que nada gravou, e plano ativo de outro ASN principal é
   recusado com 409; audit `community_plan.adopt`), que acrescenta à proposta o
   `portao_membro_sem_classe` — o membro de portão sem linha de classe, que não teria
-  id para gravar e sairia do portão adotado em silêncio (aparece no `adotar` do CLI e
-  no corpo do `201` da adoção). API `/api/v1/communities/plan` (GET, GET
+  id para gravar e sairia do portão adotado em silêncio (aparece no `adotar` e no
+  corpo do `201` da adoção, no `validar` do CLI e na resposta de
+  `GET /communities/plan/validacao`, que é o painel de divergências da página).
+  API `/api/v1/communities/plan` (GET, GET
   `/validacao`, POST `/adopt`), CLI `gerenet communities plan show|validar|adotar`
   (o `validar` exige coleta legível para atestar alinhamento e sai 1 sem ela; sai 1
   também com achado crítico) e `communities list` com valor v4/v6 e banda; a página

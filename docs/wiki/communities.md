@@ -50,18 +50,24 @@ aplica cada valor, quem testa, o que é citado sem definição e os grupos de pe
 exatamente o que o leitor da [descoberta](/wiki/descoberta) descarta de
 propósito. Dali saem as classes, as instruções, os alvos e os portões.
 
-Três divergências nascem na proposta, para o operador decidir:
+Seis divergências nascem na proposta, para o operador decidir:
 
 - o código de instrução ambíguo entre a borda e o virtual system (o `3` é marca
   ERTEL numa e prepend nível 3 na outra);
 - o nome de definição que discorda da faixa que o valor ocupa;
-- o papel do alvo duvidoso (o grupo com nome de CDN cujo papel real é trânsito).
+- o papel do alvo duvidoso (o grupo com nome de CDN cujo papel real é trânsito);
+- o portão cujo papel o nome não diz e a lista do que ele aceita não decide;
+- o bloco de exceção que aplica community sob condição e não diz a que alvo
+  pertence;
+- a definição numerada que define um valor de classe sem nomear a classe (o
+  número é o índice da lista, não um nome).
 
-Um quarto achado, o **membro de portão sem classe**, também é do operador: a
+Um sétimo achado, o **membro de portão sem classe**, também é do operador: a
 lista do portão guarda ids de `communities`, e um valor testado que não tem linha
 de classe não teria id para gravar — ele sairia do portão adotado em silêncio. Ele
-sai na saída do `adotar` e no corpo do `201` da adoção, para o operador declarar a
-classe ou confirmar que o valor sai do portão.
+aparece na saída do `adotar` e no corpo do `201` da adoção, no `validar` do CLI e
+na resposta de `GET /api/v1/communities/plan/validacao`, que é o mesmo que o painel
+de divergências da página mostra.
 
 A poda também é regra: sessão que não está Established não vira alvo, e vai para
 uma lista de "configurado e parado" que o `adotar` imprime. E a adoção é
@@ -110,8 +116,10 @@ A comparação, porém, é pelo **valor literal** — `61785:3001` não é
 primeira leitura da configuração real, o filtro de cliente aplicava as classes no
 namespace do XPL e nenhum portão testava esses valores: o caminho de cliente
 seria recusado pelo upstream em silêncio. É o achado mais grave daquela leitura e
-a razão de a validação existir. O selo *aplicada e não testada* na página é esse
-mesmo achado, apresentado onde ele é consultado.
+a razão de a validação existir. Na página, ele aparece no painel de divergências,
+como classe aplicada e não testada. O selo *aplicada e não testada* da tabela de
+classes é o mesmo uso lido por **código**, e no caso desta leitura ele não acende:
+por código, a classe tem quem a aplique e quem a teste.
 
 ## O que a validação cobra
 
