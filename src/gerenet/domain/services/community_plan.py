@@ -20,6 +20,11 @@ from gerenet.automation.community_plan import (
     PortaoPlano,
     PropostaPlano,
     RegraImportPlano,
+    # "Quem aplica" e "quem testa" também são do motor, e pelo mesmo motivo: a
+    # página (§11) e a checagem 1 (§8.1) têm de dizer a mesma coisa sobre o mesmo
+    # filtro. O predicado é o prefixo (`aplica`/`aplica-large`, `testa`/`testa-large`)
+    # e o corpo do corpus citado vem resolvido de lá.
+    _aplicados_e_testados,
     # A leitura posicional do código (`<asn>:<codigo>`) é do motor, e é uma só: duas
     # respostas para a mesma pergunta já custou uma rodada de fix na T4.
     _codigo_do_valor,
@@ -33,6 +38,13 @@ from gerenet.automation.parsers.huawei_vrp.communities_vrp import (
 )
 from gerenet.domain import models
 from gerenet.domain.audit import registrar
+from gerenet.domain.schemas import (
+    AlvoPlanoOut,
+    ClassePlanoOut,
+    InstrucaoPlanoOut,
+    PlanoOut,
+    PortaoPlanoOut,
+)
 from gerenet.domain.services.errors import ConflictError, NotFoundError, ValidationError
 
 
@@ -576,6 +588,69 @@ def adotar_plano(
     session.commit()
     session.refresh(plano)
     return plano
+
+
+def montar_plano_out(session: Session, plano: PlanoLido) -> PlanoOut:
+    """O plano com quem aplica e quem testa cada classe (spec §11).
+
+    A contagem sai da leitura da configuração: é a mesma verdade que a validação
+    usa, apresentada onde ela é consultada. "A mesma verdade" é literal — quem
+    separa os usos é o `_aplicados_e_testados` do motor, que já resolve o corpo do
+    corpus citado (`apply community com-EXPORT-UPSTREAM-v4` aplica o `61785:3001`
+    da lista, não o nome dela). Sem ele a tabela de classes diria "ninguém" para
+    a classe que a checagem 1 acusa aplicada e não testada, e as duas superfícies
+    da mesma tela se contradiriam sobre o mesmo plano.
+    """
+    device_ids = list(session.scalars(select(models.DeviceSnapshot.device_id).distinct()).all())
+    aplicam: dict[str, list[str]] = {}
+    testam: dict[str, list[str]] = {}
+    # As leituras são lidas uma vez e servem às duas pontas: a contagem de quem
+    # aplica/testa e o estado dos alvos (que sai dos membros que cada leitura achou).
+    leituras = [
+        leitura for leitura in (_leitura_do_device(session, i) for i in device_ids) if leitura
+    ]
+    estados = estados_dos_alvos(session, leituras, device_ids)
+    aplicados, testados = _aplicados_e_testados(leituras)
+    for usos, por_classe in ((aplicados, aplicam), (testados, testam)):
+        for uso in usos:
+            if not uso.valores:
+                continue
+            for valor in uso.valores:
+                if valor.count(":") != 1:
+                    continue
+                _, _, campo = valor.partition(":")
+                if not campo.isdigit():
+                    continue  # valor nomeado (`AS-X:FOO`), que não é código de classe
+                codigo = int(campo)
+                for classe in plano.classes:
+                    if codigo in (classe.valor_v4, classe.valor_v6):
+                        por_classe.setdefault(classe.nome, []).append(uso.filtro)
+    return PlanoOut(
+        asn_principal=plano.asn_principal,
+        asns_anunciados=[dict(a) for a in plano.asns_anunciados],
+        observacoes=plano.observacoes, snapshot_id=plano.snapshot_id,
+        classes=[
+            ClassePlanoOut(
+                nome=c.nome, banda=c.banda, tipo=c.tipo, valor_v4=c.valor_v4,
+                valor_v6=c.valor_v6, id=c.id, notas=c.notas,
+                aplicam=sorted(set(aplicam.get(c.nome, []))),
+                testam=sorted(set(testam.get(c.nome, []))),
+            )
+            for c in plano.classes
+        ],
+        instrucoes=[InstrucaoPlanoOut(**i.__dict__) for i in plano.instrucoes],
+        portoes=[
+            PortaoPlanoOut(nome=g.nome, papel=g.papel, afi=g.afi, padrao=g.padrao,
+                           aceitas=list(g.aceitas), recusadas=list(g.recusadas))
+            for g in plano.portoes
+        ],
+        alvos=[
+            AlvoPlanoOut(nome=a.nome, papel=a.papel, codigo_v4=a.codigo_v4, codigo_v6=a.codigo_v6,
+                         gate_nome=a.gate_nome, classe_import=a.classe_import,
+                         parametros=a.parametros, estado=estados.get(a.nome, "ausente"))
+            for a in plano.alvos
+        ],
+    )
 
 
 def _resolve_instrucoes(

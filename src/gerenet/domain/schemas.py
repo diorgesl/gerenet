@@ -576,6 +576,11 @@ class CommunityOut(BaseModel):
     tipo: str
     notes: str | None = None
     admin_status: bool
+    valor_v4: int | None = None
+    valor_v6: int | None = None
+    codigo: int | None = None
+    banda: str | None = None
+    origem: str = "manual"
 
 
 class CommunityUpdate(BaseModel):
@@ -1347,3 +1352,84 @@ class AdocaoOut(BaseModel):
     """O que a adoção devolve: o circuito que nasceu na SoT."""
 
     circuit_id: int
+
+
+class ClassePlanoOut(BaseModel):
+    """Uma classe do plano, com quem a aplica e quem a testa (§11)."""
+
+    nome: str
+    banda: str | None = None
+    tipo: str
+    valor_v4: int | None = None
+    valor_v6: int | None = None
+    id: int | None = None
+    notas: str | None = None
+    aplicam: list[str] = []
+    testam: list[str] = []
+
+
+class InstrucaoPlanoOut(BaseModel):
+    nome: str
+    codigo: int | None = None
+    tipo: str
+    id: int | None = None
+    notas: str | None = None
+
+
+class PortaoPlanoOut(BaseModel):
+    nome: str
+    papel: str
+    afi: str
+    padrao: str
+    aceitas: list[str] = []
+    recusadas: list[str] = []
+
+
+class AlvoPlanoOut(BaseModel):
+    nome: str
+    papel: str
+    codigo_v4: int | None = None
+    codigo_v6: int | None = None
+    gate_nome: str | None = None
+    classe_import: str | None = None
+    parametros: dict = {}
+    estado: str = "ausente"
+
+
+class AchadoOut(BaseModel):
+    codigo: str
+    severidade: str
+    descricao: str
+    valor: str | None = None
+    filtro: str | None = None
+    linha: int | None = None
+    acao: str | None = None
+
+
+class PlanoOut(BaseModel):
+    """O plano ativo, como a página o consulta (§11)."""
+
+    asn_principal: int | None = None
+    asns_anunciados: list[dict] = []
+    observacoes: str | None = None
+    snapshot_id: int | None = None
+    classes: list[ClassePlanoOut] = []
+    instrucoes: list[InstrucaoPlanoOut] = []
+    portoes: list[PortaoPlanoOut] = []
+    alvos: list[AlvoPlanoOut] = []
+
+
+class AdocaoPlanoIn(BaseModel):
+    device_id: int
+
+
+class PlanoAdotadoOut(BaseModel):
+    """O que a adoção do plano devolve: o que foi gravado e o que ficou de fora."""
+
+    plano_id: int
+    asn_principal: int
+    classes: int
+    portoes: int
+    alvos: int
+    divergencias: list[AchadoOut] = []
+    parados: list[str] = []
