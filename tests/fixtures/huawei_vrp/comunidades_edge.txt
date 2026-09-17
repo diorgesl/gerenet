@@ -1,0 +1,90 @@
+#
+ip community-filter advanced com-TRANSITO-FULL index 10 permit 65000:1010
+ip community-filter advanced com-CLIENTES_PARCEIROS-CDN index 10 permit 65000:5001
+ip community-filter advanced com-BLACKHOLE index 10 permit 65001:666
+ip community-filter 2 index 10 permit 888
+#
+route-policy rm-Clientes-v4-full-out permit node 15
+ if-match community-filter com-TRANSITO-FULL
+#
+xpl route-filter CUSTOMER-BGP-v4
+ if (community matches-within COMM-SET-BLACKHOLE) and (ip route-destination in {0.0.0.0 0 ge 31 le 32}) then
+  apply ip next-hop 192.0.2.1
+  apply community COMM-SET-BLACKHOLE-OI additive
+  approve
+ endif
+ if (ip route-destination in {0.0.0.0 0 le 23}) then
+  apply community com-EXPORT-UPSTREAM-v4 additive
+  apply local-preference 1000
+  apply med 0
+  approve
+ endif
+ if (ip route-destination in {0.0.0.0 0 le 24}) then
+  apply community com-EXPORT-CDN-v4 additive
+  apply local-preference 1000
+  apply med 0
+  finish
+ endif
+ end-filter
+#
+xpl route-filter ERTEL-201-131-155-0P24
+ apply large-community {61785:3:14840, 61785:3:53065} additive
+ end-filter
+#
+xpl route-filter RouteExportCheck
+ if not community matches-any {61785:7002, 61785:7102, 65000:3001, 65000:4001} or community matches-any {65000:991} then
+  refuse
+ endif
+ end-filter
+#
+xpl route-filter RouteExportCheck-PARCEIROS
+ if not community matches-any {65000:4001} then
+  refuse
+ endif
+ end-filter
+#
+xpl route-filter RouteExportCheckV6
+ if not community matches-any {61785:7012, 61785:7112, 65000:3101, 65000:4101} then
+  refuse
+ endif
+ end-filter
+#
+xpl route-filter UPSTREAM-V4-IMPORT($asn)
+ if rpki is invalid then
+  refuse
+ endif
+ if ip route-destination in MEU-PREFIXOS then
+  refuse
+ endif
+ end-filter
+#
+xpl community-list COMM-SET-BLACKHOLE
+ 61785:666
+ end-list
+#
+xpl community-list COMM-SET-BLACKHOLE-OI
+ 8167:666
+ end-list
+#
+xpl community-list com-AS8167
+ 61785:8167
+ end-list
+#
+xpl community-list com-BLACKHOLE
+ 61785:666,
+ 65001:666,
+ 37468:666
+ end-list
+#
+xpl community-list com-EXPORT-CDN-v4
+ 61785:4001
+ end-list
+#
+xpl community-list com-EXPORT-UPSTREAM-v4
+ 61785:3001
+ end-list
+#
+bgp 61785
+ peer MSD-CDN-v4 as-number 53062
+ peer 100.127.190.5 group PARCEIROS_CDN
+ peer PARCEIROS_CDN as-number 61587

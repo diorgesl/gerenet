@@ -1,0 +1,50 @@
+#
+ip community-filter advanced com-BLACKHOLE index 10 permit 65001:666
+ip community-filter advanced com-CLIENTES_PARCEIROS-CDN index 10 permit 65000:5001
+ip community-filter advanced com-CUSTOMER-CLIENTE-v4 index 10 permit 65000:7001
+ip community-filter advanced com-CUSTOMER-CLIENTE-v6 index 10 permit 65000:7101
+#
+route-policy rm-CUSTOMER-AS268061-V4-IN permit node 10
+ description CUSTOMER-AS268061-ITANET-V4
+ if-match ip-prefix pl-CUSTOMER-AS268061-AS61587-V4
+ apply local-preference 1000
+ apply community 65000:4001
+ apply large-community 61785:14840:4 61785:666:14840 additive
+#
+route-policy rm-CUSTOMER-AS268061-V6-IN permit node 10
+ apply local-preference 1000
+ apply community 65000:4101
+#
+route-policy rm-PARCEIROS_CDN-v4-in permit node 100
+ apply local-preference 1000
+ apply community 65000:4001 additive
+#
+route-policy rm-PARCEIROS_CDN-v6-in permit node 100
+ apply community 65000:4101
+#
+xpl route-filter RouteExportCheck
+ if not community matches-any {61785:7002, 61785:7102, 65000:3001, 65000:4001, 65000:991} then
+  refuse
+ endif
+ end-filter
+#
+xpl route-filter RouteExportCheckV6
+ if not community matches-any {61785:7012, 61785:7112, 65000:3101, 65000:4101, 65000:991} then
+  refuse
+ endif
+ end-filter
+#
+xpl route-filter XPL-GGC-V4-EXPORT
+ if community matches-within com-BLACKHOLE then
+  refuse
+ endif
+ if ip route-destination in {100.64.0.0 10 le 24} then
+  apply community {15169:12000} additive
+ endif
+ end-filter
+#
+bgp 61785
+ peer IX-CG as-number 26162
+ peer EQUINIX_SP as-number 24115
+ peer 45.227.2.253 group IX-CG
+ peer 64.191.232.250 group EQUINIX_SP
