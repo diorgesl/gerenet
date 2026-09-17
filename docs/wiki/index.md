@@ -34,6 +34,7 @@ coletado dos roteadores e switches.
 | Cadastrar organização e contatos | [Organizações e contatos](/wiki/organizacao) |
 | Cadastrar circuito e reservar VLAN/endereços p2p | [Circuitos, VLANs e IPAM](/wiki/circuitos) |
 | Cadastrar sessão BGP, autorizações, perfis e communities | [Sessões BGP, autorizações, perfis e communities](/wiki/roteamento) |
+| Entender o plano de communities (classes, alvos, portões e divergências) | [Plano de communities](/wiki/communities) |
 | Ver desejado × encontrado, jobs e auditoria | [Reconciliação, config desejada, jobs e auditoria](/wiki/operacao) |
 | Ver o que o equipamento tem e a SoT ainda não conhece | [Migrar — descoberta de peers na configuração](/wiki/descoberta) |
 | Gerenciar serviços MPLS em switches (domínio, L2VC, VSI) | [Serviços MPLS (L2VC e VSI)](/wiki/mpls) |
