@@ -89,7 +89,7 @@ def test_le_citacao_com_digito_no_nome() -> None:
     assert "pl-CUSTOMER-AS268061-AS61587-V4" not in definidos
 
 
-def test_o_ultimo_corpus_do_mesmo_nome_vence() -> None:
+def test_le_o_ultimo_corpus_do_mesmo_nome_vence() -> None:
     """`com-BLACKHOLE` existe nos dois formatos, e o consumidor lê último-vence.
 
     O helper tem de dar a mesma resposta que o mapa por nome que a task seguinte
@@ -101,6 +101,60 @@ def test_o_ultimo_corpus_do_mesmo_nome_vence() -> None:
     assert leitura.valores_do_corpus("com-BLACKHOLE") == ("61785:666", "65001:666", "37468:666")
     assert leitura.valores_do_corpus("com-EXPORT-UPSTREAM-v4") == ("61785:3001",)
     assert leitura.valores_do_corpus("nao-existe") == ()
+
+
+def test_le_o_nome_da_prefix_list_de_ipv6() -> None:
+    """`if-match ipv6 address prefix-list X`: `address` é palavra da linha, não nome."""
+    leitura = parse_communities_vrp(
+        "xpl route-filter F\n"
+        " if-match ipv6 address prefix-list CYMRU_BOGONS_v6-out\n"
+        " end-filter\n"
+    )
+    assert [u.corpus for u in leitura.usos if u.operacao == "cita"] == ["CYMRU_BOGONS_v6-out"]
+
+
+def test_le_o_nome_sem_o_parentese_do_if() -> None:
+    """O `)` que fecha o `if ( ... )` não é parte do nome citado."""
+    leitura = parse_communities_vrp(
+        "xpl route-filter F\n"
+        " if (ip route-destination in AS264130-PREFIX-v4) then\n"
+        "  refuse\n"
+        " endif\n"
+        " end-filter\n"
+    )
+    assert [u.corpus for u in leitura.usos if u.operacao == "cita"] == ["AS264130-PREFIX-v4"]
+
+
+def test_le_as_definicoes_do_xpl_de_prefixo_e_de_as_path() -> None:
+    """As duas listas do XPL definem nome como as demais formas.
+
+    Sem elas, a checagem de "citado e não definido" acusaria órfão um nome que o
+    equipamento define.
+    """
+    leitura = parse_communities_vrp(
+        "xpl ip-prefix-list BOGONS-v4\n"
+        " 0.0.0.0 8,\n"
+        " end-list\n"
+        "xpl as-path-list PREFIXOS-CLIENTE-v4\n"
+        " ^$,\n"
+        " end-list\n"
+        "xpl route-filter F\n"
+        " if ip route-destination in BOGONS-v4 then\n"
+        "  refuse\n"
+        " endif\n"
+        " if as-path in PREFIXOS-CLIENTE-v4 then\n"
+        "  refuse\n"
+        " endif\n"
+        " end-filter\n"
+    )
+    por_nome = {d.nome: d for d in leitura.definicoes}
+    assert por_nome["BOGONS-v4"].sintaxe == "xpl-ip-prefix-list"
+    assert por_nome["BOGONS-v4"].classe == "prefix"
+    assert por_nome["PREFIXOS-CLIENTE-v4"].sintaxe == "xpl-as-path-list"
+    assert por_nome["PREFIXOS-CLIENTE-v4"].classe == "as-path"
+    citados = {u.corpus for u in leitura.usos if u.operacao == "cita"}
+    assert citados == {"BOGONS-v4", "PREFIXOS-CLIENTE-v4"}
+    assert not (citados - set(por_nome))
 
 
 def test_le_os_grupos_de_peer_e_os_membros() -> None:

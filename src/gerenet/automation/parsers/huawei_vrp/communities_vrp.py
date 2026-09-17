@@ -32,11 +32,15 @@ _PALAVRAS = frozenset(
         "matches-within", "matches-all", "as-path", "ip", "ipv6", "route-destination",
         "ip-prefix", "prefix-list", "regular", "as-path-filter", "community-filter",
         "next-hop", "local-preference", "med", "prepend", "finish", "approve", "refuse",
+        "address",
     }
 )
 
 # As definições que a checagem 8 ("nome citado e não definido") conhece,
-# agrupadas pela classe semântica do corpus.
+# agrupadas pela classe semântica do corpus. As duas formas do XPL entram porque
+# a captura real define nome por elas (`xpl ip-prefix-list BOGONS-v4`, `xpl
+# as-path-list PREFIXOS-CLIENTE-v4`): sem isso a checagem acusaria órfão um nome
+# que o equipamento tem.
 _DEFINICOES = (
     ("ip community-filter advanced ", "community", "ip-community-filter-advanced"),
     ("ip community-filter ", "community", "ip-community-filter"),
@@ -44,6 +48,8 @@ _DEFINICOES = (
     ("ip as-path-filter ", "as-path", "ip-as-path-filter"),
     ("ip ip-prefix ", "prefix", "ip-ip-prefix"),
     ("ip ipv6-prefix ", "prefix", "ip-ipv6-prefix"),
+    ("xpl ip-prefix-list ", "prefix", "xpl-ip-prefix-list"),
+    ("xpl as-path-list ", "as-path", "xpl-as-path-list"),
 )
 
 
@@ -125,9 +131,14 @@ def _valores(texto: str) -> tuple[str, ...]:
 
 
 def _corpus(tokens: list[str]) -> str | None:
-    """O primeiro token que não é valor nem palavra-chave da linha."""
+    """O primeiro token que não é valor nem palavra-chave da linha.
+
+    O que embrulha o nome sai junto com ele: as chaves e a vírgula do conjunto e
+    os parênteses do `if ( ... ) then`, que é como a captura cita parte dos
+    prefix-lists (`if (ip route-destination in AS264130-PREFIX-v4) then`).
+    """
     for token in tokens:
-        limpo = token.strip("{},")
+        limpo = token.strip("{}(),")
         if not limpo or limpo in _PALAVRAS or _RE_VALOR.fullmatch(limpo):
             continue
         return limpo
