@@ -206,10 +206,10 @@ def propor_adocao(session: Session, device_id: int) -> PropostaPlano:
     """O que a adoção gravaria, lido do snapshot — sem escrever nada.
 
     Além das divergências do motor, a proposta carrega os membros de portão que
-    não resolvem para classe nenhuma (R29): o conjunto de códigos conhecidos aqui é
-    o das classes da proposta mais o `VOCABULARIO` inteiro, que é o que a adoção
-    materializa — assim a proposta e a escrita dizem a mesma coisa sobre quem
-    entra no portão.
+    não resolvem para classe nenhuma (R29): o que resolve aqui é o mesmo que a
+    adoção materializa — as classes da proposta, o `VOCABULARIO` inteiro e o que
+    já tem linha de classe em `communities` (R34). Assim a proposta e a escrita
+    dizem a mesma coisa sobre quem entra no portão.
     """
     snap, texto = _snapshot_com_config(session, device_id)
     if snap is None or not texto.strip():
@@ -231,7 +231,9 @@ def propor_adocao(session: Session, device_id: int) -> PropostaPlano:
     return PropostaPlano(
         plano=PlanoLido(**{**proposta.plano.__dict__, "snapshot_id": snap.id}),
         divergencias=proposta.divergencias + _membros_sem_classe(
-            membros, _codigos_das_classes((*proposta.plano.classes, *VOCABULARIO))
+            membros,
+            nomes=_nomes_que_resolvem(session, proposta.plano.classes),
+            codigos=_codigos_das_classes((*proposta.plano.classes, *VOCABULARIO)),
         ),
         parados=proposta.parados, avisos=proposta.avisos,
     )
@@ -251,7 +253,9 @@ def validar_plano(session: Session, device_ids: list[int] | None = None) -> tupl
     Ao fim vêm os membros de portão que não têm classe (R29), a superfície durável
     do achado: o plano da SoT guarda a lista de **ids**, então o membro que se
     perdeu na adoção não está em lugar nenhum do plano para ser comparado — quem
-    ainda o tem é a configuração, e é ela que a comparação percorre.
+    ainda o tem é a configuração, e é ela que a comparação percorre. O valor sem
+    código parseável entra por aqui também (R34): ele é o `888` ou o nome solto
+    que o `if codigo is None` deixava passar sem achado nenhum.
     """
     plano = obter_plano(session)
     if plano is None:
@@ -278,7 +282,11 @@ def validar_plano(session: Session, device_ids: list[int] | None = None) -> tupl
         for uso in leitura.usos
         if uso.operacao == "testa" and uso.filtro.startswith("RouteExportCheck")
     ]
-    return achados + _membros_sem_classe(membros, _codigos_das_classes(plano.classes))
+    return achados + _membros_sem_classe(
+        membros,
+        nomes=_nomes_que_resolvem(session, plano.classes),
+        codigos=_codigos_das_classes((*plano.classes, *VOCABULARIO)),
+    )
 
 
 def _id_da_classe(session: Session, classe: ClassePlano, *, snapshot_id: int | None) -> int:
@@ -324,28 +332,68 @@ def _codigos_das_classes(classes: Sequence[ClassePlano]) -> set[int]:
     return {v for c in classes for v in (c.valor_v4, c.valor_v6) if v is not None}
 
 
-def _membros_sem_classe(
-    membros: Sequence[tuple[str, Sequence[str]]], codigos: Collection[int]
-) -> tuple[Achado, ...]:
-    """Os valores de portão que não resolvem para classe nenhuma (R29).
+def _classes_com_linha(session: Session) -> dict[str, int]:
+    """Nome → id das linhas de **classe** que já existem em `communities` (R34).
 
-    `membros` é (nome do portão, valores) e `codigos` é o conjunto de códigos que
-    já têm linha: as classes do plano ativo na `validar_plano`, e as classes da
-    proposta mais o `VOCABULARIO` inteiro na `propor_adocao` — que é o que o
-    `_resolve_classes` materializa na adoção, e por isso os dois lados concordam.
+    A linha de instrução (`codigo` preenchido) fica de fora: a lista do portão
+    guarda ids de classe, e um nome de instrução citado num portão não é membro
+    que a adoção resolva — ele sai no `portao_membro_sem_classe` como qualquer
+    outro que não resolva. O achado não pode dizer que a linha não existe (ela
+    existe), só que ela não é classe.
+    """
+    return dict(
+        session.execute(
+            select(models.Community.name, models.Community.id).where(
+                models.Community.codigo.is_(None)
+            )
+        ).all()
+    )
+
+
+def _nomes_que_resolvem(session: Session, classes: Sequence[ClassePlano]) -> set[str]:
+    """Os nomes com destino na adoção: as classes, o `VOCABULARIO` e o já gravado.
+
+    É a metade "nome" do predicado do R34; a metade "código" é o
+    `_codigos_das_classes`. As duas superfícies montam o universo do mesmo jeito
+    e só o alimentam com entradas diferentes: a proposta recebe da leitura os
+    nomes que o motor já resolveu (`_nome_do_valor`) e a validação recebe os
+    valores crus da configuração.
+    """
+    return (
+        {classe.nome for classe in classes}
+        | {classe.nome for classe in VOCABULARIO}
+        | set(_classes_com_linha(session))
+    )
+
+
+def _membros_sem_classe(
+    membros: Sequence[tuple[str, Sequence[str]]],
+    *,
+    nomes: Collection[str],
+    codigos: Collection[int],
+) -> tuple[Achado, ...]:
+    """Os valores de portão que não resolvem para classe nenhuma (R29/R34).
+
+    `membros` é (nome do portão, valores), `codigos` é o conjunto de códigos que
+    já têm linha de classe e `nomes` é o dos nomes com destino — as classes, o
+    `VOCABULARIO` e as linhas de classe já gravadas. Um membro **resolve** quando
+    o código dele está em `codigos` ou quando o valor é um desses nomes; fora
+    disso ele sai daqui.
 
     O achado existe porque a lista do portão guarda **ids** de `communities`
     (§4.4): sem linha não há id para gravar, e o membro sumiria do portão adotado
-    sem que ninguém visse. O caso é o dos literais crus da captura real
+    sem que ninguém visse. O `codigo is None` era o terceiro jeito de sumir (R34):
+    o valor sem código parseável não era nem procurado por nome, e um `888` ou um
+    nome solto saía daqui sem virar nada. O caso dos literais crus da captura real
     (`61785:7012` e `61785:7112`, que a §5 registra como valores em migração para
-    7101/7102/7103): eles não têm definição nenhuma no equipamento, então não há
-    nome por onde resolvê-los.
+    7101/7102/7103) segue sendo o do valor que não tem definição nenhuma no
+    equipamento: não há nome por onde resolvê-lo.
     """
     achados: list[Achado] = []
     for nome, valores in membros:
         for valor in dict.fromkeys(valores):
             codigo = _codigo_do_valor(valor)
-            if codigo is None or codigo in codigos:
+            if valor in nomes or (codigo is not None and codigo in codigos):
                 continue
             achados.append(
                 Achado(
@@ -353,8 +401,8 @@ def _membros_sem_classe(
                     valor=valor, filtro=nome,
                     descricao=(
                         f"{valor} é testado por {nome} e não tem classe no vocabulário: "
-                        "sem linha em `communities` o membro não tem id para gravar na "
-                        "lista do portão"
+                        "sem linha de classe em `communities` o membro não tem id para "
+                        "gravar na lista do portão"
                     ),
                     acao="declarar a classe (a edição do plano é a F2) ou confirmar "
                          "que o valor sai do portão",
@@ -378,13 +426,22 @@ def _resolve_classes(
     do portão `RouteExportCheck` e o `com-ONLY-CDN` da recusa dele não estão nas
     classes da proposta (nenhuma definição do equipamento os nomeia) e, sem esta
     passada, o portão era gravado sem eles em silêncio (R29).
+
+    O nome que **já tem linha de classe** reaproveita a linha em vez de ganhar
+    outra (R34): era o último jeito de o membro sumir sem achado — o `no-export`
+    do catálogo semeado não está no `VOCABULARIO` e era descartado aqui. Recriar
+    a linha também não serviria: o índice único de `name` recusaria a segunda.
     """
     ids: dict[str, int] = {}
     for classe in classes:
         ids[classe.nome] = _id_da_classe(session, classe, snapshot_id=snapshot_id)
     do_vocabulario = {classe.nome: classe for classe in VOCABULARIO}
+    com_linha = _classes_com_linha(session)
     for nome in citados:
         if nome in ids:
+            continue
+        if nome in com_linha:
+            ids[nome] = com_linha[nome]
             continue
         classe = do_vocabulario.get(nome)
         if classe is None:
@@ -421,7 +478,9 @@ def adotar_plano(
     Os membros de portão que não resolvem para classe nenhuma ficam de fora da
     lista (R29): a §9 manda a adoção não decidir colisão sozinha nem renomear
     nada, e recusar por causa deles barraria a adoção do NE8000 real. Eles saem
-    como `portao_membro_sem_classe` na proposta e na validação.
+    como `portao_membro_sem_classe` na proposta e na validação. O nome que já tem
+    linha de classe, esse entra — reaproveitando a linha (R34), porque recriá-la
+    esbarraria no índice único de `name`.
     """
     if proposta.plano.asn_principal is None:
         # Antes da guarda do plano ativo, e não junto dela: sem ASN o cabeçalho
@@ -503,7 +562,10 @@ def adotar_plano(
         depois={
             "asn_principal": plano.asn_principal,
             "device_id": device_id, "snapshot_id": snapshot_id,
-            "classes": len(proposta.plano.classes),
+            # R35: as linhas de classe que a adoção usou, e não as classes da
+            # proposta — os nomes citados que só o `VOCABULARIO` conhece também
+            # viram linha (§9.1) e a trilha registrava menos do que foi gravado.
+            "classes": len(ids),
             "instrucoes": len(ids_instrucoes),
             "portoes": len(proposta.plano.portoes),
             "alvos": [a.nome for a in proposta.plano.alvos],

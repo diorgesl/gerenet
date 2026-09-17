@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import select
 
+from gerenet.automation.community_plan import PlanoLido, PortaoPlano, PropostaPlano
 from gerenet.domain import models
 from gerenet.domain.schemas import DeviceCreate
 from gerenet.domain.services.community_plan import (
@@ -22,11 +23,14 @@ FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "huawei_vrp"
 def _device_com_snapshot(
     db_session,
     nome: str,
-    fixture: str,
+    fixture: str | Path,
     *,
     asn: int | None = 61785,
     peers: list[dict] | None = None,
 ) -> models.Device:
+    # `fixture` aceita caminho absoluto: o `Path` do `/` deixa ele vencer a raiz
+    # das fixtures, que é como os testes de configuração sintética (`tmp_path`)
+    # usam este mesmo helper.
     device = create_device(
         db_session, DeviceCreate(name=nome, management_address="10.0.0.9", asn=asn), actor="teste"
     )
@@ -227,3 +231,118 @@ def test_adocao_sem_asn_principal_recusa(db_session) -> None:
 
     assert db_session.scalar(select(models.CommunityPlan)) is None
     assert db_session.scalar(select(models.CommunityGate)) is None
+
+
+def test_membro_citado_reaproveita_a_linha_de_communities(db_session) -> None:
+    """R34: o nome citado que já tem linha de classe entra no portão, sem duplicar.
+
+    A proposta é montada à mão — o serviço a recebe como dado. O portão cita três
+    nomes: o `no-export` do catálogo semeado, um nome com linha própria e um que
+    não resolve. Sem a busca por nome na materialização, o `if n in ids` do
+    `adotar_plano` descartava os dois primeiros em silêncio (o mesmo
+    desaparecimento do R29, por outro caminho) e a linha existente não é
+    recriada: uma segunda linha com o mesmo `valor_v4` seria recusada pelo índice
+    único parcial.
+    """
+    device = _device_com_snapshot(db_session, "ne-plano-10", "comunidades_edge.txt")
+    semeada = db_session.scalar(
+        select(models.Community).where(models.Community.name == "no-export")
+    )
+    assert semeada is not None  # a linha do catálogo, com origem `manual`
+    linha = models.Community(name="com-REUSO-v4", valor_v4=6123, valor_v6=6124)
+    db_session.add(linha)
+    db_session.commit()
+
+    proposta = PropostaPlano(
+        plano=PlanoLido(
+            asn_principal=61785,
+            classes=(),
+            portoes=(
+                PortaoPlano(
+                    nome="RouteExportCheck", papel="upstream", afi="ipv4",
+                    aceitas=("no-export", "com-REUSO-v4", "com-FANTASMA"),
+                ),
+            ),
+        )
+    )
+    adotar_plano(db_session, proposta, device_id=device.id, snapshot_id=None, actor="teste")
+    db_session.commit()
+
+    portao = db_session.scalar(select(models.CommunityGate))
+    assert portao is not None
+    # `com-FANTASMA` não tem linha e o vocabulário não o conhece: sem id ele não
+    # entra na lista — e é isso que o achado da validação denuncia.
+    assert portao.aceitas == [semeada.id, linha.id]
+
+    assert len(db_session.scalars(
+        select(models.Community).where(models.Community.name == "no-export")
+    ).all()) == 1
+    assert len(db_session.scalars(
+        select(models.Community).where(models.Community.valor_v4 == 6123)
+    ).all()) == 1
+    assert db_session.scalar(
+        select(models.Community).where(models.Community.name == "com-FANTASMA")
+    ) is None
+
+    evento = db_session.scalar(
+        select(models.AuditEvent).where(models.AuditEvent.type == "community_plan.adopt")
+    )
+    # R35: o número é o das linhas de classe que a adoção usou (`len(ids)`) e não
+    # o das classes da proposta — que aqui é zero.
+    assert evento is not None and evento.details["depois"]["classes"] == 2
+    assert len(proposta.plano.classes) == 0
+
+
+def test_o_evento_conta_as_classes_que_a_adocao_gravou(db_session) -> None:
+    """R35: o `community_plan.adopt` conta as linhas de classe que a adoção usou.
+
+    A fixture propõe 5 classes e a adoção grava 7 linhas de classe: as duas a
+    mais são nomes que só o `VOCABULARIO` da §6.1 conhece (`com-TAMANHO-2`, no
+    portão, e o `com-ONLY-CDN` da recusa dele), materializados desde o R29(a).
+    O evento contava as classes da proposta e registrava 5.
+    """
+    device = _device_com_snapshot(db_session, "ne-plano-11", "comunidades_edge.txt")
+    proposta = propor_adocao(db_session, device.id)
+    assert len(proposta.plano.classes) == 5
+    adotar_plano(db_session, proposta, device_id=device.id, snapshot_id=None, actor="ana")
+    db_session.commit()
+
+    evento = db_session.scalar(
+        select(models.AuditEvent).where(models.AuditEvent.type == "community_plan.adopt")
+    )
+    assert evento is not None and evento.details["depois"]["classes"] == 7
+    assert len(db_session.scalars(
+        select(models.Community).where(
+            models.Community.origem == "adotado", models.Community.codigo.is_(None)
+        )
+    ).all()) == 7
+
+
+def test_membro_sem_codigo_nao_some_da_validacao(db_session, tmp_path) -> None:
+    """R34: o valor sem código parseável que não resolve vira achado, não silêncio.
+
+    `888` chega à validação como valor cru do `matches-any` — o formato que o
+    `if codigo is None: continue` deixava passar sem achado nenhum, que é o
+    desaparecimento do crítico na superfície que compara o plano com o que o
+    equipamento testa. É o valor sem código que o leitor entrega (o `{nome solto}`
+    o parser descarta, e o nome que só o catálogo tem chega pelo caminho da
+    escrita, no teste do `no-export`): nenhuma linha tem esse nome, o
+    `VOCABULARIO` não o conhece e o membro fica sem id para a lista do portão.
+    """
+    caminho = tmp_path / "comunidades_edge_sem_codigo.txt"
+    caminho.write_text(
+        (FIXTURES / "comunidades_edge.txt").read_text()
+        + "\n#\nxpl route-filter RouteExportCheck-TESTE\n"
+        " if not community matches-any {888} then\n  refuse\n endif\n end-filter\n"
+    )
+    device = _device_com_snapshot(db_session, "ne-plano-12", caminho)
+    proposta = propor_adocao(db_session, device.id)
+    adotar_plano(db_session, proposta, device_id=device.id, snapshot_id=None, actor="ana")
+    db_session.commit()
+
+    achado = next(
+        a for a in validar_plano(db_session, [device.id])
+        if a.codigo == "portao_membro_sem_classe" and a.valor == "888"
+    )
+    assert achado.filtro == "RouteExportCheck-TESTE"
+    assert achado.severidade == "atencao"
