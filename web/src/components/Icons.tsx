@@ -111,6 +111,16 @@ export const ICONES_NAV: Record<string, ReactNode> = {
       {C(7.5, 7.5, 0.5, )}
     </Svg>
   ),
+  // O plano reparte as classes entre os papéis: o glifo de compartilhamento.
+  "/communities/plan": (
+    <Svg>
+      {C(18, 5, 3)}
+      {C(6, 12, 3)}
+      {C(18, 19, 3)}
+      {L(8.59, 13.51, 15.42, 17.49)}
+      {L(15.41, 6.51, 8.59, 10.49)}
+    </Svg>
+  ),
   // MPLS
   "/mpls/domains": (
     <Svg>
