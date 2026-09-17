@@ -194,3 +194,32 @@ bgp 61785
     assert len(achados) == 1
     assert "15169:12000" in achados[0].descricao
     assert "15169:12001" in achados[0].descricao
+
+
+def test_a_definicao_numerada_nao_nomeia_classe() -> None:
+    """R23: `ip community-filter 2` não tem nome, e o número não vira nome de classe.
+
+    O código segue como evidência do valor — a definição numerada não some da
+    proposta —, e o nome sai na convenção do valor sem nome, `com-<código>`.
+    O valor de um campo só (`888`) não é classe e continua barrado.
+    """
+    texto = """
+ip community-filter 2 index 10 permit 888
+ip community-filter 2 index 20 permit 65332:888
+"""
+    proposta = propor_plano([parse_communities_vrp(texto)], asn_principal=61785)
+    assert [(c.nome, c.valor_v4) for c in proposta.plano.classes] == [("com-888", 888)]
+
+
+def test_o_nome_do_vocabulario_vence_o_numerado() -> None:
+    """R23: a numerada entra primeiro e a nomeada depois, e o nome do vocabulário vence.
+
+    O registro é reconstruído, e não mutado: o `_EvidenciaDaClasse` é congelado, e
+    a mutação que existia aqui estourava o `propor_plano` em vez de renomear.
+    """
+    texto = """
+ip community-filter 2 index 20 permit 65332:888
+ip community-filter advanced com-SPARKLE index 10 permit 65332:888
+"""
+    proposta = propor_plano([parse_communities_vrp(texto)], asn_principal=61785)
+    assert [(c.nome, c.valor_v4) for c in proposta.plano.classes] == [("com-SPARKLE", 888)]

@@ -773,6 +773,36 @@ def _afi_do_portao(filtro: str, valores: Sequence[str]) -> str:
     )
 
 
+def _codigos_de_classe(valores: Sequence[str]) -> list[int]:
+    """Os códigos de 2 bytes que podem virar classe, na ordem em que aparecem.
+
+    Fica de fora o valor que é código do vocabulário de instruções: `8167:666` e
+    `65001:666` são marcas de blackhole de outros ASNs, e não classes (§6.2,
+    guarda do `_e_valor_de_classe`).
+    """
+    codigos: list[int] = []
+    for valor in valores:
+        codigo = _codigo_do_valor(valor)
+        if codigo is not None and _e_valor_de_classe(valor):
+            codigos.append(codigo)
+    return codigos
+
+
+def _forca_do_nome(nome: str | None) -> int:
+    """Quanto um nome de definição pesa quando duas definições dão o mesmo código.
+
+    O nome do vocabulário (`com-`) vence os outros nomes, e entre iguais vence a
+    primeira definição do arquivo. A definição numerada (`ip community-filter 2`)
+    não tem nome — e é isso que ela carrega aqui: nada, a força menor de todas,
+    para não nomear classe nenhuma (R23).
+    """
+    if nome is None:
+        return -1
+    if nome.isdigit():
+        return 0
+    return 2 if nome.startswith("com-") else 1
+
+
 def propor_plano(
     leituras: Sequence[LeituraCommunities],
     *,
@@ -792,32 +822,33 @@ def propor_plano(
     avisos: list[str] = []
 
     # 1. As classes: os valores de 2 bytes definidos ou aplicados, um por código.
-    evidencias: dict[int, _EvidenciaDaClasse] = {}
+    # O nome de uma classe exige definição **nomeada** (§9, passo 1): a definição
+    # numerada, que não tem nome, dá o código à classe e não dá nome nenhum — é
+    # `None` aqui, e o número que identifica o filtro não vira nome (R23).
+    origens: dict[int, str | None] = {}
     for leitura in leituras:
         avisos.extend(leitura.avisos)
         for definicao in leitura.definicoes:
             if definicao.classe != "community":
                 continue
-            for valor in definicao.valores:
-                codigo = _codigo_do_valor(valor)
-                if codigo is None or not _e_valor_de_classe(valor):
-                    continue
-                registro = evidencias.setdefault(
-                    codigo, _EvidenciaDaClasse(nome=definicao.nome, banda=_banda_da_faixa(codigo))
-                )
-                if definicao.nome.startswith("com-") and not registro.nome.startswith("com-"):
-                    registro.nome = definicao.nome  # o nome do vocabulário vence o numerado
+            nome = None if definicao.nome.isdigit() else definicao.nome
+            for codigo in _codigos_de_classe(definicao.valores):
+                if codigo not in origens or _forca_do_nome(nome) > _forca_do_nome(origens[codigo]):
+                    origens[codigo] = nome
     for leitura in leituras:
         for uso in leitura.usos:
-            if uso.operacao != "aplica" or uso.valores:
+            if uso.operacao != "aplica" or uso.valores or not uso.corpus:
                 continue
-            for valor in leitura.valores_do_corpus(uso.corpus) if uso.corpus else ():
-                codigo = _codigo_do_valor(valor)
-                if codigo is None or not _e_valor_de_classe(valor) or codigo in evidencias:
-                    continue
-                evidencias[codigo] = _EvidenciaDaClasse(
-                    nome=f"com-{codigo}", banda=_banda_da_faixa(codigo)
-                )
+            for codigo in _codigos_de_classe(leitura.valores_do_corpus(uso.corpus)):
+                origens.setdefault(codigo, None)
+    # Sem nome de definição — a numerada, ou o valor aplicado que definição
+    # nenhuma nomeia — o código sai na convenção do módulo, `com-<código>`.
+    evidencias = {
+        codigo: _EvidenciaDaClasse(
+            nome=origem if origem else f"com-{codigo}", banda=_banda_da_faixa(codigo)
+        )
+        for codigo, origem in origens.items()
+    }
 
     classes: list[ClassePlano] = []
     # A referência é indexada pelos **dois** códigos do par: `com-TAMANHO-1` é
