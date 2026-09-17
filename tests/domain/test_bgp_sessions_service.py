@@ -219,6 +219,49 @@ def test_mesmo_peer_em_vrf_diferente_convive(db_session: Session) -> None:
     assert sessao.id  # a VRF é parte da identidade do peer no VRP
 
 
+def test_mesmo_peer_em_outra_grafia_colide(db_session: Session) -> None:
+    """`2804:194c::2` e `2804:194c:0:0:0:0:0:2` são o mesmo peer."""
+    env = _ambiente(db_session)
+    circ1 = _circuito(db_session, env, code="CIRC-0044", edge_id=env["ne1_id"], vrf="CLIENTE-A")
+    circ2 = _circuito(db_session, env, code="CIRC-0045", edge_id=env["ne1_id"], vrf="CLIENTE-A")
+    create_session(
+        db_session,
+        _sessao_data(
+            env, circ1, env["ne1_id"], afi="ipv6",
+            local="2804:194c::1", remote="2804:194c::2",
+        ),
+        actor="cli",
+    )
+    # O endereço remoto é o mesmo escrito de outro jeito; o local é diferente, então o
+    # conjunto do par não bate e um 409 só pode vir do `_colidente_peer`.
+    with pytest.raises(
+        ConflictError,
+        match=r"para o peer 2804:194c:0:0:0:0:0:2",
+    ):
+        create_session(
+            db_session,
+            _sessao_data(
+                env, circ2, env["ne1_id"], afi="ipv6",
+                local="2804:194c::9", remote="2804:194c:0:0:0:0:0:2",
+            ),
+            actor="cli",
+        )
+
+
+def test_mesmo_peer_em_outro_equipamento_convive(db_session: Session) -> None:
+    """O peer é do equipamento: o mesmo endereço remoto em outro roteador convive."""
+    env = _ambiente(db_session)
+    circ1 = _circuito(db_session, env, code="CIRC-0046", edge_id=env["ne1_id"])
+    create_session(db_session, _sessao_data(env, circ1, env["ne1_id"]), actor="cli")
+    circ2 = _circuito(db_session, env, code="CIRC-0047", edge_id=env["ne2_id"])
+    sessao = create_session(
+        db_session,
+        _sessao_data(env, circ2, env["ne2_id"], local="100.64.0.9", remote="100.64.0.2"),
+        actor="cli",
+    )
+    assert sessao.id
+
+
 def test_vrfs_diferentes_convivem_no_mesmo_device(db_session: Session) -> None:
     env = _ambiente(db_session)
     circ_pub = _circuito(db_session, env, code="CIRC-0009", edge_id=env["ne1_id"])

@@ -63,7 +63,7 @@ Coleta periódica: configuração relevante, interfaces, VLANs, peers BGP + esta
 
 Entidades: `sites`, `devices`, `device_interfaces`, `credential_groups`, `organizations`, `contacts`, `circuits`, `vlans`, `ip_prefixes`, `bgp_sessions`, `bgp_policy_profiles`, `bgp_prefix_authorizations`, `communities`, `mpls_domains`, `l2vc_services`, `vsi_services`, `service_endpoints`, `allocations`, `device_snapshots`, `change_requests`, `change_steps`, `approvals`, `job_runs`, `audit_events`.
 
-Regras de banco (§14.1): ASN válido de 32 bits (respeitando reservados); sem sobreposição de prefixos no mesmo domínio; VLAN única no escopo; VC-ID/VSI-ID únicos por domínio; sessão BGP não duplicada no mesmo equipamento+VRF/VS+família; objetos em uso **desativados, nunca excluídos fisicamente**; segredos nunca em logs, snapshots ou auditoria.
+Regras de banco (§14.1): ASN válido de 32 bits (respeitando reservados); sem sobreposição de prefixos no mesmo domínio; VLAN única no escopo; VC-ID/VSI-ID únicos por domínio; sessão BGP não duplicada (o mesmo peer, o endereço remoto, não se repete na mesma VRF do equipamento, nem o par local/remoto em qualquer lugar); objetos em uso **desativados, nunca excluídos fisicamente**; segredos nunca em logs, snapshots ou auditoria.
 
 ## Fluxo de mudança — §12
 
@@ -509,5 +509,19 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   equipamento, nem pelas duas direções de um só — a adoção recusa (a transação
   volta inteira) e a saída é o botão de limpar, e o render continua emitindo os
   dois blocos sob o mesmo nome quando o caso chega por outro caminho.
+- Sessões BGP por peer (2026-09-16): a colisão da sessão deixou de ser a linha
+  (equipamento+VRF+família) e passou a ser o **peer** — outra sessão ativa com o
+  mesmo endereço remoto na mesma VRF do equipamento (`_colidente_linha` virou
+  `_colidente_peer` em `domain/services/bgp_sessions.py`, com a comparação
+  canônica do endereço, a VRF do circuito e o `ignorar_id` no update; a mensagem
+  virou "Já existe sessão ativa no equipamento X para o peer Y (VRF …)").
+  O `_colidente_par` (o par local/remoto, global e com o invertido incluído) e o
+  `_vrf_texto` ficaram como estavam; sem migração e sem schema. Gatilho: em
+  2026-09-16 a leitura antiga do §14.1 derrubou com 409 a adoção de dois enlaces
+  de operadoras diferentes no mesmo NE8000. Os textos que afirmavam a regra
+  velha foram alinhados (spec §14.1, `docs/wiki/roteamento.md`, o tooltip
+  `bgp.afi` e este arquivo). Segue de pé a dívida do §25.4: com duas sessões no
+  mesmo equipamento e VRF e o mesmo ASN de peer, o nome `RP-<ASN>-IMPORT-<AFI>`
+  repetiria — a route-policy compartilhada continua sem modelo.
 - Convenções previstas no `.gitignore`: Python com venv e pytest (`.venv/`, `.pytest_cache/`), deploy via Docker Compose (`compose.yaml` na raiz) com `.env` ignorado (o `.gitignore` ainda prevê `deploy/docker/.env`), `config.yaml` local com segredos **fora do repositório**, logs em `logs/` ignorados.
 - `.claude/settings.local.json` contém token e aponta o harness para uma API externa: é arquivo local — não versionar nem alterar.
