@@ -21,10 +21,16 @@ const PLANO = {
       valor_v4: 1010, valor_v6: 1010, id: 4, notas: null,
       aplicam: ["ASN6762-V4-IMPORT"], testam: [],
     },
+    {
+      // Só testada: um portão a recusa e ninguém a aplica — é o outro selo.
+      nome: "com-SO-TESTE-v4", banda: "cliente", tipo: "tag_produto",
+      valor_v4: 3201, valor_v6: 3201, id: 5, notas: null,
+      aplicam: [], testam: ["RouteExportCheck"],
+    },
   ],
   instrucoes: [{ nome: "com-BLACKHOLE-DENY", codigo: 666, tipo: "acao_blackhole", id: 9, notas: null }],
   portoes: [
-    { nome: "RouteExportCheck", papel: "upstream", afi: "ipv4", padrao: "recusar", aceitas: ["com-TECMAIS-v4"], recusadas: ["com-ONLY-CDN"] },
+    { nome: "RouteExportCheck", papel: "upstream", afi: "ipv4", padrao: "recusar", aceitas: ["com-TECMAIS-v4"], recusadas: ["com-ONLY-CDN", "com-SO-TESTE-v4"] },
   ],
   alvos: [
     { nome: "MSD-CDN-v4", papel: "transito", codigo_v4: 53062, codigo_v6: 53062, gate_nome: "RouteExportCheck", classe_import: null, parametros: {}, estado: "established" },
@@ -39,6 +45,12 @@ const ACHADOS = [
     acao: "incluir a classe no portão do papel",
   },
 ];
+
+/* A validação é a única chamada com dois estados que os testes trocam antes de
+   montar a página: em voo (o painel não mediu nada ainda) e falha (não deu para
+   ler). Os dois são `false` por padrão, que é a resposta boa. */
+let validacaoPendente = false;
+let validacaoFalha = false;
 
 function renderPlano() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -55,6 +67,8 @@ function renderPlano() {
 
 describe("Comunidades · Plano", () => {
   beforeEach(() => {
+    validacaoPendente = false;
+    validacaoFalha = false;
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string) => {
@@ -68,7 +82,15 @@ describe("Comunidades · Plano", () => {
         // receberia o plano no lugar do usuário.
         if (url === "/api/v1/auth/me")
           return json({ id: 1, username: "boss", role: "administrador", is_active: true, last_login_at: null, created_at: "" });
-        if (url.startsWith("/api/v1/communities/plan/validacao")) return json(ACHADOS);
+        if (url.startsWith("/api/v1/communities/plan/validacao")) {
+          if (validacaoPendente) return new Promise<Response>(() => {});
+          if (validacaoFalha)
+            return new Response(JSON.stringify({ detail: "Erro interno." }), {
+              status: 500,
+              headers: { "Content-Type": "application/json" },
+            });
+          return json(ACHADOS);
+        }
         if (url === "/api/v1/communities/plan") return json(PLANO);
         return new Response("null", { status: 404 });
       }),
@@ -78,8 +100,11 @@ describe("Comunidades · Plano", () => {
   it("mostra o cabeçalho com o ASN principal", async () => {
     renderPlano();
     const cabecalho = await screen.findByRole("region", { name: /cabeçalho/i });
-    expect(cabecalho.textContent).toContain("ASN principal");
-    expect(cabecalho.textContent).toContain("61785");
+    // O 61785 também está em `asns_anunciados`, então uma asserção no texto da
+    // seção inteira passaria com qualquer campo trocado desde que o número
+    // batesse: a asserção é no parágrafo do campo, texto exato.
+    const linha = within(cabecalho).getByText(/ASN principal/).closest("p");
+    expect(linha?.textContent).toBe("ASN principal: 61785");
   });
 
   it("marca a classe aplicada e não testada", async () => {
@@ -89,6 +114,34 @@ describe("Comunidades · Plano", () => {
     const secao = await screen.findByRole("region", { name: /classes e instruções/i });
     const linha = within(secao).getByText("com-TRANSITO-FULL").closest("tr");
     expect(linha?.textContent).toContain("não testada");
+  });
+
+  it("marca a classe testada e não aplicada", async () => {
+    renderPlano();
+    const secao = await screen.findByRole("region", { name: /classes e instruções/i });
+    const linha = within(secao).getByText("com-SO-TESTE-v4").closest("tr");
+    expect(linha?.textContent).toContain("testada e não aplicada");
+    expect(within(linha as HTMLElement).getByText("testada e não aplicada")).toHaveClass("badge-warn");
+  });
+
+  it("enquanto a validação não chega, o painel não afirma alinhamento", async () => {
+    validacaoPendente = true;
+    renderPlano();
+    const painel = await screen.findByRole("region", { name: /divergências/i });
+    // Sem a resposta não há contagem nem frase de vazio: o painel espera.
+    expect(within(painel).getByText(/Carregando/)).toBeInTheDocument();
+    expect(painel.textContent).not.toContain("(0)");
+    expect(painel.textContent).not.toContain("Nenhuma divergência");
+  });
+
+  it("quando a validação falha, o painel diz que não pôde ser lida", async () => {
+    validacaoFalha = true;
+    renderPlano();
+    const painel = await screen.findByRole("region", { name: /divergências/i });
+    const alerta = await within(painel).findByRole("alert");
+    expect(alerta.textContent).toMatch(/^Não foi possível ler a validação/);
+    expect(painel.textContent).not.toContain("Nenhuma divergência");
+    expect(painel.textContent).not.toContain("(0)");
   });
 
   it("mostra o painel de divergências com o filtro e a linha", async () => {

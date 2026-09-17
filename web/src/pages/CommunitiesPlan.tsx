@@ -146,7 +146,10 @@ export default function CommunitiesPlan() {
       </section>
 
       <section aria-labelledby="plano-divergencias">
-        <h2 id="plano-divergencias">Divergências ({achados.length})</h2>
+        {/* A contagem sai da resposta, e não de `achados` (que é `[]` sem ela):
+            em voo ou com a leitura falha o painel não pode dizer "0" nem
+            "nenhuma divergência" — quem não mediu não tem o que afirmar. */}
+        <h2 id="plano-divergencias">Divergências{validacao.data ? ` (${achados.length})` : ""}</h2>
         <DataTable<AchadoOut>
           colunas={[
             { key: "severidade", title: "Severidade" },
@@ -156,6 +159,12 @@ export default function CommunitiesPlan() {
             { key: "acao", title: "Ação sugerida", render: (a) => a.acao ?? "—" },
           ]}
           linhas={achados}
+          carregando={validacao.isLoading}
+          erro={
+            validacao.isError
+              ? "Não foi possível ler a validação do plano; nada foi comparado com a configuração."
+              : undefined
+          }
           vazio="Nenhuma divergência entre o plano e a configuração."
         />
       </section>
