@@ -952,9 +952,18 @@ def propor_plano(
                     codigo_v4=alvo_lido.asn, codigo_v6=alvo_lido.asn,
                     gate_nome=_portao_do_papel(portoes, papel),
                     classe_import=_classe_da_importacao(papel, classes),
-                    parametros=_parametros_do_alvo(leituras, alvo_lido.nome),
+                    # `parametros` sai vazio de propósito: o bloco guardado por
+                    # `route-destination` não diz a que alvo pertence. Quem faz o
+                    # vínculo é o peer (`peer <ip> route-filter <filtro> export`),
+                    # que esta leitura não tem — e pendurar o bloco em todo alvo
+                    # poria o `100.64.0.0 10 le 24` do GGC no export do `IX-CG`.
+                    # Cada bloco não associado sai em `excecao_sem_alvo`, R22.
+                    parametros={},
                 )
             )
+
+    # 5. As exceções: os blocos que a leitura não sabe a que alvo pertencem.
+    divergencias.extend(_excecoes_sem_alvo(leituras))
 
     regras = _regras_de_importacao(classes)
     plano = PlanoLido(
@@ -1022,19 +1031,42 @@ def _classe_da_importacao(papel: str, classes: Sequence[ClassePlano]) -> str | N
     return None
 
 
-def _parametros_do_alvo(leituras: Sequence[LeituraCommunities], nome: str) -> dict:
-    """O que é específico do alvo: as exceções por prefixo (§6.3, §8.1).
+def _excecoes_sem_alvo(leituras: Sequence[LeituraCommunities]) -> list[Achado]:
+    """Os blocos de exceção que a leitura não sabe a que alvo pertencem (§6.3, §8.1).
 
-    O filtro de CDN guarda um bloco de exceção (`100.64.0.0 10 le 24` levando a
-    community da própria CDN) que é parâmetro do alvo, não classe do plano.
+    Um `if ip route-destination in {...}` guardando `apply community` é parâmetro
+    do alvo (§4.3), mas a associação não está no dado: quem faz o vínculo é o peer
+    (`peer <ip> route-filter <filtro> export`), e esta leitura só tem nome de grupo
+    e membro. Casar por substring do nome do filtro é a ambiguidade que o R20
+    parqueou, e o custo dela é alto: o `100.64.0.0 10 le 24` do GGC iria para o
+    export do `IX-CG` e do `EQUINIX_SP` no template por alvo (design §10).
+
+    A evidência sai como pendência para o operador dizer de quem o bloco é, e o
+    achado é **um por (filtro, condição)**: um por alvo multiplicaria N×M sem
+    dizer nada de novo.
     """
-    excecoes: list[dict] = []
+    blocos: dict[tuple[str, str], tuple[int, list[str]]] = {}
     for leitura in leituras:
         for uso in leitura.usos:
             if uso.operacao != "aplica" or not uso.condicao or "route-destination" not in uso.condicao:
                 continue
-            excecoes.append({"condicao": uso.condicao, "communities": list(uso.valores)})
-    return {"excecoes": excecoes} if excecoes else {}
+            _, aplicadas = blocos.setdefault((uso.filtro, uso.condicao), (uso.linha, []))
+            comunidade = ", ".join(uso.valores) or uso.corpus
+            if comunidade and comunidade not in aplicadas:
+                aplicadas.append(comunidade)
+    return [
+        Achado(
+            codigo="excecao_sem_alvo", severidade="atencao",
+            descricao=(
+                f"{filtro}: `{condicao}` aplica {', '.join(aplicadas) or 'sem community'} "
+                "e o bloco não diz a que alvo pertence"
+            ),
+            valor=condicao, filtro=filtro, linha=linha,
+            acao="confirmar a que alvo o bloco pertence, para cadastrá-lo em "
+                 "community_targets.parametros (§4.3)",
+        )
+        for (filtro, condicao), (linha, aplicadas) in blocos.items()
+    ]
 
 
 def _regras_de_importacao(classes: Sequence[ClassePlano]) -> tuple[RegraImportPlano, ...]:

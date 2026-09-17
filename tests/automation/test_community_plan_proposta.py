@@ -139,3 +139,58 @@ xpl route-filter RouteExportCheckV64
 """
     proposta = propor_plano([parse_communities_vrp(texto)], asn_principal=61785)
     assert proposta.plano.portoes[0].afi == "ipv4"
+
+
+def test_o_bloco_de_excecao_nao_vira_parametro_de_alvo() -> None:
+    """R22: o bloco não diz a que alvo pertence, então `parametros` sai vazio.
+
+    Pendurado em todo alvo, o `100.64.0.0 10 le 24` do GGC entraria no export do
+    `IX-CG` e no do `EQUINIX_SP` — e o template por alvo emitiria bloco alheio.
+    """
+    proposta = propor_plano(
+        [_leitura("comunidades_vs.txt")],
+        asn_principal=61785,
+        estados_alvo={"IX-CG": "established", "EQUINIX_SP": "established"},
+    )
+    assert {a.nome for a in proposta.plano.alvos} == {"IX-CG", "EQUINIX_SP"}
+    assert all(a.parametros == {} for a in proposta.plano.alvos)
+
+
+def test_o_bloco_sem_alvo_sai_como_achado() -> None:
+    """R22: a evidência que não dá para associar vira achado com filtro, condição e
+    linha, e não se perde na proposta."""
+    proposta = propor_plano([_leitura("comunidades_vs.txt")], asn_principal=61785)
+    achados = [d for d in proposta.divergencias if d.codigo == "excecao_sem_alvo"]
+    assert len(achados) == 1
+    achado = achados[0]
+    assert achado.filtro == "XPL-GGC-V4-EXPORT"
+    assert achado.valor == "if ip route-destination in {100.64.0.0 10 le 24} then"
+    assert achado.severidade == "atencao"
+    assert "15169:12000" in achado.descricao
+
+
+def test_o_achado_da_excecao_e_um_por_bloco() -> None:
+    """R22: a dedup é por (filtro, condição). Dois alvos e duas linhas do mesmo
+    bloco dão **um** achado — a multiplicação N×M só mudaria de lugar."""
+    texto = """
+xpl route-filter XPL-GGC-V4-EXPORT
+ if ip route-destination in {100.64.0.0 10 le 24} then
+  apply community {15169:12000} additive
+  apply community {15169:12001} additive
+ endif
+ end-filter
+bgp 61785
+ peer GGC as-number 53062
+ peer NFLX as-number 2906
+"""
+    leitura = parse_communities_vrp(texto)
+    proposta = propor_plano(
+        [leitura, leitura],
+        asn_principal=61785,
+        estados_alvo={"GGC": "established", "NFLX": "established"},
+    )
+    assert {a.nome for a in proposta.plano.alvos} == {"GGC", "NFLX"}
+    achados = [d for d in proposta.divergencias if d.codigo == "excecao_sem_alvo"]
+    assert len(achados) == 1
+    assert "15169:12000" in achados[0].descricao
+    assert "15169:12001" in achados[0].descricao
