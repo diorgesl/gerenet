@@ -18,6 +18,7 @@ import ChangeRequests from "@/pages/ChangeRequests";
 import ChangeRequestDetail from "@/pages/ChangeRequestDetail";
 import PolicyProfiles from "@/pages/PolicyProfiles";
 import Communities from "@/pages/Communities";
+import CommunitiesPlan from "@/pages/CommunitiesPlan";
 import PrefixAuthorizations from "@/pages/PrefixAuthorizations";
 import AuditEvents from "@/pages/AuditEvents";
 import Snapshots from "@/pages/Snapshots";
@@ -69,6 +70,7 @@ export default function App() {
         <Route path="/upstreams/:id" element={<UpstreamDetail />} />
         <Route path="/policy-profiles" element={<PolicyProfiles />} />
         <Route path="/communities" element={<Communities />} />
+        <Route path="/communities/plan" element={<CommunitiesPlan />} />
         <Route path="/prefix-authorizations" element={<PrefixAuthorizations />} />
         <Route path="/audit-events" element={<AuditEvents />} />
         <Route path="/snapshots" element={<Snapshots />} />

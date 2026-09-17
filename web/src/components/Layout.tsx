@@ -31,6 +31,7 @@ const GRUPOS_NAV: GrupoNav[] = [
       { para: "/prefix-authorizations", rotulo: "Prefixos autorizados" },
       { para: "/policy-profiles", rotulo: "Perfis de política" },
       { para: "/communities", rotulo: "Communities" },
+      { para: "/communities/plan", rotulo: "Comunidades · Plano" },
     ],
   },
   {

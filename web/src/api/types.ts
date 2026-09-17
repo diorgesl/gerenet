@@ -178,10 +178,32 @@ export interface CommunityOut {
   tipo: string; // categoria §7/§25.6 — espelha models.COMMUNITY_TIPO (models.py:53)
   notes: string | null;
   admin_status: boolean;
+  valor_v4: number | null; // valor de 2 bytes da família v4 (§14.4); nulo nas classes de vocabulário
+  valor_v6: number | null;
+  codigo: number | null; // código da large-community `<asn>:<código>:<alvo>` (instrução)
+  banda: string | null; // partição da §5 — espelha models.COMMUNITY_BANDA
+  origem: "manual" | "adotado"; // quem escreveu a linha: o cadastro ou a adoção do plano
 }
 
-export type CommunityCreateIn = { name: string; tipo?: string; notes?: string | null };
-export type CommunityUpdateIn = { name?: string; tipo?: string; notes?: string | null; admin_status?: boolean };
+export type CommunityCreateIn = {
+  name: string;
+  tipo?: string;
+  notes?: string | null;
+  valor_v4?: number | null;
+  valor_v6?: number | null;
+  codigo?: number | null;
+  banda?: string | null;
+};
+export type CommunityUpdateIn = {
+  name?: string;
+  tipo?: string;
+  notes?: string | null;
+  valor_v4?: number | null;
+  valor_v6?: number | null;
+  codigo?: number | null;
+  banda?: string | null;
+  admin_status?: boolean;
+};
 
 export type PolicyProfileUpdateIn = {
   name?: string;
@@ -764,4 +786,70 @@ export interface DiscoveryAdocaoIn {
     default_route_advertise?: boolean | null;
   }[];
   ciente: boolean;
+}
+
+// Plano de communities (F1 §11): o plano ativo é dado da SoT, e o `plano` da
+// página é o `PlanoOut` — espelha schemas.py:1357-1419. `aplicam`/`testam` saem
+// da leitura da configuração (uso por CÓDIGO de classe), e o `AchadoOut` da
+// validação aponta a linha pelo VALOR LITERAL: são a mesma verdade contada em
+// duas granularidades (ver a nota da página).
+export interface ClassePlanoOut {
+  nome: string;
+  banda: string | null;
+  tipo: string;
+  valor_v4: number | null;
+  valor_v6: number | null;
+  id: number | null;
+  notas: string | null;
+  aplicam: string[];
+  testam: string[];
+}
+
+export interface InstrucaoPlanoOut {
+  nome: string;
+  codigo: number | null;
+  tipo: string;
+  id: number | null;
+  notas: string | null;
+}
+
+export interface PortaoPlanoOut {
+  nome: string;
+  papel: string;
+  afi: string;
+  padrao: string;
+  aceitas: string[];
+  recusadas: string[];
+}
+
+export interface AlvoPlanoOut {
+  nome: string;
+  papel: string;
+  codigo_v4: number | null;
+  codigo_v6: number | null;
+  gate_nome: string | null;
+  classe_import: string | null;
+  parametros: Record<string, unknown>;
+  estado: string;
+}
+
+export interface AchadoOut {
+  codigo: string;
+  severidade: "critico" | "atencao" | "informativo";
+  descricao: string;
+  valor: string | null;
+  filtro: string | null;
+  linha: number | null;
+  acao: string | null;
+}
+
+export interface PlanoOut {
+  asn_principal: number | null;
+  asns_anunciados: Record<string, unknown>[];
+  observacoes: string | null;
+  snapshot_id: number | null;
+  classes: ClassePlanoOut[];
+  instrucoes: InstrucaoPlanoOut[];
+  portoes: PortaoPlanoOut[];
+  alvos: AlvoPlanoOut[];
 }

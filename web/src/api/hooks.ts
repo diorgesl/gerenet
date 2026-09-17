@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./client";
 import type {
+  AchadoOut,
   AuditEventOut,
   BgpSessionOut,
   ChangeRequestCreateIn,
@@ -32,6 +33,7 @@ import type {
   OrganizationOut,
   OrganizationPrefillOut,
   PlanoL2vcOut,
+  PlanoOut,
   PolicyProfileOut,
   PolicyProfileUpdateIn,
   PrefixAuthorizationOut,
@@ -625,6 +627,28 @@ export const useCommunities = (opts?: { includeDisabled?: boolean }) => useLista
 export const useCommunityCriar = () => useCriar<CommunityCreateIn, CommunityOut>("communities", "/api/v1/communities");
 export const useCommunityAtualizar = () =>
   useAtualizar<CommunityUpdateIn, CommunityOut>("communities", "/api/v1/communities");
+
+// Plano de communities (F1 §11) — os dois usam `useQuery` direto, e não o
+// `useLista`: o `GET /plan` devolve UM objeto (o `useLista` é `apiFetch<T[]>`),
+// e a validação, embora seja lista, tem o `device_id` na chave — com o
+// `useLista` dois equipamentos dividiriam a mesma entrada de cache.
+export function usePlano() {
+  return useQuery({
+    queryKey: ["communities-plan"],
+    queryFn: () => apiFetch<PlanoOut>("/api/v1/communities/plan"),
+  });
+}
+
+export function usePlanoValidacao(deviceId?: number) {
+  return useQuery({
+    queryKey: ["communities-plan-validacao", deviceId ?? null],
+    queryFn: () =>
+      apiFetch<AchadoOut[]>(
+        `/api/v1/communities/plan/validacao${deviceId ? `?device_id=${deviceId}` : ""}`,
+      ),
+  });
+}
+
 export const usePolicyProfileAtualizar = () =>
   useAtualizar<PolicyProfileUpdateIn, PolicyProfileOut>("policy-profiles", "/api/v1/policy-profiles");
 
