@@ -21,6 +21,7 @@ from gerenet.automation.parsers.huawei_vrp.communities_vrp import (
 )
 from gerenet.domain.communities_partition import (
     CODIGOS_CONHECIDOS,
+    FAIXAS,
     conferir_linha,
     familia_do_digito,
 )
@@ -669,3 +670,384 @@ def validar(
     achados.extend(_conferir_alvos(plano, estados_alvo or {}))
     achados.extend(_conferir_referencias(plano, leituras))
     return tuple(achados)
+
+
+@dataclass(frozen=True)
+class PropostaPlano:
+    plano: PlanoLido
+    divergencias: tuple[Achado, ...] = ()
+    parados: tuple[str, ...] = ()
+    avisos: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _EvidenciaDaClasse:
+    nome: str
+    valor_v4: int | None = None
+    valor_v6: int | None = None
+    codigo: int | None = None
+    banda: str | None = None
+
+
+# Papel do alvo pelo nome do grupo, quando a SoT não tem o ASN (Regra 5).
+_PAPEL_PELO_NOME = (
+    ("GGC", "cdn"), ("NFLX", "cdn"), ("NETFLIX", "cdn"), ("OCA", "cdn"), ("CDN", "cdn"),
+    ("PARCEIRO", "parceiro"),
+    ("PTT", "ix"), ("PEERING", "ix"), ("IX", "ix"),
+)
+
+# Palavra do nome da definição → banda que ela sugere. Serve só para achar a
+# discordância entre o nome e a faixa (§14.2), não para decidir a banda.
+_PALAVRA_DA_BANDA = (
+    ("CLIENTES_PARCEIROS", "conjunto"),
+    ("CUSTOMER", "cliente"), ("CLIENTE", "cliente"),
+    ("PARCEIRO", "parceiro"),
+    ("TRANSITO", "transito"),
+    ("TAMANHO", "tamanho"),
+    ("IX", "local"), ("PTT", "local"),
+    ("ONLY-CDN", "especial"), ("TROCA", "especial"),
+)
+
+
+def _banda_da_faixa(valor: int | None) -> str | None:
+    """A banda que a faixa do valor declara (§5): é ela que o plano adota."""
+    if valor is None:
+        return None
+    for banda, (minimo, maximo) in FAIXAS.items():
+        if minimo <= valor <= maximo:
+            return banda
+    return None
+
+
+def _papel_do_nome(nome: str) -> str | None:
+    maiusculo = nome.upper()
+    for marca, papel in _PAPEL_PELO_NOME:
+        if marca in maiusculo:
+            return papel
+    return None
+
+
+def _banda_do_nome(nome: str) -> str | None:
+    maiusculo = nome.upper()
+    for marca, banda in _PALAVRA_DA_BANDA:
+        if marca in maiusculo:
+            return banda
+    return None
+
+
+# A família do leitor (`v4`/`v6`, a grafia de `familia_do_digito`) como AFI do
+# plano (`ipv4`/`ipv6`, o vocabulário do §4.1, que é o que a SoT grava). A
+# conversão mora **aqui**, num lugar só: duas grafias do mesmo lado foi o defeito
+# que custou uma rodada de fix na T4, e duas respostas para a mesma pergunta é o
+# mesmo defeito com outra roupa.
+_AFI_DA_FAMILIA = {"v4": "ipv4", "v6": "ipv6"}
+
+# Sem evidência de família o AFI sai por convenção, e é o de v4: é o que a
+# operação mostra — o portão gêmeo v6 carrega a família no próprio nome.
+_AFI_POR_CONVENCAO = "ipv4"
+
+
+def afi_da_familia(familia: str | None) -> str:
+    """A família do leitor (`v4`/`v6`) como AFI do plano (`ipv4`/`ipv6`).
+
+    `None` é "sem evidência", e não "v4": quem chama decide se o silêncio vale a
+    convenção, e esta função só não deixa a conversão ter duas respostas.
+    """
+    return _AFI_DA_FAMILIA.get(familia or "", _AFI_POR_CONVENCAO)
+
+
+def _afi_do_portao(filtro: str, valores: Sequence[str]) -> str:
+    """O AFI de um portão pela **mesma** cadeia de evidência que o leitor usa.
+
+    Nome do filtro (com as guardas da forma colada) → unanimidade dos dígitos de
+    família dos valores → convenção. Uma segunda heurística de nome aqui
+    (`"V6" in filtro.upper()`) faria o plano e a validação discordarem sobre o
+    mesmo filtro: o detector guardado recusa `RouteExportCheckV64` como família e
+    o `in` o leria como v6.
+
+    Só o valor de 2 bytes entra no consenso, como na checagem 2: num
+    `61785:7001:14840` o campo do meio é o código, e não um dígito de família.
+    """
+    return afi_da_familia(
+        _afi_do_filtro(filtro, [v for v in valores if v.count(":") == 1])
+    )
+
+
+def propor_plano(
+    leituras: Sequence[LeituraCommunities],
+    *,
+    asn_principal: int | None = None,
+    estados_alvo: Mapping[str, str] | None = None,
+    papeis_da_sot: Mapping[int, str] | None = None,
+) -> PropostaPlano:
+    """Monta o plano que a adoção gravaria, com a poda e as divergências.
+
+    A banda de cada classe vem da **faixa** do valor (§5), não do nome: o nome é
+    evidência do operador e a faixa é o contrato. Quando os dois discordam, a
+    divergência sai para o operador decidir (§14.2).
+    """
+    estados_alvo = estados_alvo or {}
+    papeis_da_sot = papeis_da_sot or {}
+    divergencias: list[Achado] = []
+    avisos: list[str] = []
+
+    # 1. As classes: os valores de 2 bytes definidos ou aplicados, um por código.
+    evidencias: dict[int, _EvidenciaDaClasse] = {}
+    for leitura in leituras:
+        avisos.extend(leitura.avisos)
+        for definicao in leitura.definicoes:
+            if definicao.classe != "community":
+                continue
+            for valor in definicao.valores:
+                codigo = _codigo_do_valor(valor)
+                if codigo is None or not _e_valor_de_classe(valor):
+                    continue
+                registro = evidencias.setdefault(
+                    codigo, _EvidenciaDaClasse(nome=definicao.nome, banda=_banda_da_faixa(codigo))
+                )
+                if definicao.nome.startswith("com-") and not registro.nome.startswith("com-"):
+                    registro.nome = definicao.nome  # o nome do vocabulário vence o numerado
+    for leitura in leituras:
+        for uso in leitura.usos:
+            if uso.operacao != "aplica" or uso.valores:
+                continue
+            for valor in leitura.valores_do_corpus(uso.corpus) if uso.corpus else ():
+                codigo = _codigo_do_valor(valor)
+                if codigo is None or not _e_valor_de_classe(valor) or codigo in evidencias:
+                    continue
+                evidencias[codigo] = _EvidenciaDaClasse(
+                    nome=f"com-{codigo}", banda=_banda_da_faixa(codigo)
+                )
+
+    classes: list[ClassePlano] = []
+    # A referência é indexada pelos **dois** códigos do par: `com-TAMANHO-1` é
+    # (7001, 7101) e a evidência pode chegar por qualquer um deles. Indexada só
+    # por `valor_v4`, o `65000:7101` do `-v6` cairia no ramo sintético e viraria
+    # uma segunda classe com um código v6 escrito na coluna v4 — uma linha que a
+    # própria checagem 2 reprova depois de adotada.
+    conhecidas: dict[int, ClassePlano] = {}
+    for classe in VOCABULARIO:
+        for valor in (classe.valor_v4, classe.valor_v6):
+            if valor is not None:
+                conhecidas.setdefault(valor, classe)
+    vistas: set[tuple[int | None, int | None]] = set()
+    for codigo in sorted(evidencias):
+        evidencia = evidencias[codigo]
+        da_referencia = conhecidas.get(codigo)
+        entrada: ClassePlano | None
+        if da_referencia is not None:
+            chave = (da_referencia.valor_v4, da_referencia.valor_v6)
+            entrada = None if chave in vistas else da_referencia
+            vistas.add(chave)  # os dois códigos do par viram uma linha só
+        else:
+            # Código sem linha na referência (o `8167` do `com-AS8167`): a coluna
+            # é a que o dígito declara, e não sempre a v4.
+            coluna = "valor_v6" if familia_do_digito(codigo) == "v6" else "valor_v4"
+            entrada = ClassePlano(
+                nome=evidencia.nome, banda=evidencia.banda, tipo="tag_produto",
+                **{coluna: codigo},
+            )
+        if entrada is not None:
+            classes.append(entrada)
+        # A divergência é do **nome contra a faixa**, então ela sai por código
+        # encontrado, mesmo quando os dois códigos do par já viraram uma classe só.
+        banda_do_nome = _banda_do_nome(evidencia.nome)
+        if banda_do_nome is not None and banda_do_nome != evidencia.banda:
+            divergencias.append(
+                Achado(
+                    codigo="nome_e_faixa_discordam", severidade="critico",
+                    valor=evidencia.nome,
+                    descricao=(
+                        f"{evidencia.nome} é {codigo}, que a faixa da §5 chama de "
+                        f"`{evidencia.banda}`; o nome diz `{banda_do_nome}`"
+                    ),
+                    acao="decidir qual sentido fica e migrar o outro (§14.2)",
+                )
+            )
+
+    # 2. As instruções: os códigos de large-community que os filtros usam.
+    codigos_vistos: set[int] = set()
+    for leitura in leituras:
+        for uso in leitura.usos:
+            for valor in uso.valores:
+                if valor.count(":") == 2:
+                    codigo = _codigo_do_valor(valor)
+                    if codigo in CODIGOS_CONHECIDOS:
+                        codigos_vistos.add(codigo)
+    instrucoes = tuple(i for i in VOCABULARIO_INSTRUCOES if i.codigo in codigos_vistos)
+    do_codigo: dict[int, list[InstrucaoPlano]] = {}
+    for instrucao in VOCABULARIO_INSTRUCOES:
+        do_codigo.setdefault(instrucao.codigo or -1, []).append(instrucao)
+    for codigo in sorted(codigos_vistos):
+        candidatas = do_codigo.get(codigo, [])
+        if len(candidatas) > 1:
+            divergencias.append(
+                Achado(
+                    codigo="codigo_ambiguo", severidade="critico", valor=str(codigo),
+                    descricao=(
+                        f"o código {codigo} é "
+                        + " e ".join(f"`{c.nome}`" for c in candidatas)
+                        + "; o índice único de `codigo` não deixa as duas linhas existirem"
+                    ),
+                    acao="decidir qual sentido o código tem neste plano",
+                )
+            )
+
+    # 3. Os portões: o que cada `RouteExportCheck*` aceita e recusa.
+    portoes: list[PortaoPlano] = []
+    for leitura in leituras:
+        por_filtro: dict[str, list[UsoCommunity]] = {}
+        for uso in leitura.usos:
+            if uso.operacao == "testa":
+                por_filtro.setdefault(uso.filtro, []).append(uso)
+        for filtro, testes in por_filtro.items():
+            if not filtro.startswith("RouteExportCheck"):
+                continue
+            aceitas = [v for uso in testes if uso.negado for v in uso.valores]
+            recusadas = [v for uso in testes if not uso.negado for v in uso.valores]
+            papel, evidencia = _papel_do_portao(filtro, aceitas)
+            if evidencia is None:
+                divergencias.append(
+                    Achado(
+                        codigo="portao_sem_evidencia", severidade="atencao", valor=filtro,
+                        descricao=f"{filtro}: o nome não diz o papel e a lista de aceitas não decide",
+                        acao="confirmar o papel do portão depois da adoção",
+                    )
+                )
+            portoes.append(
+                PortaoPlano(
+                    nome=filtro, papel=papel, afi=_afi_do_portao(filtro, [*aceitas, *recusadas]),
+                    padrao="recusar",
+                    aceitas=tuple(_nome_do_valor(classes, v) for v in aceitas),
+                    recusadas=tuple(_nome_do_valor(classes, v) for v in recusadas),
+                )
+            )
+
+    # 4. Os alvos: grupos de peer, com a poda de sessão parada (§9.3).
+    alvos: list[AlvoPlano] = []
+    parados: list[str] = []
+    for leitura in leituras:
+        for alvo_lido in leitura.alvos:
+            estado = estados_alvo.get(alvo_lido.nome, "ausente")
+            if estado != "established":
+                parados.append(alvo_lido.nome)
+                continue
+            da_sot = papeis_da_sot.get(alvo_lido.asn or -1)
+            do_nome = _papel_do_nome(alvo_lido.nome)
+            papel = da_sot or do_nome or "transito"
+            if da_sot is not None and do_nome is not None and da_sot != do_nome:
+                divergencias.append(
+                    Achado(
+                        codigo="papel_duvidoso", severidade="atencao", valor=alvo_lido.nome,
+                        descricao=(
+                            f"{alvo_lido.nome}: a SoT diz `{da_sot}` (AS{alvo_lido.asn}) e o "
+                            f"nome do grupo diz `{do_nome}`"
+                        ),
+                        acao="confirmar o papel do alvo (§6.3)",
+                    )
+                )
+            alvos.append(
+                AlvoPlano(
+                    nome=alvo_lido.nome, papel=papel,
+                    codigo_v4=alvo_lido.asn, codigo_v6=alvo_lido.asn,
+                    gate_nome=_portao_do_papel(portoes, papel),
+                    classe_import=_classe_da_importacao(papel, classes),
+                    parametros=_parametros_do_alvo(leituras, alvo_lido.nome),
+                )
+            )
+
+    regras = _regras_de_importacao(classes)
+    plano = PlanoLido(
+        asn_principal=asn_principal,
+        asns_anunciados=({"asn": asn_principal, "papel": "principal"},) if asn_principal else (),
+        classes=tuple(classes), instrucoes=instrucoes, portoes=tuple(portoes), alvos=tuple(alvos),
+        regras_import=regras,
+    )
+    return PropostaPlano(
+        plano=plano, divergencias=tuple(divergencias), parados=tuple(sorted(set(parados))),
+        avisos=tuple(avisos),
+    )
+
+
+def _nome_do_valor(classes: Sequence[ClassePlano], valor: str) -> str:
+    """O nome de um valor: as classes da proposta primeiro, o vocabulário depois.
+
+    O portão testa valor que pode não ser classe de ninguém — o `65000:991` da
+    borda não é classe de linha nenhuma. Sem a segunda passada, o rótulo sairia
+    como o literal e o operador leria `65000:991` onde o §7 diz `com-ONLY-CDN`.
+    """
+    codigo = _codigo_do_valor(valor)
+    for classe in (*classes, *VOCABULARIO):
+        if codigo in (classe.valor_v4, classe.valor_v6):
+            return classe.nome
+    return valor
+
+
+# O código de `com-ONLY-CDN` (§6.1), lido da própria referência para os dois não
+# saírem de sincronia.
+_CODIGO_ONLY_CDN = next(c.valor_v4 for c in VOCABULARIO if c.nome == "com-ONLY-CDN")
+
+
+def _papel_do_portao(filtro: str, aceitas: Sequence[str]) -> tuple[str, str | None]:
+    """O papel do portão (Regra 6): o nome decide o óbvio, o que ele aceita decide o resto.
+
+    `com-ONLY-CDN` é a classe "só CDN": o portão que a aceita é o portão do CDN,
+    e é essa a diferença entre ele e o portão do upstream (§7) — a mesma classe
+    passa no CDN e é recusada no upstream. Sem nenhuma das duas evidências o
+    papel sai como `upstream` **com pendência**: palpite declarado se revisa,
+    palpite silencioso não.
+    """
+    if "PARCEIROS" in filtro.upper():
+        return "parceiro", "nome"
+    if _CODIGO_ONLY_CDN in {_codigo_do_valor(valor) for valor in aceitas}:
+        return "cdn", "aceitas"
+    return "upstream", None
+
+
+def _portao_do_papel(portoes: Sequence[PortaoPlano], papel: str) -> str | None:
+    for portao in portoes:
+        if portao.papel == papel and portao.afi == "ipv4":
+            return portao.nome
+    return portoes[0].nome if portoes else None
+
+
+def _classe_da_importacao(papel: str, classes: Sequence[ClassePlano]) -> str | None:
+    """§7: o cliente recebe a classe do cliente, o parceiro a do parceiro."""
+    da_banda = {"cliente": "cliente", "parceiro": "parceiro"}.get(papel)
+    if da_banda is None:
+        return None
+    for classe in classes:
+        if classe.banda == da_banda:
+            return classe.nome
+    return None
+
+
+def _parametros_do_alvo(leituras: Sequence[LeituraCommunities], nome: str) -> dict:
+    """O que é específico do alvo: as exceções por prefixo (§6.3, §8.1).
+
+    O filtro de CDN guarda um bloco de exceção (`100.64.0.0 10 le 24` levando a
+    community da própria CDN) que é parâmetro do alvo, não classe do plano.
+    """
+    excecoes: list[dict] = []
+    for leitura in leituras:
+        for uso in leitura.usos:
+            if uso.operacao != "aplica" or not uso.condicao or "route-destination" not in uso.condicao:
+                continue
+            excecoes.append({"condicao": uso.condicao, "communities": list(uso.valores)})
+    return {"excecoes": excecoes} if excecoes else {}
+
+
+def _regras_de_importacao(classes: Sequence[ClassePlano]) -> tuple[RegraImportPlano, ...]:
+    """§4.5/§7: um papel por classe, com a condição que a produção usa."""
+    regras: list[RegraImportPlano] = []
+    for papel in ("cliente", "parceiro", "transito"):
+        classe = next((c for c in classes if c.banda == papel), None)
+        if classe is None:
+            continue
+        regras.append(
+            RegraImportPlano(
+                papel=papel, afi="ipv4", classe=classe.nome,
+                condicao={"tamanho_max": 23} if papel == "cliente" else {},
+            )
+        )
+    return tuple(regras)
