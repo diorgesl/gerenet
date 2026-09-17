@@ -74,6 +74,35 @@ def test_le_citacao_sem_definicao() -> None:
     assert "MEU-PREFIXOS" not in definidos
 
 
+def test_le_citacao_com_digito_no_nome() -> None:
+    """§8.1: `pl-CUSTOMER-AS268061-AS61587-V4` é citado e não tem definição.
+
+    O dígito dentro do nome não pode fazer o nome passar por valor: o que decide
+    se o resto da linha é valor é a chave inline, não a presença de número.
+    """
+    leitura = _leitura("comunidades_vs.txt")
+    citados = [u for u in leitura.usos if u.operacao == "cita"]
+    assert [u.corpus for u in citados] == ["pl-CUSTOMER-AS268061-AS61587-V4"]
+    assert citados[0].filtro == "rm-CUSTOMER-AS268061-V4-IN"
+    assert citados[0].corpus_classe == "prefix"
+    definidos = {d.nome for d in leitura.definicoes}
+    assert "pl-CUSTOMER-AS268061-AS61587-V4" not in definidos
+
+
+def test_o_ultimo_corpus_do_mesmo_nome_vence() -> None:
+    """`com-BLACKHOLE` existe nos dois formatos, e o consumidor lê último-vence.
+
+    O helper tem de dar a mesma resposta que o mapa por nome que a task seguinte
+    monta, senão o valor aplicado e o valor testado saem de definições diferentes.
+    """
+    leitura = _leitura("comunidades_edge.txt")
+    por_nome = {d.nome: d for d in leitura.definicoes}
+    assert leitura.valores_do_corpus("com-BLACKHOLE") == por_nome["com-BLACKHOLE"].valores
+    assert leitura.valores_do_corpus("com-BLACKHOLE") == ("61785:666", "65001:666", "37468:666")
+    assert leitura.valores_do_corpus("com-EXPORT-UPSTREAM-v4") == ("61785:3001",)
+    assert leitura.valores_do_corpus("nao-existe") == ()
+
+
 def test_le_os_grupos_de_peer_e_os_membros() -> None:
     leitura = _leitura("comunidades_vs.txt")
     por_nome = {a.nome: a for a in leitura.alvos}

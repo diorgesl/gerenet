@@ -1,3 +1,7 @@
+# Recorte do NE8000 NE8K TECMAIS (20260915T192734) e da captura de CDN, composto
+# para a task 3 do plano de communities. As linhas são cópias literais das
+# capturas, menos a linha 94 (` peer PARCEIROS_CDN as-number 61587`), composta
+# para o grupo ler o ASN; o grupo e o membro são reais.
 #
 ip community-filter advanced com-TRANSITO-FULL index 10 permit 65000:1010
 ip community-filter advanced com-CLIENTES_PARCEIROS-CDN index 10 permit 65000:5001

@@ -101,8 +101,14 @@ class LeituraCommunities:
         validação veria um filtro que aplica corpus e não aplica valor nenhum, e
         o achado principal da §8.1 (o portão testa `65000:3001` e o filtro
         aplica `61785:3001`) não sairia.
+
+        Nome repetido: vence a última definição do arquivo, que é o mesmo que o
+        mapa por nome do consumidor faz. O empate é real porque o mesmo nome vive
+        em dois espaços (`ip community-filter advanced com-BLACKHOLE` e `xpl
+        community-list com-BLACKHOLE`), e escolher pelo espaço exigiria saber
+        quem cita, o que este módulo não lê.
         """
-        for definicao in self.definicoes:
+        for definicao in reversed(self.definicoes):
             if definicao.nome == nome:
                 return definicao.valores
         return ()
@@ -255,10 +261,13 @@ def _aplica_linha_de_filtro(
         )
 
     # Citação de corpus sem valor: `if as-path in X`, `if ip route-destination in X`,
-    # `if-match community-filter X`, `if-match ip-prefix X`.
+    # `if-match community-filter X`, `if-match ip-prefix X`. O que separa valor de
+    # nome é a chave inline no começo do resto, não a presença de dígito: nome de
+    # prefix-list da casa tem ASN dentro (`pl-CUSTOMER-AS268061-AS61587-V4`) e era
+    # justamente ele que a checagem de "citado e não definido" perdia.
     if " in " in linha or linha.startswith("if-match "):
         resto = linha.split(" in ", 1)[1].split() if " in " in linha else partes[1:]
-        if resto and not _valores(" ".join(resto)):
+        if resto and not resto[0].startswith("{"):
             nome = _corpus(resto)
             if nome:
                 return (
