@@ -19,6 +19,19 @@ def _validar_tipo(tipo: str) -> None:
         raise ValidationError(f"Tipo de community inválido: {tipo} (válidos: {validos}).")
 
 
+def _validar_banda(banda: str | None) -> None:
+    """Recusa banda fora da partição, que é digitação e não exceção da §14.4.
+
+    A Regra 2 do plano deixa passar valor fora de faixa, valor sem banda e ordem
+    invertida, porque são o que o equipamento tem. Uma banda que não existe é
+    outra história: a coluna é enum e o texto só falharia no `flush`, como
+    `DataError`, longe do operador que digitou.
+    """
+    if banda is not None and banda not in models.COMMUNITY_BANDA:
+        validas = ", ".join(models.COMMUNITY_BANDA)
+        raise ValidationError(f"Banda de community inválida: {banda} (válidas: {validas}).")
+
+
 def _validar_particao(
     *, banda: str | None, valor_v4: int | None, valor_v6: int | None, codigo: int | None
 ) -> None:
@@ -50,6 +63,7 @@ def create_community(
 ) -> models.Community:
     """Cria comunidade do catálogo global (F5: antes era seed-only)."""
     _validar_tipo(data.tipo)
+    _validar_banda(data.banda)
     nome = (data.name or "").strip()
     if not nome:
         raise ValidationError("Nome da community não pode ser vazio.")
@@ -112,6 +126,8 @@ def update_community(
             raise ConflictError(f"Community já existe: {nome}.")
     if "tipo" in mudancas:
         _validar_tipo(mudancas["tipo"])
+    if "banda" in mudancas:
+        _validar_banda(mudancas["banda"])
     if {"banda", "valor_v4", "valor_v6", "codigo"} & set(mudancas):
         _validar_particao(
             banda=mudancas.get("banda", com.banda),
