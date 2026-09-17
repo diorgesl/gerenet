@@ -267,3 +267,29 @@ ip community-filter advanced BBB index 40 permit 65332:889
         ("com-SPARKLE", 888),
         ("AAA", 889),
     ]
+
+
+def test_o_codigo_do_alvo_nasce_vazio() -> None:
+    """R58: o número do alvo é declarado, não lido.
+
+    A leitura tem o ASN do grupo (`peer ... as-number`) e tem o número do alvo nos
+    valores de large-community, mas não o `peer <ip> route-filter <filtro> export`
+    que liga um ao outro — então o código do alvo entra vazio. Sem esta pinagem, o
+    ASN do par entrava no lugar do código do alvo e chegava à SoT, à página e ao CLI.
+
+    Os alvos são os do grupo de peer da fixture (`IX-CG` e `EQUINIX_SP`), e não
+    outros: com nomes que ela não tem, os dois caem na poda e a lista sai vazia —
+    a asserção passaria sem conferir nada. O papel do `IX-CG` vem da SoT **pelo
+    ASN** da linha `peer ... as-number`, que segue sendo lido: o que deixa de sair
+    dele é só o código.
+    """
+    proposta = propor_plano(
+        [_leitura("comunidades_vs.txt")],
+        asn_principal=61785,
+        estados_alvo={"IX-CG": "established", "EQUINIX_SP": "established"},
+        papeis_da_sot={26162: "transito"},
+    )
+    assert all(a.codigo_v4 is None and a.codigo_v6 is None for a in proposta.plano.alvos)
+    assert {a.nome: a.papel for a in proposta.plano.alvos} == {
+        "IX-CG": "transito", "EQUINIX_SP": "ix",
+    }

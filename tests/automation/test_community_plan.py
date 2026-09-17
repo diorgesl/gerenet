@@ -1,4 +1,5 @@
 """A validação do plano (spec §8) sobre as leituras das duas capturas."""
+from dataclasses import replace
 from pathlib import Path
 
 from gerenet.automation.community_plan import (
@@ -251,6 +252,23 @@ def test_alvo_sem_linha_em_community_targets() -> None:
     sem_linha = [a.valor for a in por_codigo.get("alvo_sem_target", [])]
     assert sem_linha == ["61785:666:14840"]
     assert por_codigo["alvo_sem_target"][0].severidade == "informativo"
+
+
+def test_plano_sem_codigo_de_alvo_avisa_uma_vez() -> None:
+    """R58: sem nenhum código de alvo declarado, a segunda metade da checagem 3 não
+    pode conferir o alvo das instruções — e diz isso **uma vez**, não uma por valor
+    da configuração.
+
+    Um código nulo não pode virar `alvos_do_plano = {None}`: aí o `not in` casaria
+    com todo alvo e a checagem acusaria em falso, que é o defeito que esta pinagem
+    fecha.
+    """
+    plano = replace(_plano(), alvos=(AlvoPlano(nome="MSD-CDN-v4", papel="cdn"),))
+    achados = validar(plano, [_leitura("comunidades_vs.txt")])
+    de_plano = [a for a in achados if a.codigo == "alvo_sem_target"]
+    assert len(de_plano) == 1
+    assert de_plano[0].valor is None
+    assert "não declara código de alvo" in de_plano[0].descricao
 
 
 def test_codigo_de_borda_testado_nao_e_orfao() -> None:

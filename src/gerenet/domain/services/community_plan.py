@@ -120,8 +120,9 @@ def _peers_dos_snapshots(
         for linha in linhas:
             endereco = linha.get("peer")
             if endereco:
-                # `setdefault` pelo mesmo motivo do merge: a v4 vem antes da v6,
-                # e o alvo de pé em qualquer uma das duas está de pé.
+                # A chave é o endereço, então v4 e v6 nunca caem na mesma chave: o
+                # recurso traz uma linha por peer e família. O `setdefault` só cobre
+                # uma repetição dentro da mesma coleta.
                 estados.setdefault(endereco, linha.get("estado") or "ausente")
     return estados
 
@@ -610,7 +611,7 @@ def montar_plano_out(session: Session, plano: PlanoLido) -> PlanoOut:
     a classe que a checagem 1 acusa aplicada e não testada, e as duas superfícies
     da mesma tela se contradiriam sobre o mesmo plano.
     """
-    device_ids = list(session.scalars(select(models.DeviceSnapshot.device_id).distinct()).all())
+    device_ids = equipamentos_com_coleta(session)
     aplicam: dict[str, list[str]] = {}
     testam: dict[str, list[str]] = {}
     # As leituras são lidas uma vez e servem às duas pontas: a contagem de quem

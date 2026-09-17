@@ -211,6 +211,30 @@ def test_contingencia_nao_estoura_o_papel(db_session) -> None:
     assert gravado is not None and gravado.papel in models.TARGET_PAPEL
 
 
+def test_o_asn_do_par_nao_vira_codigo_do_alvo(db_session) -> None:
+    """R58: o código do alvo nasce vazio, e o ASN do par não toma o lugar dele.
+
+    O caminho inteiro — `propor_plano` → `adotar_plano` → `CommunityTarget` — é o
+    que levava o número errado ao dado durável: as duas colunas eram preenchidas
+    com o ASN da linha `peer ... as-number` da configuração (aqui, o 61587 do
+    grupo `PARCEIROS_CDN`), e é essa a coluna que as fatias seguintes consomem
+    (o corpo do export por alvo, §10.2). O alvo de pé na coleta é o do membro
+    `100.127.190.5`, que é o que faz a adoção gravar linha de alvo — sem ele a
+    lista volta vazia e a asserção não confere nada.
+    """
+    device = _device_com_snapshot(
+        db_session, "ne-plano-13", "comunidades_edge.txt",
+        peers=[{"peer": "100.127.190.5", "afi": "ipv4", "asn": 61587, "estado": "Established"}],
+    )
+    proposta = propor_adocao(db_session, device.id)
+    adotar_plano(db_session, proposta, device_id=device.id, snapshot_id=None, actor="ana")
+    db_session.commit()
+
+    alvos = db_session.scalars(select(models.CommunityTarget)).all()
+    assert [a.nome for a in alvos] == ["PARCEIROS_CDN"]
+    assert [(a.codigo_v4, a.codigo_v6) for a in alvos] == [(None, None)]
+
+
 def test_adocao_sem_asn_principal_recusa(db_session) -> None:
     """R31: proposta sem ASN principal recusa antes de escrever, não estoura o NOT NULL.
 

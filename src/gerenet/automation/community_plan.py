@@ -474,7 +474,30 @@ def _conferir_instrucoes(
     """Checagens 3 e 4: código órfão, alvo sem `community_targets` e ordem invertida."""
     achados: list[Achado] = []
     codigos_do_plano = {i.codigo for i in plano.instrucoes}
-    alvos_do_plano = {a.codigo_v4 for a in plano.alvos} | {a.codigo_v6 for a in plano.alvos}
+    # Só os códigos declarados: `None` é ausência de declaração, não um código que
+    # casa com qualquer coisa (R58).
+    alvos_do_plano = {
+        codigo
+        for alvo in plano.alvos
+        for codigo in (alvo.codigo_v4, alvo.codigo_v6)
+        if codigo is not None
+    }
+    if codigos_do_plano and not alvos_do_plano:
+        # Um achado por plano, não um por valor: o plano tem instruções e nenhum
+        # código de alvo declarado, então o alvo de todas elas é o mesmo
+        # desconhecido. A checagem não se cala — ela diz que não pôde conferir
+        # (R43/R47) — e não repete a linha para cada valor da configuração.
+        achados.append(
+            Achado(
+                codigo="alvo_sem_target", severidade="informativo",
+                descricao=(
+                    "o plano não declara código de alvo (nenhum alvo em "
+                    "community_targets tem codigo_v4/v6), então o alvo das "
+                    "instruções não é conferível"
+                ),
+                acao="declarar o código v4/v6 do alvo no plano",
+            )
+        )
     ordens: dict[tuple[int, int], dict[str, UsoCommunity]] = {}
     for leitura in leituras:
         for uso in leitura.usos:
@@ -500,7 +523,7 @@ def _conferir_instrucoes(
                             acao="cadastrar a instrução no vocabulário ou corrigir o código",
                         )
                     )
-                if alvo_numero not in alvos_do_plano and codigo in codigos_do_plano:
+                if alvos_do_plano and alvo_numero not in alvos_do_plano and codigo in codigos_do_plano:
                     achados.append(
                         Achado(
                             codigo="alvo_sem_target", severidade="informativo",
@@ -968,7 +991,14 @@ def propor_plano(
             alvos.append(
                 AlvoPlano(
                     nome=alvo_lido.nome, papel=papel,
-                    codigo_v4=alvo_lido.asn, codigo_v6=alvo_lido.asn,
+                    # Os dois códigos saem vazios de propósito, e não com o ASN do
+                    # par: o número do alvo (o `901` do GGC) é dado declarado, e o
+                    # que a leitura tem é o ASN da linha `peer ... as-number`. O
+                    # vínculo entre os dois — o `peer <ip> route-filter <filtro>
+                    # export` — é o mesmo que falta ao `parametros` abaixo. Quem
+                    # declara o código é o operador, na fatia de edição do plano
+                    # (R58).
+                    codigo_v4=None, codigo_v6=None,
                     gate_nome=_portao_do_papel(portoes, papel),
                     classe_import=_classe_da_importacao(papel, classes),
                     # `parametros` sai vazio de propósito: o bloco guardado por

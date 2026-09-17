@@ -82,9 +82,22 @@ def _device_com_config(
 
 def _numeros(texto: str) -> tuple[str, ...]:
     """Os três números do resumo da adoção (classes, portões e alvos em vigor)."""
-    achado = re.search(r"(\d+) classes, (\d+) portões, (\d+) alvos", texto)
+    achado = re.search(r"(\d+) classes?, (\d+) (?:portões|portão), (\d+) alvos?", texto)
     assert achado is not None, texto
     return achado.groups()
+
+
+def test_numeros_do_resumo_aceitam_o_singular() -> None:
+    """R45b: o `_contagem` do CLI flexiona, então o resumo com um item de cada sai no
+    singular — o regex do helper tem de casar as duas formas.
+
+    A linha é a forma que o `adotar` imprime de verdade
+    (`Plano adotado (id N): ASN <asn>, <classes>, <portões>, <alvos>.`,
+    `cli/community_plan.py:167-178`), com um item de cada.
+    """
+    assert _numeros("Plano adotado (id 7): ASN 61785, 1 classe, 1 portão, 1 alvo.") == (
+        "1", "1", "1"
+    )
 
 
 def test_show_sem_plano_avisa(db_session) -> None:

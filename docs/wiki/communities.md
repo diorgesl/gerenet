@@ -23,7 +23,7 @@ isto, e se alguém a está testando?
 |---|---|
 | Classes | O valor de 2 bytes por família, a banda e o nome no namespace clássico (ex.: `com-TECMAIS-v4`, `3001`/`3101`). |
 | Instruções | A large-community `61785:<código>:<alvo>`: proveniência, blackhole, cliente marcado, marca ERTEL e prepend. |
-| Alvos | O grupo de peer (ou a sessão) que recebe a classe, com o papel, o código v4/v6 e o portão que o atende. |
+| Alvos | O grupo de peer (ou a sessão) que recebe a classe, com o papel, o código v4/v6 (declarado no plano, não lido da configuração) e o portão que o atende. |
 | Portões | O filtro `RouteExportCheck*` que testa as classes, com o papel (`upstream`, `cdn`, `parceiro`, `ix`), o AFI e o que cada um aceita e recusa. |
 | Regras de importação | Qual classe cada papel aplica na entrada (`cliente`, `parceiro`, `transito`). |
 
@@ -62,12 +62,20 @@ Seis divergências nascem na proposta, para o operador decidir:
 - a definição numerada que define um valor de classe sem nomear a classe (o
   número é o índice da lista, não um nome).
 
-Um sétimo achado, o **membro de portão sem classe**, também é do operador: a
-lista do portão guarda ids de `communities`, e um valor testado que não tem linha
-de classe não teria id para gravar — ele sairia do portão adotado em silêncio. Ele
-aparece na saída do `adotar` e no corpo do `201` da adoção, no `validar` do CLI e
-na resposta de `GET /api/v1/communities/plan/validacao`, que é o mesmo que o painel
-de divergências da página mostra.
+Um sétimo achado, o **membro de portão sem classe**, também é do operador, **para ele
+declarar a classe ou confirmar que o valor sai do portão**: a lista do portão guarda ids
+de `communities`, e um valor testado que não tem linha de classe não teria id para
+gravar — ele sairia do portão adotado em silêncio. Ele aparece na saída do `adotar` e no
+corpo do `201` da adoção, no `validar` do CLI e na resposta de
+`GET /api/v1/communities/plan/validacao`, que é o mesmo que o painel de divergências da
+página mostra.
+
+O código v4/v6 do alvo é **declarado**, não lido. A configuração dá o ASN do grupo
+(`peer <grupo> as-number <asn>`) e dá o número do alvo nos valores de large-community que
+ele aplica, mas o que liga um ao outro — o `peer <ip> route-filter <filtro> export` — não
+está na leitura. A adoção grava o alvo com os dois códigos vazios; declará-los é da fatia
+de edição do plano. Enquanto não houver código declarado, a validação avisa que o alvo
+das instruções não é conferível.
 
 A poda também é regra: sessão que não está Established não vira alvo, e vai para
 uma lista de "configurado e parado" que o `adotar` imprime. E a adoção é
@@ -130,7 +138,9 @@ As oito checagens rodam sobre o plano e as leituras da configuração coletada:
 2. **Conformidade com a partição.** Valor fora da faixa da banda, dígito de
    família incoerente com o filtro, valor repetido em duas classes.
 3. **Instrução órfã.** Código de large-community usado nos filtros sem linha no
-   vocabulário, e código de alvo sem `community_targets`.
+   vocabulário, e código de alvo sem `community_targets` — que sai também uma vez,
+   com escopo de plano, quando o plano não declara código de alvo nenhum: aí o alvo
+   das instruções não é conferível.
 4. **Ordem da large-community.** O vocabulário fixa `61785:<código>:<alvo>`; o
    valor que só aparece na ordem invertida é apontado.
 5. **Colisão entre namespaces.** O mesmo 2 bytes definido com dois nomes de
