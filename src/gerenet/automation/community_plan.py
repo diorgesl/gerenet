@@ -788,21 +788,6 @@ def _codigos_de_classe(valores: Sequence[str]) -> list[int]:
     return codigos
 
 
-def _forca_do_nome(nome: str | None) -> int:
-    """Quanto um nome de definição pesa quando duas definições dão o mesmo código.
-
-    O nome do vocabulário (`com-`) vence os outros nomes, e entre iguais vence a
-    primeira definição do arquivo. A definição numerada (`ip community-filter 2`)
-    não tem nome — e é isso que ela carrega aqui: nada, a força menor de todas,
-    para não nomear classe nenhuma (R23).
-    """
-    if nome is None:
-        return -1
-    if nome.isdigit():
-        return 0
-    return 2 if nome.startswith("com-") else 1
-
-
 def propor_plano(
     leituras: Sequence[LeituraCommunities],
     *,
@@ -823,31 +808,34 @@ def propor_plano(
 
     # 1. As classes: os valores de 2 bytes definidos ou aplicados, um por código.
     # O nome de uma classe exige definição **nomeada** (§9, passo 1): a definição
-    # numerada, que não tem nome, dá o código à classe e não dá nome nenhum — é
-    # `None` aqui, e o número que identifica o filtro não vira nome (R23).
-    origens: dict[int, str | None] = {}
+    # numerada (`ip community-filter 2`) não tem nome — o `2` é o índice da lista
+    # —, e o que ela define não nomeia classe nenhuma. Nada se perde por isso: os
+    # valores que ficam de fora saem em `definicao_sem_nome` (R25).
+    nomes: dict[int, str] = {}
     for leitura in leituras:
         avisos.extend(leitura.avisos)
         for definicao in leitura.definicoes:
-            if definicao.classe != "community":
+            if definicao.classe != "community" or definicao.nome.isdigit():
                 continue
-            nome = None if definicao.nome.isdigit() else definicao.nome
             for codigo in _codigos_de_classe(definicao.valores):
-                if codigo not in origens or _forca_do_nome(nome) > _forca_do_nome(origens[codigo]):
-                    origens[codigo] = nome
+                atual = nomes.get(codigo)
+                # O nome do vocabulário (`com-`) vence os outros nomes; entre
+                # iguais, vence a primeira definição do arquivo.
+                if atual is None or (
+                    definicao.nome.startswith("com-") and not atual.startswith("com-")
+                ):
+                    nomes[codigo] = definicao.nome
+    # O valor aplicado que definição nenhuma nomeia sai na convenção do módulo,
+    # `com-<código>` — aqui o código é tudo o que o dado dá.
     for leitura in leituras:
         for uso in leitura.usos:
             if uso.operacao != "aplica" or uso.valores or not uso.corpus:
                 continue
             for codigo in _codigos_de_classe(leitura.valores_do_corpus(uso.corpus)):
-                origens.setdefault(codigo, None)
-    # Sem nome de definição — a numerada, ou o valor aplicado que definição
-    # nenhuma nomeia — o código sai na convenção do módulo, `com-<código>`.
+                nomes.setdefault(codigo, f"com-{codigo}")
     evidencias = {
-        codigo: _EvidenciaDaClasse(
-            nome=origem if origem else f"com-{codigo}", banda=_banda_da_faixa(codigo)
-        )
-        for codigo, origem in origens.items()
+        codigo: _EvidenciaDaClasse(nome=nome, banda=_banda_da_faixa(codigo))
+        for codigo, nome in nomes.items()
     }
 
     classes: list[ClassePlano] = []
@@ -993,8 +981,10 @@ def propor_plano(
                 )
             )
 
-    # 5. As exceções: os blocos que a leitura não sabe a que alvo pertencem.
+    # 5. As pendências da leitura: os blocos que ela não sabe a que alvo
+    # pertencem (R22) e as definições sem nome, que não viram classe (R25).
     divergencias.extend(_excecoes_sem_alvo(leituras))
+    divergencias.extend(_definicoes_sem_nome(leituras))
 
     regras = _regras_de_importacao(classes)
     plano = PlanoLido(
@@ -1098,6 +1088,45 @@ def _excecoes_sem_alvo(leituras: Sequence[LeituraCommunities]) -> list[Achado]:
         )
         for (filtro, condicao), (linha, aplicadas) in blocos.items()
     ]
+
+
+def _definicoes_sem_nome(leituras: Sequence[LeituraCommunities]) -> list[Achado]:
+    """As definições numeradas, e o que elas definem sem nomear classe (§9, R25).
+
+    `ip community-filter 2 index 20 permit 65332:888` não tem nome: o `2` é o
+    índice da lista. A §9 tira as classes das `community-filter` **nomeadas**, e
+    a saída sintética (`com-888`) seria um nome que o equipamento não tem — na
+    adoção (T6) ele viraria linha do catálogo `communities` batizada com o código
+    do par remoto, e a §6.1 usa `com-<SEMÂNTICA>`, com o código num campo
+    próprio. O valor não se perde: sai aqui como pendência, para o operador dizer
+    se é classe da casa — e, se for, batizá-la.
+
+    Um achado por definição, deduplicado como `excecao_sem_alvo` (R22): a mesma
+    definição lida duas vezes não multiplica pendência.
+    """
+    pendentes: dict[tuple[str, int | None, str], Achado] = {}
+    for leitura in leituras:
+        for definicao in leitura.definicoes:
+            if definicao.classe != "community" or not definicao.nome.isdigit():
+                continue
+            valor = ", ".join(v for v in definicao.valores if _e_valor_de_classe(v))
+            if not valor:  # `permit no-export`, `permit 888`: nada de classe se perdeu
+                continue
+            linha = definicao.linhas[0] if definicao.linhas else None
+            pendentes.setdefault(
+                (definicao.nome, linha, valor),
+                Achado(
+                    codigo="definicao_sem_nome", severidade="atencao",
+                    valor=valor, filtro=definicao.nome, linha=linha,
+                    descricao=(
+                        f"`{definicao.sintaxe} {definicao.nome}` define {valor} sem nome de "
+                        "definição: o número é o índice da lista, e a §9 tira as classes das "
+                        "definições nomeadas — o valor fica fora da proposta"
+                    ),
+                    acao="confirmar se é classe da casa e, se for, nomeá-la (§6.1)",
+                ),
+            )
+    return list(pendentes.values())
 
 
 def _regras_de_importacao(classes: Sequence[ClassePlano]) -> tuple[RegraImportPlano, ...]:

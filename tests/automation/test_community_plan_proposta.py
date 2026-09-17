@@ -196,30 +196,74 @@ bgp 61785
     assert "15169:12001" in achados[0].descricao
 
 
-def test_a_definicao_numerada_nao_nomeia_classe() -> None:
-    """R23: `ip community-filter 2` não tem nome, e o número não vira nome de classe.
+def test_a_definicao_numerada_nao_origina_classe() -> None:
+    """R25: `ip community-filter 2` não tem nome, e o que ela define não vira classe.
 
-    O código segue como evidência do valor — a definição numerada não some da
-    proposta —, e o nome sai na convenção do valor sem nome, `com-<código>`.
-    O valor de um campo só (`888`) não é classe e continua barrado.
+    `com-888` e `com-0` seriam nomes que o equipamento não tem — na adoção (T6)
+    viram linhas do catálogo `communities` batizadas com o código do par remoto —,
+    e o valor não some por isso: sai em `definicao_sem_nome`. A definição nomeada
+    ao lado continua dando a classe dela, e o valor de um campo só (`888`) segue
+    barrado por `_e_valor_de_classe`.
+    """
+    texto = """
+ip community-filter 2 index 10 permit 888
+ip community-filter 2 index 20 permit 65332:888
+ip community-filter 5 index 10 permit 64496:0
+ip community-filter advanced com-SPARKLE index 10 permit 65332:889
+"""
+    proposta = propor_plano([parse_communities_vrp(texto)], asn_principal=61785)
+    nomes = {c.nome for c in proposta.plano.classes}
+    assert "com-888" not in nomes
+    assert "com-0" not in nomes
+    assert [(c.nome, c.valor_v4) for c in proposta.plano.classes] == [("com-SPARKLE", 889)]
+
+
+def test_a_definicao_sem_nome_sai_como_achado() -> None:
+    """R25: a definição numerada sai como pendência, com o valor e a linha do equipamento.
+
+    O achado é um por definição, e só quando há valor de classe a perder: o
+    `888` de um campo só não é classe e não gera pendência nenhuma.
     """
     texto = """
 ip community-filter 2 index 10 permit 888
 ip community-filter 2 index 20 permit 65332:888
 """
     proposta = propor_plano([parse_communities_vrp(texto)], asn_principal=61785)
-    assert [(c.nome, c.valor_v4) for c in proposta.plano.classes] == [("com-888", 888)]
+    achados = [d for d in proposta.divergencias if d.codigo == "definicao_sem_nome"]
+    assert len(achados) == 1
+    achado = achados[0]
+    assert achado.valor == "65332:888"
+    assert achado.linha == 3
+    assert achado.filtro == "2"
+    assert achado.severidade == "atencao"
+    assert "65332:888" in achado.descricao
 
 
-def test_o_nome_do_vocabulario_vence_o_numerado() -> None:
-    """R23: a numerada entra primeiro e a nomeada depois, e o nome do vocabulário vence.
-
-    O registro é reconstruído, e não mutado: o `_EvidenciaDaClasse` é congelado, e
-    a mutação que existia aqui estourava o `propor_plano` em vez de renomear.
-    """
+def test_o_achado_da_definicao_sem_nome_e_um_por_definicao() -> None:
+    """R25: a dedup é pela definição. A mesma leitura duas vezes dá **um** achado,
+    e duas definições numeradas dão dois — uma por bloco, como no R22."""
     texto = """
 ip community-filter 2 index 20 permit 65332:888
-ip community-filter advanced com-SPARKLE index 10 permit 65332:888
+ip community-filter 5 index 10 permit 64496:0
+"""
+    leitura = parse_communities_vrp(texto)
+    proposta = propor_plano([leitura, leitura], asn_principal=61785)
+    achados = [d for d in proposta.divergencias if d.codigo == "definicao_sem_nome"]
+    assert len(achados) == 2
+    assert {a.valor for a in achados} == {"65332:888", "64496:0"}
+
+
+def test_o_nome_do_vocabulario_vence_os_outros() -> None:
+    """R25: o que sobrou da escala de força — `com-` vence os outros nomes, mesmo
+    vindo depois, e entre iguais vence a primeira definição do arquivo."""
+    texto = """
+ip community-filter advanced SPARKLE-OLD index 10 permit 65332:888
+ip community-filter advanced com-SPARKLE index 20 permit 65332:888
+ip community-filter advanced AAA index 30 permit 65332:889
+ip community-filter advanced BBB index 40 permit 65332:889
 """
     proposta = propor_plano([parse_communities_vrp(texto)], asn_principal=61785)
-    assert [(c.nome, c.valor_v4) for c in proposta.plano.classes] == [("com-SPARKLE", 888)]
+    assert [(c.nome, c.valor_v4) for c in proposta.plano.classes] == [
+        ("com-SPARKLE", 888),
+        ("AAA", 889),
+    ]
