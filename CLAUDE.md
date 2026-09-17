@@ -509,5 +509,33 @@ As decisões de implementação do §25 foram **registradas em 2026-09-02** na p
   equipamento, nem pelas duas direções de um só — a adoção recusa (a transação
   volta inteira) e a saída é o botão de limpar, e o render continua emitindo os
   dois blocos sob o mesmo nome quando o caso chega por outro caminho.
+- Plano de communities — F1 (2026-09-17): o plano virou dado na SoT — `communities`
+  ganhou `valor_v4`/`valor_v6`/`codigo`/`banda`/`origem` (+ `origem_snapshot_id`) e
+  nasceram `community_plans` (uma linha ativa; UNIQUE parcial em `admin_status`),
+  `community_targets`, `community_gates` e `community_import_rules` (migração
+  `alembic/versions/01298554f339_plano_de_communities.py`).
+  A partição da spec §5 está em `domain/communities_partition.py` (faixas, exceções
+  nomeadas e `conferir_linha`; a escrita só recusa valor na família errada — o resto é
+  exceção legítima que a validação aponta). Leitor novo
+  `automation/parsers/huawei_vrp/communities_vrp.py` (definições, quem aplica, quem
+  testa, citações sem definição e grupos de peer — o `config_vrp.py` descarta
+  `peer <nome-de-grupo>` de propósito), motor `automation/community_plan.py` com o
+  `VOCABULARIO` da §6, a proposta (poda de sessão parada, divergências de código
+  ambíguo, nome × faixa e papel duvidoso) e `validar` com as oito checagens da §8 —
+  a checagem 1 compara **valor literal** (`61785:3001` ≠ `65000:3001`), que é o que
+  produz o achado principal da §8.1. Serviço `domain/services/community_plan.py`
+  (adoção numa transação só, **idempotente por ASN principal** — a segunda devolve o
+  plano em vigor e diz que nada gravou, e plano ativo de outro ASN principal é
+  recusado com 409; audit `community_plan.adopt`), que acrescenta à proposta o
+  `portao_membro_sem_classe` — o membro de portão sem linha de classe, que não teria
+  id para gravar e sairia do portão adotado em silêncio (aparece no `adotar` do CLI e
+  no corpo do `201` da adoção). API `/api/v1/communities/plan` (GET, GET
+  `/validacao`, POST `/adopt`), CLI `gerenet communities plan show|validar|adotar`
+  (o `validar` exige coleta legível para atestar alinhamento e sai 1 sem ela; sai 1
+  também com achado crítico) e `communities list` com valor v4/v6 e banda; a página
+  `Comunidades · Plano` (`/communities/plan`), com cabeçalho, classes com quem aplica
+  × quem testa, matriz classe × papel, alvos e o painel de divergências. O render
+  **não** mudou nesta fatia (§3); a unificação de `upstream_communities` e a edição
+  do plano pela web ficam para F3/F2. Wiki: `/wiki/communities`.
 - Convenções previstas no `.gitignore`: Python com venv e pytest (`.venv/`, `.pytest_cache/`), deploy via Docker Compose (`compose.yaml` na raiz) com `.env` ignorado (o `.gitignore` ainda prevê `deploy/docker/.env`), `config.yaml` local com segredos **fora do repositório**, logs em `logs/` ignorados.
 - `.claude/settings.local.json` contém token e aponta o harness para uma API externa: é arquivo local — não versionar nem alterar.
