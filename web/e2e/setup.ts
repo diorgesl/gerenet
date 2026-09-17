@@ -424,11 +424,10 @@ return
 
 /** Desativa as sessões ativas do equipamento do fumo da descoberta.
  *
- * A adoção de cada rodada grava UMA sessão na SoT, e a §14.1 admite uma única
- * sessão ativa por (equipamento, VRF, família): na rodada seguinte a adoção
- * bateria na sessão ativa da rodada anterior e o fumo morreria com 409 — um
- * e2e que só passa em banco limpo não serve. Desativar é o caminho da operação
- * para tirar uma sessão de cena (sessão não se exclui), e o circuito da rodada
+ * Cada rodada deixa uma sessão ativa no equipamento próprio do fumo; desativá-las
+ * antes da rodada seguinte mantém o equipamento limpo entre repetições — um e2e
+ * que só passa em banco limpo não serve. Desativar é o caminho da operação para
+ * tirar uma sessão de cena (sessão não se exclui), e o circuito da rodada
  * anterior fica como ficou.
  */
 async function desativarSessoesDoFumo(deviceId: number): Promise<void> {
