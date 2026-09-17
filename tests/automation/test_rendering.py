@@ -189,8 +189,7 @@ def test_render_export_default_med_prepend_e_dividas(db_session: Session) -> Non
     assert "apply med 50" in texto
     assert "apply as-path 64600 64600 additive" in texto  # asn_local = ASN do device
 
-    # vrf próprio evita a regra de singularidade (device+VRF+afi) no segundo
-    # ipv4 ativo do mesmo edge; o render não diferencia VRF (§25.3)
+    # vrf próprio no segundo ipv4 do mesmo edge; o render não diferencia VRF (§25.3)
     circ_d = _circuito_reservado(db_session, env, code="CIRC-R-5", stack="ipv4", vrf="vpn-render")
     _sessao(db_session, env, circ_d, afi="ipv4", export_profile_id=perfis["default_internas"])
     texto2 = render_desejado(db_session, env["ne_id"]).texto

@@ -66,7 +66,7 @@ export const HELP = {
   // BGP sessions
   "bgp.circuit_id": "Circuito/serviço atendido pela sessão. Ao selecionar, o formulário preenche automaticamente o equipamento edge, os ASNs local/remoto e as pontas do enlace reservado (conforme a família — sem máscara).",
   "bgp.device_id": "Equipamento onde o peering é configurado (instância pública).",
-  "bgp.afi": "Família da sessão: ipv4 ou ipv6 — uma sessão por família; sem duplicar device+VRF+família.",
+  "bgp.afi": "Família da sessão: ipv4 ou ipv6, uma sessão por família. Várias sessões podem conviver no mesmo equipamento e VRF; o que não se repete é o peer (o endereço remoto) na mesma VRF.",
   "bgp.local_address": "Endereço local do enlace p2p, sem máscara (v4 e v6) — a máscara identifica o enlace reservado; na sessão informe apenas o endereço da ponta.",
   "bgp.remote_address": "Endereço do peer no enlace p2p, sem máscara (v4 e v6) — a máscara identifica o enlace reservado; na sessão informe apenas o endereço da ponta.",
   "bgp.source_address": "Endereço usado como source do peering quando difere do endereço do enlace (opcional).",

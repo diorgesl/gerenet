@@ -128,12 +128,12 @@ def test_erros_de_criacao(client: TestClient, db_session: Session) -> None:
     circ = _circuito(client, env, "CIRC-1003")
     _sessao(client, env, circ, local="100.64.3.1", remote="100.64.3.2")
 
-    # mesmo (device, VRF, afi): 409
+    # mesmo peer (device, VRF): 409
     dup = client.post(
         "/api/v1/bgp-sessions",
         json={
             "circuit_id": circ, "device_id": env["ne1_id"], "afi": "ipv4",
-            "local_address": "100.64.3.3", "remote_address": "100.64.3.4",
+            "local_address": "100.64.3.3", "remote_address": "100.64.3.2",
         },
         headers=_auth(),
     )

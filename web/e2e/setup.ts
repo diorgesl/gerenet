@@ -277,12 +277,10 @@ async function seed(): Promise<void> {
   // Equipamento do fumo da descoberta — SEPARADO do `ne8000-01` de propósito. A
   // adoção grava a sessão do enlace no equipamento DA PROPOSTA
   // (`adotar_proposta` → `create_session(device_id=proposta.device_id)`), e a
-  // §14.1 admite uma única sessão ativa por (equipamento, VRF, família) — o
-  // circuito da operadora acima já tem uma sessão ipv4 ativa no `ne8000-01` na
-  // VRF pública. Com a proposta lida daquele equipamento, a adoção do fumo seria
-  // recusada com 409 ("já existe sessão ipv4 ativa") e não haveria o que
-  // exercitar. O nome evita o prefixo do outro (`/ne8000-01/` casa por substring
-  // nas linhas das outras páginas).
+  // rodada desativa as sessões do equipamento da proposta antes de cada
+  // repetição — com o equipamento próprio, isso não encosta no `ne8000-01`, que
+  // atende aos outros fumos. O nome evita o prefixo do outro (`/ne8000-01/` casa
+  // por substring nas linhas das outras páginas).
   const idEquipDisco = await criarOuAchar("/devices", "ne8000-disco-01", {
     name: "ne8000-disco-01",
     management_address: "10.99.99.2",
@@ -426,11 +424,10 @@ return
 
 /** Desativa as sessões ativas do equipamento do fumo da descoberta.
  *
- * A adoção de cada rodada grava UMA sessão na SoT, e a §14.1 admite uma única
- * sessão ativa por (equipamento, VRF, família): na rodada seguinte a adoção
- * bateria na sessão ativa da rodada anterior e o fumo morreria com 409 — um
- * e2e que só passa em banco limpo não serve. Desativar é o caminho da operação
- * para tirar uma sessão de cena (sessão não se exclui), e o circuito da rodada
+ * Cada rodada deixa uma sessão ativa no equipamento próprio do fumo; desativá-las
+ * antes da rodada seguinte mantém o equipamento limpo entre repetições — um e2e
+ * que só passa em banco limpo não serve. Desativar é o caminho da operação para
+ * tirar uma sessão de cena (sessão não se exclui), e o circuito da rodada
  * anterior fica como ficou.
  */
 async function desativarSessoesDoFumo(deviceId: number): Promise<void> {

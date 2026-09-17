@@ -1,8 +1,7 @@
 """Sessões BGP por família (§6.3) — SoT da intenção de downstreams.
 
 Regras de unicidade do §14.1 em serviço (sem constraints UNIQUE — spec §5):
-linha (device+VRF+afi) e par (local, remoto). A Task 5 acrescenta
-update_session/disable_session/add_community/remove_community a este arquivo.
+peer (device+VRF, pelo endereço remoto) e par (local, remoto).
 """
 import ipaddress
 
@@ -53,23 +52,35 @@ def _vrf_texto(circuito: models.Circuit) -> str:
     return circuito.vrf or "pública"
 
 
-def _colidente_linha(
-    session: Session, *, device_id: int, afi: str, vrf: str | None, ignorar_id: int | None = None
+def _colidente_peer(
+    session: Session,
+    *,
+    device_id: int,
+    vrf: str | None,
+    remote_address: str,
+    ignorar_id: int | None = None,
 ) -> models.BgpSession | None:
-    """Outra sessão ativa no mesmo (device, VRF do circuito, afi) — spec §4."""
+    """Outra sessão ativa com o mesmo peer no mesmo (device, VRF do circuito).
+
+    Spec §14.1: no VRP o peer é o endereço do vizinho dentro da instância, e a
+    instância é a VRF. Dois blocos `peer <ip>` no mesmo contexto viram um peer
+    só, configurado pelo último; a família fica implícita no endereço.
+    """
+    alvo = int(ipaddress.ip_address(remote_address))
     stmt = (
         select(models.BgpSession, models.Circuit)
         .join(models.Circuit, models.BgpSession.circuit_id == models.Circuit.id)
         .where(
             models.BgpSession.admin_status.is_(True),
             models.BgpSession.device_id == device_id,
-            models.BgpSession.afi == afi,
         )
     )
     for outra, circ in session.execute(stmt):
         if outra.id == ignorar_id:
             continue
-        if circ.vrf == vrf:
+        if circ.vrf != vrf:
+            continue
+        if int(ipaddress.ip_address(outra.remote_address)) == alvo:
             return outra
     return None
 
@@ -181,12 +192,12 @@ def create_session(
     if data.export_profile_id is not None:
         _valida_perfil(session, data.export_profile_id, "exportação")
 
-    if _colidente_linha(
-        session, device_id=data.device_id, afi=data.afi, vrf=circ.vrf
+    if _colidente_peer(
+        session, device_id=data.device_id, vrf=circ.vrf, remote_address=data.remote_address
     ) is not None:
         raise ConflictError(
-            f"Já existe sessão {data.afi} ativa no equipamento {device.name} "
-            f"(VRF {_vrf_texto(circ)})."
+            f"Já existe sessão ativa no equipamento {device.name} para o peer "
+            f"{data.remote_address} (VRF {_vrf_texto(circ)})."
         )
     if _colidente_par(
         session, local_address=data.local_address, remote_address=data.remote_address
@@ -321,11 +332,12 @@ def update_session(
         if perfil_id is not None:
             _valida_perfil(session, perfil_id, uso)
 
-    if _colidente_linha(
-        session, device_id=device_id, afi=afi, vrf=circ.vrf, ignorar_id=sessao.id
+    if _colidente_peer(
+        session, device_id=device_id, vrf=circ.vrf, remote_address=remote, ignorar_id=sessao.id
     ) is not None:
         raise ConflictError(
-            f"Já existe sessão {afi} ativa no equipamento {device.name} (VRF {_vrf_texto(circ)})."
+            f"Já existe sessão ativa no equipamento {device.name} para o peer "
+            f"{remote} (VRF {_vrf_texto(circ)})."
         )
     if _colidente_par(
         session, local_address=local, remote_address=remote, ignorar_id=sessao.id

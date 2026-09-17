@@ -622,7 +622,10 @@ Entidades sugeridas:
 - endereços e prefixos não poderão se sobrepor indevidamente no mesmo domínio;
 - VLAN deverá ser única dentro do escopo definido;
 - VC-ID e VSI-ID deverão respeitar unicidade por domínio;
-- uma sessão BGP não poderá ser duplicada no mesmo equipamento, VRF/VS e família;
+- uma sessão BGP não poderá ser duplicada: o mesmo peer (endereço remoto) não
+  pode estar ativo duas vezes na mesma VRF de um equipamento, nem o par
+  local/remoto ativo em dois lugares; mais de uma sessão no mesmo equipamento e
+  família é legítima, o que as distingue é o peer;
 - objetos em uso não poderão ser excluídos fisicamente, apenas desativados;
 - segredos nunca deverão aparecer em logs, snapshots ou auditorias.
 

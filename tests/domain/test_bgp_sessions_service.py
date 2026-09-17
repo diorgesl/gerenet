@@ -174,14 +174,92 @@ def test_endereco_de_familia_errada_rejeitado(db_session: Session) -> None:
         )
 
 
-def test_duplicidade_mesmo_device_vrf_afi(db_session: Session) -> None:
+def test_varias_sessoes_no_mesmo_device_vrf_familia(db_session: Session) -> None:
+    """Dois enlaces no mesmo equipamento, VRF e família, com peers distintos."""
     env = _ambiente(db_session)
     circ1 = _circuito(db_session, env, code="CIRC-0007", edge_id=env["ne1_id"], vrf="CLIENTE-A")
-    create_session(db_session, _sessao_data(env, circ1, env["ne1_id"]), actor="cli")
-    # mesmo device+VRF+afi em outro circuito → conflito
     circ2 = _circuito(db_session, env, code="CIRC-0008", edge_id=env["ne1_id"], vrf="CLIENTE-A")
-    with pytest.raises(ConflictError, match="Já existe sessão ipv4 ativa no equipamento ne8k-bgp1"):
-        create_session(db_session, _sessao_data(env, circ2, env["ne1_id"]), actor="cli")
+    a = create_session(db_session, _sessao_data(env, circ1, env["ne1_id"]), actor="cli")
+    b = create_session(
+        db_session,
+        _sessao_data(env, circ2, env["ne1_id"], local="100.64.0.5", remote="100.64.0.6"),
+        actor="cli",
+    )
+    ativas = {s.id for s in list_sessions(db_session, device_id=env["ne1_id"])}
+    assert ativas == {a.id, b.id}
+
+
+def test_mesmo_peer_no_mesmo_device_vrf_colide(db_session: Session) -> None:
+    env = _ambiente(db_session)
+    circ1 = _circuito(db_session, env, code="CIRC-0040", edge_id=env["ne1_id"], vrf="CLIENTE-A")
+    circ2 = _circuito(db_session, env, code="CIRC-0041", edge_id=env["ne1_id"], vrf="CLIENTE-A")
+    create_session(db_session, _sessao_data(env, circ1, env["ne1_id"]), actor="cli")
+    # o mesmo endereço remoto, em outro circuito e na mesma VRF, é o mesmo peer
+    with pytest.raises(
+        ConflictError,
+        match=r"Já existe sessão ativa no equipamento ne8k-bgp1 para o peer 100\.64\.0\.2",
+    ):
+        create_session(
+            db_session,
+            _sessao_data(env, circ2, env["ne1_id"], local="100.64.0.9", remote="100.64.0.2"),
+            actor="cli",
+        )
+
+
+def test_mesmo_peer_em_vrf_diferente_convive(db_session: Session) -> None:
+    env = _ambiente(db_session)
+    circ_a = _circuito(db_session, env, code="CIRC-0042", edge_id=env["ne1_id"], vrf="CLIENTE-A")
+    circ_b = _circuito(db_session, env, code="CIRC-0043", edge_id=env["ne1_id"])
+    create_session(db_session, _sessao_data(env, circ_a, env["ne1_id"]), actor="cli")
+    sessao = create_session(
+        db_session,
+        _sessao_data(env, circ_b, env["ne1_id"], local="100.64.0.9", remote="100.64.0.2"),
+        actor="cli",
+    )
+    assert sessao.id  # a VRF é parte da identidade do peer no VRP
+
+
+def test_mesmo_peer_em_outra_grafia_colide(db_session: Session) -> None:
+    """`2804:194c::2` e `2804:194c:0:0:0:0:0:2` são o mesmo peer."""
+    env = _ambiente(db_session)
+    circ1 = _circuito(db_session, env, code="CIRC-0044", edge_id=env["ne1_id"], vrf="CLIENTE-A")
+    circ2 = _circuito(db_session, env, code="CIRC-0045", edge_id=env["ne1_id"], vrf="CLIENTE-A")
+    create_session(
+        db_session,
+        _sessao_data(
+            env, circ1, env["ne1_id"], afi="ipv6",
+            local="2804:194c::1", remote="2804:194c::2",
+        ),
+        actor="cli",
+    )
+    # O endereço remoto é o mesmo escrito de outro jeito; o local é diferente, então o
+    # conjunto do par não bate e um 409 só pode vir do `_colidente_peer`.
+    with pytest.raises(
+        ConflictError,
+        match=r"para o peer 2804:194c:0:0:0:0:0:2",
+    ):
+        create_session(
+            db_session,
+            _sessao_data(
+                env, circ2, env["ne1_id"], afi="ipv6",
+                local="2804:194c::9", remote="2804:194c:0:0:0:0:0:2",
+            ),
+            actor="cli",
+        )
+
+
+def test_mesmo_peer_em_outro_equipamento_convive(db_session: Session) -> None:
+    """O peer é do equipamento: o mesmo endereço remoto em outro roteador convive."""
+    env = _ambiente(db_session)
+    circ1 = _circuito(db_session, env, code="CIRC-0046", edge_id=env["ne1_id"])
+    create_session(db_session, _sessao_data(env, circ1, env["ne1_id"]), actor="cli")
+    circ2 = _circuito(db_session, env, code="CIRC-0047", edge_id=env["ne2_id"])
+    sessao = create_session(
+        db_session,
+        _sessao_data(env, circ2, env["ne2_id"], local="100.64.0.9", remote="100.64.0.2"),
+        actor="cli",
+    )
+    assert sessao.id
 
 
 def test_vrfs_diferentes_convivem_no_mesmo_device(db_session: Session) -> None:
@@ -201,8 +279,16 @@ def test_duplicidade_mensagem_vrf_publica(db_session: Session) -> None:
     circ1 = _circuito(db_session, env, code="CIRC-0011", edge_id=env["ne1_id"])
     create_session(db_session, _sessao_data(env, circ1, env["ne1_id"]), actor="cli")
     circ2 = _circuito(db_session, env, code="CIRC-0012", edge_id=env["ne1_id"])
-    with pytest.raises(ConflictError, match=r"VRF pública"):
-        create_session(db_session, _sessao_data(env, circ2, env["ne1_id"], local="100.64.0.9", remote="100.64.0.10"), actor="cli")
+    with pytest.raises(
+        ConflictError,
+        match=r"Já existe sessão ativa no equipamento ne8k-bgp1 para o peer 100\.64\.0\.2 "
+        r"\(VRF pública\)",
+    ):
+        create_session(
+            db_session,
+            _sessao_data(env, circ2, env["ne1_id"], local="100.64.0.9", remote="100.64.0.2"),
+            actor="cli",
+        )
 
 
 def test_duplicidade_do_par_e_global_inclusive_invertido(db_session: Session) -> None:
@@ -417,21 +503,24 @@ def test_update_colide_com_outra_sessao(db_session: Session) -> None:
     env = _ambiente(db_session)
     circ_a = _circuito(db_session, env, code="CIRC-0035", edge_id=env["ne1_id"], vrf="CLIENTE-A")
     create_session(db_session, _sessao_data(env, circ_a, env["ne1_id"]), actor="cli")
-    # segunda sessão em VRF diferente convive…
-    circ_b = _circuito(db_session, env, code="CIRC-0036", edge_id=env["ne1_id"])
+    # segunda sessão, mesmo equipamento e VRF, com peer próprio
+    circ_b = _circuito(db_session, env, code="CIRC-0036", edge_id=env["ne1_id"], vrf="CLIENTE-A")
     sessao_b = create_session(
         db_session,
         _sessao_data(env, circ_b, env["ne1_id"], local="100.64.2.1", remote="100.64.2.2"),
         actor="cli",
     )
-    # …mas mudar a sessão B para a VRF CLIENTE-A colide com a sessão A
-    with pytest.raises(ConflictError, match="Já existe sessão ipv4 ativa no equipamento ne8k-bgp1"):
+    # …mudar o peer da sessão B para o da sessão A colide
+    with pytest.raises(
+        ConflictError,
+        match=r"Já existe sessão ativa no equipamento ne8k-bgp1 para o peer 100\.64\.0\.2",
+    ):
         update_session(
-            db_session, sessao_b.id, BgpSessionUpdate(circuit_id=circ_a), actor="cli"
+            db_session, sessao_b.id, BgpSessionUpdate(remote_address="100.64.0.2"), actor="cli"
         )
 
 
-def test_update_mantem_a_propria_linha_fora_da_colisao(db_session: Session) -> None:
+def test_update_mantem_a_propria_sessao_fora_da_colisao(db_session: Session) -> None:
     env = _ambiente(db_session)
     circ_id = _circuito(db_session, env, code="CIRC-0037", edge_id=env["ne1_id"])
     sessao = create_session(db_session, _sessao_data(env, circ_id, env["ne1_id"]), actor="cli")
