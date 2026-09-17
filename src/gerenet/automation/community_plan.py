@@ -11,6 +11,7 @@ entre o filtro que aplica e o portão que testa que produz o achado principal da
 §8.1. O rótulo do achado vem da classe do código, para o relatório falar a
 língua do operador.
 """
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 
@@ -235,21 +236,48 @@ def _ordem_do_valor(valor: str) -> str | None:
     return None
 
 
-def _afi_do_filtro(filtro: str, valores: Sequence[str]) -> str | None:
-    """O AFI de um filtro: o nome primeiro, os valores como desempate.
+# A família no nome do filtro tem três formas: a palavra (`BGP-IPV4-CUSTOMER`), o
+# sufixo separado (`rm-PARCEIROS_CDN-v6-in`, `XPL-GGC-V4-EXPORT`) e a forma colada
+# (`RouteExportCheckV6`, o portão v6 da §4.4), em que só a caixa separa o `V6` do
+# resto do nome. Depois de minúsculas, a colada é um `v4`/`v6` com letra ou
+# dígito antes, e o `(?![0-9])` evita ler um `v6` de `v64` como família.
+_RE_FAMILIA_COLADA = re.compile(r"(?:^|[a-z0-9])v([46])(?![0-9])")
 
-    O nome é o sinal forte (`BGP-IPV4-CUSTOMER`, `...-V6`). Sem ele, o dígito de
-    família do valor decide quando todos concordam; sem os dois, `None` — e a
-    checagem de família não roda, porque apontar sem evidência seria inventar.
-    """
+
+def _familia_do_nome(filtro: str) -> str | None:
+    """A família que o **nome** do filtro declara, ou `None` quando ele não declara."""
     minusculo = filtro.lower()
     if "ipv6" in minusculo or "-v6" in minusculo or "_v6" in minusculo or "v6-" in minusculo:
-        return "ipv6"
+        return "v6"
     if "ipv4" in minusculo or "-v4" in minusculo or "_v4" in minusculo or "v4-" in minusculo:
-        return "ipv4"
-    familias = {familia for familia in (familia_do_digito(_codigo_do_valor(v) or 0) for v in valores) if familia}
+        return "v4"
+    colada = _RE_FAMILIA_COLADA.search(minusculo)
+    return None if colada is None else f"v{colada.group(1)}"
+
+
+def _afi_do_filtro(filtro: str, valores: Sequence[str]) -> str | None:
+    """A família de um filtro: o nome primeiro, os valores como desempate.
+
+    O nome é o sinal forte (`BGP-IPV4-CUSTOMER`, `RouteExportCheckV6`). Sem ele,
+    o dígito de família do valor decide quando todos concordam; sem os dois,
+    `None` — e a checagem de família não roda, porque apontar sem evidência seria
+    inventar.
+
+    O retorno é a **família** (`"v4"`/`"v6"`), na mesma grafia de
+    `familia_do_digito`, e não o AFI (`"ipv4"`): a checagem 2 compara este
+    resultado com o dígito do valor, e duas grafias do mesmo lado fariam a
+    comparação nunca casar, apontando todo valor coerente como incoerente.
+    """
+    do_nome = _familia_do_nome(filtro)
+    if do_nome is not None:
+        return do_nome
+    familias = {
+        familia
+        for familia in (familia_do_digito(_codigo_do_valor(v) or 0) for v in valores)
+        if familia
+    }
     if len(familias) == 1:
-        return "ipv6" if familias == {"v6"} else "ipv4"
+        return familias.pop()
     return None
 
 
@@ -336,11 +364,11 @@ def _conferir_vocabulario(plano: PlanoLido) -> list[Achado]:
 def _conferir_familia(leituras: Sequence[LeituraCommunities]) -> list[Achado]:
     """Checagem 2 do lado da leitura: o dígito de família contra o AFI do filtro.
 
-    O AFI vem do nome do filtro (`BGP-IPV4-CUSTOMER`) e, sem ele, do consenso dos
-    valores (`_afi_do_filtro`). Sem as duas evidências a checagem não roda: o
-    `65000:7101` aplicado em rota v4 (§8.1) só é defeito porque o nome do filtro
-    diz v4 — o mesmo valor num filtro v6 é o normal, e num filtro sem família
-    declarada não há com o que contradizer.
+    A família vem do nome do filtro (`BGP-IPV4-CUSTOMER`, `RouteExportCheckV6`) e,
+    sem ele, do consenso dos valores (`_afi_do_filtro`). Sem as duas evidências a
+    checagem não roda: o `65000:7101` aplicado em rota v4 (§8.1) só é defeito
+    porque o nome do filtro diz v4 — o mesmo valor num filtro v6 é o normal, e
+    num filtro sem família declarada não há com o que contradizer.
 
     Só o valor **literal** é conferido. Num `apply community <corpus>`, quem
     aplica é o corpo da lista, e o corpo não pertence a filtro nenhum: o nome de
@@ -355,15 +383,18 @@ def _conferir_familia(leituras: Sequence[LeituraCommunities]) -> list[Achado]:
     achados: list[Achado] = []
     for leitura in leituras:
         for uso in leitura.usos:
-            afi = _afi_do_filtro(uso.filtro, por_filtro.get(uso.filtro, ()))
-            if afi is None:
+            familia = _afi_do_filtro(uso.filtro, por_filtro.get(uso.filtro, ()))
+            if familia is None:
                 continue
             for valor in uso.valores:
                 if valor.count(":") != 1:
                     continue
                 codigo = _codigo_do_valor(valor)
+                # Os dois lados da comparação falam a língua de
+                # `familia_do_digito` (`v4`/`v6`): a do valor, que vem de lá, e a
+                # do filtro, que o `_afi_do_filtro` devolve na mesma grafia.
                 declarada = familia_do_digito(codigo) if codigo is not None else None
-                if declarada is None or declarada == afi:
+                if declarada is None or declarada == familia:
                     continue
                 achados.append(
                     Achado(
@@ -371,7 +402,7 @@ def _conferir_familia(leituras: Sequence[LeituraCommunities]) -> list[Achado]:
                         severidade="atencao",
                         descricao=(
                             f"{valor} é um valor de {declarada} em {uso.filtro}, "
-                            f"que é {afi}"
+                            f"que é {familia}"
                         ),
                         valor=valor, filtro=uso.filtro, linha=uso.linha,
                         acao="corrigir o valor ou o filtro, por change request",

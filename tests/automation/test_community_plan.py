@@ -101,6 +101,75 @@ xpl route-filter BGP-IPV4-CUSTOMER
     assert len(trocadas) == 1 and trocadas[0].filtro == "BGP-IPV4-CUSTOMER"
 
 
+def test_valor_coerente_com_a_familia_do_filtro_nao_vira_achado() -> None:
+    """§8, checagem 2: o dígito do valor e a família do filtro concordam.
+
+    `65000:4001` é dígito v4 num filtro `-v4-`, e é o caso comum da captura: o
+    `rm-PARCEIROS_CDN-v4-in` aplica exatamente ele. Se a família do valor e a do
+    filtro forem comparadas em grafias diferentes, o caso conforme sai como
+    `familia_incoerente` e o painel da §11 enche de falso positivo.
+    """
+    texto = """
+xpl route-filter rm-PARCEIROS_CDN-v4-in
+ apply community 65000:4001 additive
+ end-filter
+xpl route-filter rm-PARCEIROS_CDN-v6-in
+ apply community 65000:4101 additive
+ end-filter
+"""
+    achados = validar(_plano(), [parse_communities_vrp(texto)])
+    assert [a for a in achados if a.codigo == "familia_incoerente"] == []
+
+
+def test_valor_incoerente_e_um_achado_so_com_filtro_e_linha() -> None:
+    """§8, checagem 2: o incoerente sai, e sai sozinho.
+
+    O filtro aplica dois valores, `61785:7001` (dígito v4 em filtro v4) e
+    `65000:7101` (dígito v6 no mesmo filtro). Só o segundo é defeito; o achado
+    do primeiro é o falso positivo que a comparação em duas grafias produzia.
+    """
+    texto = """
+xpl route-filter BGP-IPV4-CUSTOMER
+ apply community 61785:7001 additive
+ apply community 65000:7101 additive
+ end-filter
+"""
+    achados = validar(_plano(), [parse_communities_vrp(texto)])
+    trocadas = [a for a in achados if a.codigo == "familia_incoerente"]
+    assert len(trocadas) == 1
+    assert trocadas[0].valor == "65000:7101"
+    assert trocadas[0].filtro == "BGP-IPV4-CUSTOMER"
+    assert trocadas[0].linha is not None
+    assert trocadas[0].descricao == (
+        "65000:7101 é um valor de v6 em BGP-IPV4-CUSTOMER, que é v4"
+    )
+
+
+def test_portao_com_a_familia_colada_no_nome() -> None:
+    """§4.4: o portão v6 da casa se chama `RouteExportCheckV6`, com o `V6` colado.
+
+    Reconhecer só as formas separadas (`ipv6`, `-v6`, `_v6`, `v6-`) deixa este
+    portão cair no consenso dos valores, que falha num portão de duas famílias
+    (`61785:7012` com `61785:7112`). O `61785:7012` é dígito v4 dentro de portão
+    v6 e está na lista que a §6.1 manda migrar, então é achado que a §8 pede e
+    que não sai enquanto o nome colado não for reconhecido.
+    """
+    texto = """
+xpl route-filter RouteExportCheckV6
+ if not community matches-any {61785:7012, 61785:7112, 65000:3101, 65000:4101} then
+  refuse
+ endif
+ end-filter
+"""
+    achados = validar(_plano(), [parse_communities_vrp(texto)])
+    trocadas = [a for a in achados if a.codigo == "familia_incoerente"]
+    assert [a.valor for a in trocadas] == ["61785:7012"]
+    assert trocadas[0].filtro == "RouteExportCheckV6"
+    assert trocadas[0].descricao == (
+        "61785:7012 é um valor de v4 em RouteExportCheckV6, que é v6"
+    )
+
+
 def test_achado_da_secao_8_1_apply_sem_additive() -> None:
     """§8.1: o mesmo par, a mesma classe, `additive` no v4 e não no v6 — e as
     seis linhas de import de cliente do VS, que aplicam a classe sem ele."""
