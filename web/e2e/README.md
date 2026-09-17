@@ -67,10 +67,9 @@ docker compose start api worker
     estáveis, sem vínculos), circuito `e2e-circ-operadora-01` + sessão BGP
     V4 par `10.99.128.1/2` e community `prepend`/Região Sul — checados
     antes de POSTar (padrão do prefix-authorization, sem 409 como controle).
-  - descoberta (parte 2): o equipamento `ne8000-disco-01` (próprio do fumo —
-    no `ne8000-01` a adoção morreria com 409, porque o circuito da operadora
-    acima já tem sessão ipv4 ativa e a §14.1 admite uma por
-    device/VRF/família) com **uma configuração sintética por rodada** e uma
+  - descoberta (parte 2): o equipamento `ne8000-disco-01` (próprio do fumo,
+    para que a rodada desative as sessões dele sem encostar no `ne8000-01`, que
+    atende aos outros fumos) com **uma configuração sintética por rodada** e uma
     linha de `device_snapshots` apontando para ela — nenhuma API cria
     snapshot (quem coleta é o worker), então o seed escreve o arquivo em
     `data/e2e/discovery-<ms>.txt` (gitignored) e insere a linha por
