@@ -31,6 +31,7 @@ _PALAVRAS = frozenset(
         "overwrite", "delete", "community", "large-community", "matches-any",
         "matches-within", "matches-all", "as-path", "ip", "ipv6", "route-destination",
         "ip-prefix", "prefix-list", "regular", "as-path-filter", "community-filter",
+        "large-community-filter",
         "next-hop", "local-preference", "med", "prepend", "finish", "approve", "refuse",
         "address",
     }
@@ -271,8 +272,16 @@ def _aplica_linha_de_filtro(
             _uso_de_teste(clausula, numero=numero, filtro=filtro) for clausula in clausulas
         )
 
+    # A checagem de RPKI não cita corpus nenhum: `if-match rpki
+    # origin-as-validation invalid` fala do veredito da validação, e não de um
+    # nome da casa. A linha inteira fica fora — tirar o `rpki` do vocabulário só
+    # mudaria o nome falso de casa, e o lugar seguinte é `origin-as-validation`.
+    if partes[:2] == ["if-match", "rpki"]:
+        return ()
+
     # Citação de corpus sem valor: `if as-path in X`, `if ip route-destination in X`,
-    # `if-match community-filter X`, `if-match ip-prefix X`. O que separa valor de
+    # `if-match community-filter X`, `if-match large-community-filter X`,
+    # `if-match ip-prefix X`. O que separa valor de
     # nome é a chave inline no começo do resto, não a presença de dígito: nome de
     # prefix-list da casa tem ASN dentro (`pl-CUSTOMER-AS268061-AS61587-V4`) e era
     # justamente ele que a checagem de "citado e não definido" perdia.

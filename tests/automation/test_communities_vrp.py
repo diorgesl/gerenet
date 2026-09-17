@@ -157,6 +157,34 @@ def test_le_as_definicoes_do_xpl_de_prefixo_e_de_as_path() -> None:
     assert not (citados - set(por_nome))
 
 
+def test_a_verificacao_de_rpki_nao_vira_citacao() -> None:
+    """`if-match rpki origin-as-validation invalid` não referencia corpus nenhum.
+
+    A linha inteira fica fora: o veredito é da validação, e não há nome a citar.
+    """
+    leitura = parse_communities_vrp(
+        "xpl route-filter F\n"
+        " if-match rpki origin-as-validation invalid\n"
+        " end-filter\n"
+    )
+    assert leitura.usos == ()
+
+
+def test_le_o_nome_do_large_community_filter() -> None:
+    """`if-match large-community-filter X` cita X, não a palavra da linha."""
+    leitura = parse_communities_vrp(
+        "ip large-community-filter advanced ARSOFT index 10 permit 61785:100:267702\n"
+        "xpl route-filter F\n"
+        " if-match large-community-filter ARSOFT\n"
+        " end-filter\n"
+    )
+    citados = [u for u in leitura.usos if u.operacao == "cita"]
+    assert [u.corpus for u in citados] == ["ARSOFT"]
+    assert citados[0].corpus_classe == "large-community"
+    definidos = {d.nome for d in leitura.definicoes}
+    assert "ARSOFT" in definidos
+
+
 def test_le_os_grupos_de_peer_e_os_membros() -> None:
     leitura = _leitura("comunidades_vs.txt")
     por_nome = {a.nome: a for a in leitura.alvos}
