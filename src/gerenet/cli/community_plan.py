@@ -8,6 +8,7 @@ longo (`com-TRANSITO-FULL`) e a lista de portões não cabem numa tabela de 80
 colunas sem truncar o que o operador veio ler.
 """
 import typer
+from sqlalchemy.orm import Session
 
 from gerenet.db import get_session
 from gerenet.domain.services import community_plan as svc
@@ -22,6 +23,19 @@ def _numero(valor: int | None) -> str:
 
 def _lista(nomes: list[str]) -> str:
     return f"[{', '.join(nomes)}]"
+
+
+def _contagem(quantidade: int, singular: str, plural: str) -> str:
+    return f"{quantidade} {singular if quantidade == 1 else plural}"
+
+
+def _tem_leitura(session: Session, device_id: int) -> bool:
+    """Se a coleta do equipamento existe **e** a configuração dela é legível."""
+    try:
+        svc.ler_do_snapshot(session, device_id)
+    except NotFoundError:
+        return False
+    return True
 
 
 @app.command("show")
@@ -79,6 +93,28 @@ def validar(
         if svc.obter_plano(session) is None:
             typer.echo("Nenhum plano de communities adotado ainda: nada a validar.")
             raise typer.Exit(code=0)
+        # E sem leitura também não: `validar_plano` devolve vazio quando não
+        # compara nada (o `continue` do `_leitura_do_device`), então a frase de
+        # "alinhado" sairia de uma execução que leu zero configurações. O
+        # roteiro de verificação lê o código de saída, e o 0 é o que autoriza a
+        # automação — a leitura tem de existir antes da comparação (R43). Vale
+        # inclusive para o snapshot cujo arquivo de configuração sumiu: ele
+        # conta como equipamento com coleta e não como leitura.
+        if device_id is not None:
+            try:
+                svc.ler_do_snapshot(session, device_id)
+            except NotFoundError as erro:
+                typer.echo(f"Erro: {erro}", err=True)
+                raise typer.Exit(code=1) from erro
+        elif not any(
+            _tem_leitura(session, um_id) for um_id in svc.equipamentos_com_coleta(session)
+        ):
+            typer.echo(
+                "Erro: nenhum equipamento com coleta legível. O plano não foi "
+                "comparado com configuração nenhuma.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
         achados = svc.validar_plano(session, [device_id] if device_id is not None else None)
 
     if not achados:
@@ -123,13 +159,17 @@ def adotar(
             # traceback no operador não é resposta.
             typer.echo(f"Erro: {erro}", err=True)
             raise typer.Exit(code=1) from erro
-        # O resumo sai daqui de dentro: o `plano` é ORM e o `get_session` commita
-        # (e expira) no fim do bloco — lido depois, o atributo viria de uma
-        # instância destacada.
+        # O resumo sai daqui de dentro de propósito: o `plano` é ORM, e a
+        # armadilha é ler ORM **depois** do `with` quando a leitura precise de
+        # carga nova (atributo expirado, `refresh`, relação não carregada) — a
+        # sessão já fechou e a instância está destacada. O commit não expira o
+        # que já veio: `db.py:10` configura `expire_on_commit=False`.
         em_vigor = svc.obter_plano(session)
         resumo = (
-            f"ASN {plano.asn_principal}, {len(em_vigor.classes)} classes, "
-            f"{len(em_vigor.portoes)} portões, {len(em_vigor.alvos)} alvos"
+            f"ASN {plano.asn_principal}, "
+            f"{_contagem(len(em_vigor.classes), 'classe', 'classes')}, "
+            f"{_contagem(len(em_vigor.portoes), 'portão', 'portões')}, "
+            f"{_contagem(len(em_vigor.alvos), 'alvo', 'alvos')}"
         )
         ja_existia = plano_antes is not None and plano_antes.asn_principal == plano.asn_principal
         if ja_existia:

@@ -18,12 +18,18 @@ def listar(
 ) -> None:
     """Lista o catálogo de communities (valor e banda vêm do plano central)."""
     with get_session() as session:
-        for com in svc.list_communities(session, include_disabled=include_disabled):
+        communities = svc.list_communities(session, include_disabled=include_disabled)
+        # A largura das colunas sai do próprio catálogo: um nome novo mais longo
+        # que o número mágico de antes (`com-CLIENTES_PARCEIROS-CDN`) empurrava as
+        # colunas da linha dele e só dela.
+        largura_nome = max((len(com.name) for com in communities), default=0)
+        largura_banda = max((len(com.banda or "—") for com in communities), default=0)
+        for com in communities:
             v4 = com.valor_v4 if com.valor_v4 is not None else "—"
             v6 = com.valor_v6 if com.valor_v6 is not None else "—"
             typer.echo(
-                f"{com.id:>3}  {com.name:<24} v4={v4} v6={v6} "
-                f"{com.banda or '—':<10} {com.notes or ''}"
+                f"{com.id:>3}  {com.name:<{largura_nome}} v4={v4} v6={v6} "
+                f"{com.banda or '—':<{largura_banda}} {com.notes or ''}"
             )
 
 

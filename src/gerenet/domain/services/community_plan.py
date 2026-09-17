@@ -67,6 +67,17 @@ def ler_do_snapshot(session: Session, device_id: int) -> LeituraCommunities:
     return leitura
 
 
+def equipamentos_com_coleta(session: Session) -> list[int]:
+    """Os equipamentos com snapshot gravado — o universo da validação sem filtro.
+
+    Ter snapshot **não** é ter leitura: o arquivo da configuração pode ter sumido
+    depois da coleta (`texto_backup` devolve "" no `OSError`) e aí o
+    `ler_do_snapshot` recusa. Quem precisa comparar chama o `ler_do_snapshot`;
+    esta lista diz só onde procurar.
+    """
+    return list(session.scalars(select(models.DeviceSnapshot.device_id).distinct()).all())
+
+
 def direcoes_do_device(session: Session, device_id: int) -> dict[str, str]:
     """O mapa filtro → direção, do vínculo real da sessão (Regra 4 do plano)."""
     direcoes: dict[str, str] = {}
@@ -273,9 +284,7 @@ def validar_plano(session: Session, device_ids: list[int] | None = None) -> tupl
     if plano is None:
         return ()
     if device_ids is None:
-        device_ids = list(session.scalars(
-            select(models.DeviceSnapshot.device_id).distinct()
-        ).all())
+        device_ids = equipamentos_com_coleta(session)
     leituras: list[LeituraCommunities] = []
     direcoes: dict[str, str] = {}
     for device_id in device_ids:
