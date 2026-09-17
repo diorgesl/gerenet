@@ -5,12 +5,13 @@ objeto coerente e uma adoção pela metade deixaria classes sem portão. Qualque
 recusa desfaz tudo. Nada aqui vai ao equipamento — o único caminho é o snapshot
 já coletado, e mudar o roteador continua sendo change request.
 """
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from gerenet.automation.community_plan import (
+    VOCABULARIO,
     Achado,
     AlvoPlano,
     ClassePlano,
@@ -19,6 +20,9 @@ from gerenet.automation.community_plan import (
     PortaoPlano,
     PropostaPlano,
     RegraImportPlano,
+    # A leitura posicional do código (`<asn>:<codigo>`) é do motor, e é uma só: duas
+    # respostas para a mesma pergunta já custou uma rodada de fix na T4.
+    _codigo_do_valor,
     propor_plano,
     validar,
 )
@@ -126,14 +130,23 @@ def estados_dos_alvos(
 
 
 def papeis_da_sot(session: Session) -> dict[int, str]:
-    """ASN da organização → tipo do upstream, para o papel do alvo (Regra 5)."""
+    """ASN da organização → tipo do upstream, para o papel do alvo (Regra 5).
+
+    Só passa o tipo que `TARGET_PAPEL` tem. O `Upstream.tipo` aceita
+    `contingencia` e o enum de `community_targets.papel` não, então sem este
+    recorte o papel sairia da SoT como `contingencia` e o INSERT do alvo
+    estouraria no enum (500 na rota da T7). O alvo de um upstream de contingência
+    fica sem papel da SoT e quem decide é o leitor, pelo nome do grupo: a cadeia
+    `da_sot or do_nome or "transito"` já existe, e o `papel_duvidoso` continua
+    avisando quando os dois discordam.
+    """
     papeis: dict[int, str] = {}
     linhas = session.execute(
         select(models.Organization.asn, models.Upstream.tipo)
         .join(models.Upstream, models.Upstream.organization_id == models.Organization.id)
     ).all()
     for asn, tipo in linhas:
-        if asn is not None:
+        if asn is not None and tipo in models.TARGET_PAPEL:
             papeis[int(asn)] = tipo
     return papeis
 
@@ -190,7 +203,14 @@ def obter_plano(session: Session) -> PlanoLido | None:
 
 
 def propor_adocao(session: Session, device_id: int) -> PropostaPlano:
-    """O que a adoção gravaria, lido do snapshot — sem escrever nada."""
+    """O que a adoção gravaria, lido do snapshot — sem escrever nada.
+
+    Além das divergências do motor, a proposta carrega os membros de portão que
+    não resolvem para classe nenhuma (R29): o conjunto de códigos conhecidos aqui é
+    o das classes da proposta mais o `VOCABULARIO` inteiro, que é o que a adoção
+    materializa — assim a proposta e a escrita dizem a mesma coisa sobre quem
+    entra no portão.
+    """
     snap, texto = _snapshot_com_config(session, device_id)
     if snap is None or not texto.strip():
         raise NotFoundError(
@@ -204,9 +224,16 @@ def propor_adocao(session: Session, device_id: int) -> PropostaPlano:
         estados_alvo=estados_dos_alvos(session, [leitura], [device_id]),
         papeis_da_sot=papeis_da_sot(session),
     )
+    membros = [
+        (portao.nome, (*portao.aceitas, *portao.recusadas))
+        for portao in proposta.plano.portoes
+    ]
     return PropostaPlano(
         plano=PlanoLido(**{**proposta.plano.__dict__, "snapshot_id": snap.id}),
-        divergencias=proposta.divergencias, parados=proposta.parados, avisos=proposta.avisos,
+        divergencias=proposta.divergencias + _membros_sem_classe(
+            membros, _codigos_das_classes((*proposta.plano.classes, *VOCABULARIO))
+        ),
+        parados=proposta.parados, avisos=proposta.avisos,
     )
 
 
@@ -220,6 +247,11 @@ def validar_plano(session: Session, device_ids: list[int] | None = None) -> tupl
 
     Sem `device_ids`, valida contra todos os equipamentos que têm coleta — é o
     que a página mostra, porque a comparação que importa é entre a borda e o VS.
+
+    Ao fim vêm os membros de portão que não têm classe (R29), a superfície durável
+    do achado: o plano da SoT guarda a lista de **ids**, então o membro que se
+    perdeu na adoção não está em lugar nenhum do plano para ser comparado — quem
+    ainda o tem é a configuração, e é ela que a comparação percorre.
     """
     plano = obter_plano(session)
     if plano is None:
@@ -236,43 +268,128 @@ def validar_plano(session: Session, device_ids: list[int] | None = None) -> tupl
             continue
         leituras.append(leitura)
         direcoes.update(direcoes_do_device(session, device_id))
-    return validar(
+    achados = validar(
         plano, leituras, direcoes=direcoes,
         estados_alvo=estados_dos_alvos(session, leituras, device_ids),
     )
+    membros = [
+        (uso.filtro, uso.valores)
+        for leitura in leituras
+        for uso in leitura.usos
+        if uso.operacao == "testa" and uso.filtro.startswith("RouteExportCheck")
+    ]
+    return achados + _membros_sem_classe(membros, _codigos_das_classes(plano.classes))
+
+
+def _id_da_classe(session: Session, classe: ClassePlano, *, snapshot_id: int | None) -> int:
+    """O id da linha de `communities` da classe, criando-a se ela faltar.
+
+    A busca é por nome e, não achando, por **valor** (namespace-agnóstico), como a
+    do motor: `61785:3001` e `65000:3001` são a mesma classe (Regra 1). A segunda
+    busca não é detalhe: o índice único parcial de `valor_v4` recusaria o INSERT se
+    o valor já tivesse virado linha com outro nome.
+    """
+    existente = session.scalar(
+        select(models.Community).where(models.Community.name == classe.nome)
+    )
+    for campo, valor in (("valor_v4", classe.valor_v4), ("valor_v6", classe.valor_v6)):
+        if existente is None and valor is not None:
+            existente = session.scalar(
+                select(models.Community).where(
+                    getattr(models.Community, campo) == valor
+                )
+            )
+    if existente is not None:
+        return existente.id
+    nova = models.Community(
+        name=classe.nome, tipo=classe.tipo, banda=classe.banda, valor_v4=classe.valor_v4,
+        valor_v6=classe.valor_v6, notes=classe.notas, origem="adotado",
+        origem_snapshot_id=snapshot_id,
+    )
+    session.add(nova)
+    session.flush()
+    return nova.id
+
+
+def _nomes_citados(plano: PlanoLido) -> list[str]:
+    """Os nomes que os filhos do plano citam: os membros de portão e a importação."""
+    return [
+        *[n for portao in plano.portoes for n in (*portao.aceitas, *portao.recusadas)],
+        *[alvo.classe_import for alvo in plano.alvos if alvo.classe_import],
+    ]
+
+
+def _codigos_das_classes(classes: Sequence[ClassePlano]) -> set[int]:
+    """Os códigos que têm linha de classe, dos dois lados do par (`v4` e `v6`)."""
+    return {v for c in classes for v in (c.valor_v4, c.valor_v6) if v is not None}
+
+
+def _membros_sem_classe(
+    membros: Sequence[tuple[str, Sequence[str]]], codigos: Collection[int]
+) -> tuple[Achado, ...]:
+    """Os valores de portão que não resolvem para classe nenhuma (R29).
+
+    `membros` é (nome do portão, valores) e `codigos` é o conjunto de códigos que
+    já têm linha: as classes do plano ativo na `validar_plano`, e as classes da
+    proposta mais o `VOCABULARIO` inteiro na `propor_adocao` — que é o que o
+    `_resolve_classes` materializa na adoção, e por isso os dois lados concordam.
+
+    O achado existe porque a lista do portão guarda **ids** de `communities`
+    (§4.4): sem linha não há id para gravar, e o membro sumiria do portão adotado
+    sem que ninguém visse. O caso é o dos literais crus da captura real
+    (`61785:7012` e `61785:7112`, que a §5 registra como valores em migração para
+    7101/7102/7103): eles não têm definição nenhuma no equipamento, então não há
+    nome por onde resolvê-los.
+    """
+    achados: list[Achado] = []
+    for nome, valores in membros:
+        for valor in dict.fromkeys(valores):
+            codigo = _codigo_do_valor(valor)
+            if codigo is None or codigo in codigos:
+                continue
+            achados.append(
+                Achado(
+                    codigo="portao_membro_sem_classe", severidade="atencao",
+                    valor=valor, filtro=nome,
+                    descricao=(
+                        f"{valor} é testado por {nome} e não tem classe no vocabulário: "
+                        "sem linha em `communities` o membro não tem id para gravar na "
+                        "lista do portão"
+                    ),
+                    acao="declarar a classe (a edição do plano é a F2) ou confirmar "
+                         "que o valor sai do portão",
+                )
+            )
+    return tuple(achados)
 
 
 def _resolve_classes(
-    session: Session, classes: tuple[ClassePlano, ...], *, snapshot_id: int | None
+    session: Session,
+    classes: tuple[ClassePlano, ...],
+    citados: Sequence[str],
+    *,
+    snapshot_id: int | None,
 ) -> dict[str, int]:
     """Cria as classes que faltam e devolve nome → id.
 
-    A busca é pelo valor (namespace-agnóstico), como a do motor: `61785:3001` e
-    `65000:3001` são a mesma classe (Regra 1). Nome já existente é reaproveitado.
+    As classes da proposta entram primeiro. Depois vêm os **nomes citados** por
+    portão e por alvo que ainda não resolveram: a §9.1 diz que `communities` vira o
+    vocabulário, então nome citado sem linha é linha que falta. O `com-TAMANHO-2`
+    do portão `RouteExportCheck` e o `com-ONLY-CDN` da recusa dele não estão nas
+    classes da proposta (nenhuma definição do equipamento os nomeia) e, sem esta
+    passada, o portão era gravado sem eles em silêncio (R29).
     """
     ids: dict[str, int] = {}
     for classe in classes:
-        existente = session.scalar(
-            select(models.Community).where(models.Community.name == classe.nome)
-        )
-        for campo, valor in (("valor_v4", classe.valor_v4), ("valor_v6", classe.valor_v6)):
-            if existente is None and valor is not None:
-                existente = session.scalar(
-                    select(models.Community).where(
-                        getattr(models.Community, campo) == valor
-                    )
-                )
-        if existente is not None:
-            ids[classe.nome] = existente.id
+        ids[classe.nome] = _id_da_classe(session, classe, snapshot_id=snapshot_id)
+    do_vocabulario = {classe.nome: classe for classe in VOCABULARIO}
+    for nome in citados:
+        if nome in ids:
             continue
-        nova = models.Community(
-            name=classe.nome, tipo=classe.tipo, banda=classe.banda, valor_v4=classe.valor_v4,
-            valor_v6=classe.valor_v6, notes=classe.notas, origem="adotado",
-            origem_snapshot_id=snapshot_id,
-        )
-        session.add(nova)
-        session.flush()
-        ids[classe.nome] = nova.id
+        classe = do_vocabulario.get(nome)
+        if classe is None:
+            continue  # literal sem vocabulário: sai em `portao_membro_sem_classe`
+        ids[nome] = _id_da_classe(session, classe, snapshot_id=snapshot_id)
     return ids
 
 
@@ -296,7 +413,25 @@ def adotar_plano(
     vocabulário inteiro e a `CommunityImportRule` nem tem `admin_status`), então
     substituir o plano pediria mudar o modelo. A recusa mantém a transação
     única da §9: nada é gravado, nem desativado.
+
+    Sem ASN principal na proposta recusa com `ValidationError`, também antes de
+    escrever (R31): é o caso do equipamento sem `devices.asn` cuja configuração
+    não declara `bgp <asn>`, e o `INSERT` do cabeçalho estouraria o NOT NULL.
+
+    Os membros de portão que não resolvem para classe nenhuma ficam de fora da
+    lista (R29): a §9 manda a adoção não decidir colisão sozinha nem renomear
+    nada, e recusar por causa deles barraria a adoção do NE8000 real. Eles saem
+    como `portao_membro_sem_classe` na proposta e na validação.
     """
+    if proposta.plano.asn_principal is None:
+        # Antes da guarda do plano ativo, e não junto dela: sem ASN o cabeçalho
+        # não tem o que gravar, e a guarda responderia outra pergunta ("o plano
+        # ativo é de outro ASN") com um `None` que não é ASN de ninguém.
+        raise ValidationError(
+            f"O equipamento {device_id} não tem ASN: preencha o ASN do equipamento "
+            "antes de adotar o plano, porque o plano guarda o ASN principal."
+        )
+
     existente = session.scalar(
         select(models.CommunityPlan).where(models.CommunityPlan.admin_status.is_(True))
     )
@@ -310,7 +445,8 @@ def adotar_plano(
         )
 
     ids = _resolve_classes(
-        session, proposta.plano.classes, snapshot_id=snapshot_id
+        session, proposta.plano.classes, _nomes_citados(proposta.plano),
+        snapshot_id=snapshot_id,
     )
     ids_instrucoes = _resolve_instrucoes(
         session, proposta.plano.instrucoes, snapshot_id=snapshot_id
@@ -329,8 +465,11 @@ def adotar_plano(
         session.add(
             models.CommunityGate(
                 nome=portao.nome, papel=portao.papel, afi=portao.afi, padrao=portao.padrao,
-                aceitas=[ids[n] for n in portao.aceitas if n in ids],
-                recusadas=[ids[n] for n in portao.recusadas if n in ids],
+                # `dict.fromkeys` sem repetir: dois valores do mesmo portão
+                # podem ser a mesma classe (7002 e 7102 são `com-TAMANHO-2`), e
+                # a lista de ids não guarda o valor que a gerou (R29c).
+                aceitas=[ids[n] for n in dict.fromkeys(portao.aceitas) if n in ids],
+                recusadas=[ids[n] for n in dict.fromkeys(portao.recusadas) if n in ids],
                 origem="adotado", origem_snapshot_id=snapshot_id,
             )
         )
