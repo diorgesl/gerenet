@@ -30,22 +30,32 @@ function mockFetch() {
   );
 }
 
-function renderLayout() {
+/** `entrada` é a rota montada: `/communities` e `/communities/plan` existem aqui
+ * porque uma é prefixo da outra, que é o caso que o item ativo tem de resolver. */
+function renderLayout(entrada = "/devices") {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
       <AuthProvider>
-        <MemoryRouter initialEntries={["/devices"]}>
+        <MemoryRouter initialEntries={[entrada]}>
           <Routes>
             <Route path="/login" element={<div>login-page</div>} />
             <Route element={<Layout />}>
               <Route path="/devices" element={<div>devices-page</div>} />
+              <Route path="/communities" element={<div>communities-page</div>} />
+              <Route path="/communities/plan" element={<div>communities-plan-page</div>} />
             </Route>
           </Routes>
         </MemoryRouter>
       </AuthProvider>
     </QueryClientProvider>,
   );
+}
+
+/** O `active` é a classe que o `NavLink` do react-router põe em todo item que
+ * casa com a rota, e é ela que a folha de estilo transforma no item aceso. */
+function linksAtivos() {
+  return screen.getAllByRole("link").filter((a) => a.classList.contains("active"));
 }
 
 describe("Layout", () => {
@@ -88,5 +98,28 @@ describe("Layout", () => {
     await userEvent.click(roteamento);
     expect(roteamento).toHaveAttribute("aria-expanded", "false");
     expect(screen.getByText("Upstreams")).not.toBeVisible();
+  });
+
+  it("em /communities/plan o item atual é o casamento mais longo, e não o prefixo", async () => {
+    mockFetch();
+    renderLayout("/communities/plan");
+    // O grupo do item atual abre sozinho, então o item fica visível sem clique.
+    expect(await screen.findByText("Comunidades · Plano")).toBeInTheDocument();
+
+    // O breadcrumb nomeia o item, e não o `/communities` que também casa por prefixo.
+    expect(screen.getByText("Roteamento / Comunidades · Plano")).toBeInTheDocument();
+    const ativos = linksAtivos();
+    expect(ativos).toHaveLength(1);
+    expect(ativos[0]).toHaveTextContent("Comunidades · Plano");
+  });
+
+  it("em /communities o breadcrumb é o do catálogo, com um ativo só", async () => {
+    mockFetch();
+    renderLayout("/communities");
+    expect(await screen.findByText("Communities")).toBeInTheDocument();
+    expect(screen.getByText("Roteamento / Communities")).toBeInTheDocument();
+    const ativos = linksAtivos();
+    expect(ativos).toHaveLength(1);
+    expect(ativos[0]).toHaveTextContent("Communities");
   });
 });

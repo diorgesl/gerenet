@@ -22,6 +22,11 @@ const COMMUNITY_TIPO_LABEL: Record<(typeof COMMUNITY_TIPO)[number], string> = {
   informacao: "Informação",
   tag_produto: "Tag de produto",
 };
+// Espelha models.COMMUNITY_BANDA — a partição do plano de communities (§5).
+const COMMUNITY_BANDA = ["local", "transito", "cliente", "parceiro", "conjunto", "tamanho", "especial", "instrucao"] as const;
+
+/** Campo vazio é ausência de valor, e não zero: o serviço grava `None` na coluna. */
+const num = (v: string) => (v === "" ? null : Number(v));
 
 export default function Communities() {
   const { podeEscrever } = useAuth();
@@ -31,17 +36,17 @@ export default function Communities() {
   const [erro, setErro] = useState<string | null>(null);
   const [detalhe, setDetalhe] = useState<CommunityOut | null>(null);
   const [editando, setEditando] = useState<CommunityOut | null>(null);
-  const [formEdit, setFormEdit] = useState({ name: "", tipo: "padrao", notes: "" });
+  const [formEdit, setFormEdit] = useState({ name: "", tipo: "padrao", notes: "", valor_v4: "", valor_v6: "", banda: "" });
   const [erroEdit, setErroEdit] = useState<string | null>(null);
   const [criando, setCriando] = useState(false);
-  const [formNovo, setFormNovo] = useState({ name: "", tipo: "padrao", notes: "" });
+  const [formNovo, setFormNovo] = useState({ name: "", tipo: "padrao", notes: "", valor_v4: "", valor_v6: "", banda: "" });
   const [erroNovo, setErroNovo] = useState<string | null>(null);
   const { data, isLoading, error } = useCommunities({ includeDisabled: incluirInativos });
   const criar = useCommunityCriar();
   const atualizar = useCommunityAtualizar();
 
   function abrirCriacao() {
-    setFormNovo({ name: "", tipo: "padrao", notes: "" });
+    setFormNovo({ name: "", tipo: "padrao", notes: "", valor_v4: "", valor_v6: "", banda: "" });
     setErroNovo(null);
     setCriando(true);
   }
@@ -50,7 +55,14 @@ export default function Communities() {
     e.preventDefault();
     setErroNovo(null);
     try {
-      await criar.mutateAsync({ name: formNovo.name, tipo: formNovo.tipo, notes: formNovo.notes || null });
+      await criar.mutateAsync({
+        name: formNovo.name,
+        tipo: formNovo.tipo,
+        notes: formNovo.notes || null,
+        valor_v4: num(formNovo.valor_v4),
+        valor_v6: num(formNovo.valor_v6),
+        banda: formNovo.banda || null,
+      });
       setCriando(false);
     } catch (err) {
       setErroNovo(err instanceof ApiError ? err.message : "Falha ao criar a community.");
@@ -58,7 +70,14 @@ export default function Communities() {
   }
 
   function abrirEdicao(c: CommunityOut) {
-    setFormEdit({ name: c.name, tipo: c.tipo, notes: c.notes ?? "" });
+    setFormEdit({
+      name: c.name,
+      tipo: c.tipo,
+      notes: c.notes ?? "",
+      valor_v4: c.valor_v4 === null ? "" : String(c.valor_v4),
+      valor_v6: c.valor_v6 === null ? "" : String(c.valor_v6),
+      banda: c.banda ?? "",
+    });
     setErroEdit(null);
     setEditando(c);
   }
@@ -68,7 +87,15 @@ export default function Communities() {
     if (!editando) return;
     setErroEdit(null);
     try {
-      await atualizar.mutateAsync({ id: editando.id, name: formEdit.name, tipo: formEdit.tipo, notes: formEdit.notes || null });
+      await atualizar.mutateAsync({
+        id: editando.id,
+        name: formEdit.name,
+        tipo: formEdit.tipo,
+        notes: formEdit.notes || null,
+        valor_v4: num(formEdit.valor_v4),
+        valor_v6: num(formEdit.valor_v6),
+        banda: formEdit.banda || null,
+      });
       setEditando(null);
     } catch (err) {
       setErroEdit(err instanceof ApiError ? err.message : "Falha ao salvar a community.");
@@ -96,6 +123,10 @@ export default function Communities() {
         colunas={[
           { key: "name", title: "Nome" },
           { key: "tipo", title: "Tipo", render: (c) => COMMUNITY_TIPO_LABEL[c.tipo as (typeof COMMUNITY_TIPO)[number]] ?? c.tipo },
+          { key: "valor_v4", title: "v4", render: (c) => c.valor_v4 ?? "—" },
+          { key: "valor_v6", title: "v6", render: (c) => c.valor_v6 ?? "—" },
+          { key: "banda", title: "Banda", render: (c) => c.banda ?? "—" },
+          { key: "origem", title: "Origem", render: (c) => (c.origem === "adotado" ? "adotada" : "manual") },
           { key: "notes", title: "Observações", render: (c) => c.notes ?? "—" },
           { key: "admin_status", title: "Situação", render: (c) => <StatusBadge estado={c.admin_status ? "ativo" : "inativo"} /> },
         ]}
@@ -174,6 +205,20 @@ export default function Communities() {
                 ))}
               </select>
             </FormField>
+            <FormField label="Valor v4" help={help("community.valor_v4")}>
+              <input type="number" value={formNovo.valor_v4} onChange={(e) => setFormNovo({ ...formNovo, valor_v4: e.target.value })} />
+            </FormField>
+            <FormField label="Valor v6" help={help("community.valor_v6")}>
+              <input type="number" value={formNovo.valor_v6} onChange={(e) => setFormNovo({ ...formNovo, valor_v6: e.target.value })} />
+            </FormField>
+            <FormField label="Banda" help={help("community.banda")}>
+              <select value={formNovo.banda} onChange={(e) => setFormNovo({ ...formNovo, banda: e.target.value })}>
+                <option value="">—</option>
+                {COMMUNITY_BANDA.map((b) => (
+                  <option key={b} value={b}>{b}</option>
+                ))}
+              </select>
+            </FormField>
             <FormField label="Observações" help={help("community.notes")}>
               <input value={formNovo.notes} onChange={(e) => setFormNovo({ ...formNovo, notes: e.target.value })} />
             </FormField>
@@ -199,6 +244,20 @@ export default function Communities() {
               <select value={formEdit.tipo} onChange={(e) => setFormEdit({ ...formEdit, tipo: e.target.value })}>
                 {COMMUNITY_TIPO.map((t) => (
                   <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+            </FormField>
+            <FormField label="Valor v4" help={help("community.valor_v4")}>
+              <input type="number" value={formEdit.valor_v4} onChange={(e) => setFormEdit({ ...formEdit, valor_v4: e.target.value })} />
+            </FormField>
+            <FormField label="Valor v6" help={help("community.valor_v6")}>
+              <input type="number" value={formEdit.valor_v6} onChange={(e) => setFormEdit({ ...formEdit, valor_v6: e.target.value })} />
+            </FormField>
+            <FormField label="Banda" help={help("community.banda")}>
+              <select value={formEdit.banda} onChange={(e) => setFormEdit({ ...formEdit, banda: e.target.value })}>
+                <option value="">—</option>
+                {COMMUNITY_BANDA.map((b) => (
+                  <option key={b} value={b}>{b}</option>
                 ))}
               </select>
             </FormField>

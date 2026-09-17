@@ -38,7 +38,21 @@ def _limpa_tabelas(db_session: Session) -> None:
     # são seedados pela migration e imutáveis no ciclo A (ruling 2 do Plano 2).
     db_session.execute(
         text(
-            "TRUNCATE approvals, change_steps, change_requests, audit_events, user_sessions, users, job_runs, device_snapshots, vlans, ip_prefixes, circuits, contacts, organizations, sites, devices, credential_groups, bgp_sessions, bgp_session_communities, bgp_prefix_authorizations, discovery_ignored_peers, vsi_members, vsi_services, service_endpoints, l2vc_services, mpls_domain_members, mpls_domains, upstreams, upstream_circuits, upstream_communities, roas, irr_cache RESTART IDENTITY CASCADE"
+            "TRUNCATE approvals, change_steps, change_requests, audit_events, user_sessions, users, job_runs, device_snapshots, vlans, ip_prefixes, circuits, contacts, organizations, sites, devices, credential_groups, bgp_sessions, bgp_session_communities, bgp_prefix_authorizations, discovery_ignored_peers, vsi_members, vsi_services, service_endpoints, l2vc_services, mpls_domain_members, mpls_domains, upstreams, upstream_circuits, upstream_communities, roas, irr_cache, community_import_rules, community_gates, community_targets, community_plans RESTART IDENTITY CASCADE"
+        )
+    )
+    # `communities` fica fora do TRUNCATE (as três semeadas são pinadas), mas o
+    # FK `fk_communities_origem_snapshot` a põe no alcance do CASCADE de
+    # `device_snapshots`, que a esvazia de qualquer jeito — o DELETE abaixo é a
+    # rede do caso em que o FK saia de cena. As três sementes da migração
+    # b1a71e5e129b voltam logo depois (`on conflict do nothing`, como no seed
+    # de lá), senão os testes que pinam o catálogo ficam sem catálogo.
+    db_session.execute(text("DELETE FROM communities WHERE origem = 'adotado'"))
+    db_session.execute(
+        text(
+            "INSERT INTO communities (name, admin_status) VALUES "
+            "('blackhole', true), ('no-export', true), ('no-advertise', true) "
+            "ON CONFLICT (name) DO NOTHING"
         )
     )
     db_session.commit()

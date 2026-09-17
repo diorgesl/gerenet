@@ -562,6 +562,10 @@ class CommunityCreate(BaseModel):
     name: str = Field(min_length=1, max_length=64)
     tipo: str = "padrao"  # validado no serviço contra models.COMMUNITY_TIPO
     notes: str | None = None
+    valor_v4: int | None = None
+    valor_v6: int | None = None
+    codigo: int | None = None
+    banda: str | None = None  # validado no serviço contra models.COMMUNITY_BANDA
 
 
 class CommunityOut(BaseModel):
@@ -572,12 +576,21 @@ class CommunityOut(BaseModel):
     tipo: str
     notes: str | None = None
     admin_status: bool
+    valor_v4: int | None = None
+    valor_v6: int | None = None
+    codigo: int | None = None
+    banda: str | None = None
+    origem: str = "manual"
 
 
 class CommunityUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=64)
     tipo: str | None = None  # validado no serviço contra models.COMMUNITY_TIPO
     notes: str | None = None
+    valor_v4: int | None = None
+    valor_v6: int | None = None
+    codigo: int | None = None
+    banda: str | None = None
     admin_status: bool | None = None  # PATCH puro {"admin_status": false} roteia ao disable (Ruling 1)
 
 
@@ -1339,3 +1352,92 @@ class AdocaoOut(BaseModel):
     """O que a adoção devolve: o circuito que nasceu na SoT."""
 
     circuit_id: int
+
+
+class ClassePlanoOut(BaseModel):
+    """Uma classe do plano, com quem a aplica e quem a testa (§11)."""
+
+    nome: str
+    banda: str | None = None
+    tipo: str
+    valor_v4: int | None = None
+    valor_v6: int | None = None
+    id: int | None = None
+    notas: str | None = None
+    aplicam: list[str] = []
+    testam: list[str] = []
+
+
+class InstrucaoPlanoOut(BaseModel):
+    nome: str
+    codigo: int | None = None
+    tipo: str
+    id: int | None = None
+    notas: str | None = None
+
+
+class PortaoPlanoOut(BaseModel):
+    nome: str
+    papel: str
+    afi: str
+    padrao: str
+    aceitas: list[str] = []
+    recusadas: list[str] = []
+
+
+class AlvoPlanoOut(BaseModel):
+    nome: str
+    papel: str
+    codigo_v4: int | None = None
+    codigo_v6: int | None = None
+    gate_nome: str | None = None
+    classe_import: str | None = None
+    parametros: dict = {}
+    estado: str = "ausente"
+
+
+class AchadoOut(BaseModel):
+    codigo: str
+    severidade: str
+    descricao: str
+    valor: str | None = None
+    filtro: str | None = None
+    linha: int | None = None
+    acao: str | None = None
+
+
+class PlanoOut(BaseModel):
+    """O plano ativo, como a página o consulta (§11)."""
+
+    asn_principal: int | None = None
+    asns_anunciados: list[dict] = []
+    observacoes: str | None = None
+    snapshot_id: int | None = None
+    classes: list[ClassePlanoOut] = []
+    instrucoes: list[InstrucaoPlanoOut] = []
+    portoes: list[PortaoPlanoOut] = []
+    alvos: list[AlvoPlanoOut] = []
+
+
+class AdocaoPlanoIn(BaseModel):
+    device_id: int
+
+
+class PlanoAdotadoOut(BaseModel):
+    """O que a adoção do plano devolve: o que ficou em vigor e o que foi visto.
+
+    `classes`, `portoes` e `alvos` são contados do plano em vigor, o mesmo que o
+    `GET /plan` devolve — duas chamadas do mesmo plano dão os mesmos números.
+    `ja_existia` diz se a chamada gravou: com o mesmo ASN principal o serviço
+    devolve o plano que já estava, sem escrever. `divergencias` e `parados` são
+    da proposta do equipamento consultado, e descrevem a configuração dele.
+    """
+
+    plano_id: int
+    asn_principal: int
+    ja_existia: bool
+    classes: int
+    portoes: int
+    alvos: int
+    divergencias: list[AchadoOut] = []
+    parados: list[str] = []

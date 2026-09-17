@@ -59,6 +59,18 @@ UPSTREAM_TIPO = ("transito", "ix", "pni", "contingencia")
 UPSTREAM_PAPEL = ("principal", "contingencia")
 UCOMM_PURPOSE = ("blackhole", "prepend", "lp", "info")
 UCOMM_DIR = ("import", "export", "ambos")
+# Plano de communities (F1 §4-5): o vocabulário da borda, os alvos do anúncio,
+# a matriz classe × papel e a classificação na entrada.
+# Partição do plano de communities (spec §5): a banda é o que torna o valor
+# verificável, e `instrucao` é o código da large-community `61785:<código>:<alvo>`.
+COMMUNITY_BANDA = (
+    "local", "transito", "cliente", "parceiro", "conjunto", "tamanho", "especial", "instrucao",
+)
+COMMUNITY_ORIGEM = ("manual", "adotado")
+TARGET_PAPEL = ("transito", "ix", "pni", "cdn", "parceiro")
+GATE_PAPEL = ("upstream", "cdn", "parceiro", "ix")
+GATE_PADRAO = ("recusar", "permitir")
+IMPORT_RULE_PAPEL = ("cliente", "parceiro", "transito")
 
 
 class Device(Base):
@@ -380,12 +392,32 @@ class Community(Base):
 
     __tablename__ = "communities"
 
+    __table_args__ = (
+        # O valor é único no vocabulário, mas nulo não colide: um vocabulário
+        # de classes convive com o de instruções (§4.1).
+        Index("uq_communities_valor_v4", "valor_v4", unique=True,
+              postgresql_where=text("valor_v4 IS NOT NULL")),
+        Index("uq_communities_valor_v6", "valor_v6", unique=True,
+              postgresql_where=text("valor_v6 IS NOT NULL")),
+        # O código da large-community só é exclusivo dentro da banda `instrucao`.
+        Index("uq_communities_codigo", "codigo", unique=True,
+              postgresql_where=text("codigo IS NOT NULL AND banda = 'instrucao'")),
+    )
+
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     tipo: Mapped[str] = mapped_column(
         Enum(*COMMUNITY_TIPO, name="community_tipo"), default="padrao", nullable=False
     )  # §7/§25.6: categorização; criação de novas via UI/CLI desde a F5
     notes: Mapped[str | None] = mapped_column(Text())
+    valor_v4: Mapped[int | None] = mapped_column(Integer())  # o código de 2 bytes da família v4
+    valor_v6: Mapped[int | None] = mapped_column(Integer())
+    codigo: Mapped[int | None] = mapped_column(Integer())  # o meio de `61785:<código>:<alvo>`
+    banda: Mapped[str | None] = mapped_column(Enum(*COMMUNITY_BANDA, name="community_banda"))
+    origem: Mapped[str] = mapped_column(
+        Enum(*COMMUNITY_ORIGEM, name="community_origem"), default="manual", nullable=False
+    )
+    origem_snapshot_id: Mapped[int | None] = mapped_column(ForeignKey("device_snapshots.id"))
     admin_status: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -393,6 +425,115 @@ class Community(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+class CommunityPlan(Base):
+    """O cabeçalho do plano de communities (spec §4.2) — uma linha ativa."""
+
+    __tablename__ = "community_plans"
+
+    __table_args__ = (
+        # Uma linha ativa: o plano é um só (§4.2).
+        Index("uq_community_plans_ativa", "admin_status", unique=True,
+              postgresql_where=text("admin_status")),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    asn_principal: Mapped[int] = mapped_column(Integer, nullable=False)
+    asns_anunciados: Mapped[list | None] = mapped_column(JSON)
+    origem: Mapped[str] = mapped_column(
+        Enum(*COMMUNITY_ORIGEM, name="community_plan_origem"), default="manual", nullable=False
+    )
+    origem_snapshot_id: Mapped[int | None] = mapped_column(ForeignKey("device_snapshots.id"))
+    observacoes: Mapped[str | None] = mapped_column(Text())
+    admin_status: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class CommunityTarget(Base):
+    """Para quem eu anuncio e sob qual código (spec §4.3)."""
+
+    __tablename__ = "community_targets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    nome: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    papel: Mapped[str] = mapped_column(
+        Enum(*TARGET_PAPEL, name="community_target_papel"), default="transito", nullable=False
+    )
+    codigo_v4: Mapped[int | None] = mapped_column(Integer())
+    codigo_v6: Mapped[int | None] = mapped_column(Integer())
+    organization_id: Mapped[int | None] = mapped_column(ForeignKey("organizations.id"))
+    upstream_id: Mapped[int | None] = mapped_column(ForeignKey("upstreams.id"))
+    classe_import_id: Mapped[int | None] = mapped_column(ForeignKey("communities.id"))
+    gate_nome: Mapped[str | None] = mapped_column(String(128))
+    parametros: Mapped[dict | None] = mapped_column(JSON)
+    origem: Mapped[str] = mapped_column(
+        Enum(*COMMUNITY_ORIGEM, name="community_plan_origem"), default="manual", nullable=False
+    )
+    origem_snapshot_id: Mapped[int | None] = mapped_column(ForeignKey("device_snapshots.id"))
+    admin_status: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class CommunityGate(Base):
+    """Quais classes podem sair por este papel (spec §4.4) — a matriz classe × papel."""
+
+    __tablename__ = "community_gates"
+    __table_args__ = (UniqueConstraint("nome", "papel", "afi", name="uq_community_gates_nome_papel_afi"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    nome: Mapped[str] = mapped_column(String(128), nullable=False)
+    papel: Mapped[str] = mapped_column(
+        Enum(*GATE_PAPEL, name="community_gate_papel"), default="upstream", nullable=False
+    )
+    afi: Mapped[str] = mapped_column(String(8), default="ipv4", nullable=False)
+    padrao: Mapped[str] = mapped_column(
+        Enum(*GATE_PADRAO, name="community_gate_padrao"), default="recusar", nullable=False
+    )
+    # Lista de ids de `communities`: o id sobrevive ao rename (§4.4).
+    aceitas: Mapped[list | None] = mapped_column(JSON)
+    recusadas: Mapped[list | None] = mapped_column(JSON)
+    origem: Mapped[str] = mapped_column(
+        Enum(*COMMUNITY_ORIGEM, name="community_plan_origem"), default="manual", nullable=False
+    )
+    origem_snapshot_id: Mapped[int | None] = mapped_column(ForeignKey("device_snapshots.id"))
+    admin_status: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class CommunityImportRule(Base):
+    """A classificação na entrada, por papel (spec §4.5) — o render consome em F2."""
+
+    __tablename__ = "community_import_rules"
+    __table_args__ = (UniqueConstraint("papel", "afi", name="uq_community_import_rules_papel_afi"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    papel: Mapped[str] = mapped_column(
+        Enum(*IMPORT_RULE_PAPEL, name="community_import_papel"), nullable=False
+    )
+    afi: Mapped[str] = mapped_column(String(8), default="ipv4", nullable=False)
+    classe_id: Mapped[int] = mapped_column(ForeignKey("communities.id"), nullable=False)
+    condicao: Mapped[dict | None] = mapped_column(JSON)
+    notas: Mapped[str | None] = mapped_column(Text())
+    origem: Mapped[str] = mapped_column(
+        Enum(*COMMUNITY_ORIGEM, name="community_plan_origem"), default="manual", nullable=False
+    )
+    origem_snapshot_id: Mapped[int | None] = mapped_column(ForeignKey("device_snapshots.id"))
 
 
 class BgpSession(Base):

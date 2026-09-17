@@ -31,6 +31,7 @@ const GRUPOS_NAV: GrupoNav[] = [
       { para: "/prefix-authorizations", rotulo: "Prefixos autorizados" },
       { para: "/policy-profiles", rotulo: "Perfis de política" },
       { para: "/communities", rotulo: "Communities" },
+      { para: "/communities/plan", rotulo: "Comunidades · Plano" },
     ],
   },
   {
@@ -73,9 +74,30 @@ function ehAtivo(para: string, pathname: string) {
   return para === "/" ? pathname === "/" : pathname.startsWith(para);
 }
 
+/* O item atual é o casamento MAIS LONGO entre os que casam, e não o primeiro
+   da lista: `/communities/plan` também casa com `/communities`, e o prefixo
+   curto ficava com o breadcrumb da página do plano. */
+function itemAtual(pathname: string): ItemNav | undefined {
+  return TODOS_NAV.reduce<ItemNav | undefined>(
+    (melhor, item) =>
+      ehAtivo(item.para, pathname) && (!melhor || item.para.length > melhor.para.length) ? item : melhor,
+    undefined,
+  );
+}
+
+/* Item que é prefixo de outro item precisa de `end` no `NavLink`: sem ele o
+   react-router casa por prefixo e os DOIS itens ficam com o `active` aceso em
+   `/communities/plan`. O Dashboard (`/`) entra por construção, já que todo
+   caminho começa com "/" e ele era o único com `end` fixo. */
+const COM_END = new Set(
+  TODOS_NAV.filter((i) => TODOS_NAV.some((outro) => outro.para !== i.para && outro.para.startsWith(i.para))).map(
+    (i) => i.para,
+  ),
+);
+
 function ItemNav({ item }: { item: ItemNav }) {
   return (
-    <NavLink to={item.para} end={item.para === "/"} className={({ isActive }) => (isActive ? "active" : "")}>
+    <NavLink to={item.para} end={COM_END.has(item.para)} className={({ isActive }) => (isActive ? "active" : "")}>
       {ICONES_NAV[item.para]}
       <span>{item.rotulo}</span>
     </NavLink>
@@ -87,7 +109,7 @@ export function Layout() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
 
-  const atual = TODOS_NAV.find((i) => ehAtivo(i.para, pathname));
+  const atual = itemAtual(pathname);
   const grupoAtual = GRUPOS_NAV.find((g) => g.itens.some((i) => i.para === atual?.para));
 
   const [abertos, setAbertos] = useState<Set<string>>(() => {

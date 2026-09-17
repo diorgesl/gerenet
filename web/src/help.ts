@@ -103,6 +103,9 @@ export const HELP = {
   "community.name": "Nome/valor da community no catálogo (1–64 caracteres; ex.: no-export ou 64500:100) — a aplicação do valor concreto na configuração é fase futura.",
   "community.tipo": "Categoria da community (§7/§25.6): padrao (valor direto), acao_blackhole/acao_prepend/acao_lp (ação de tráfego), informacao (marcação informativa) ou tag_produto (tag de produto/serviço).",
   "community.notes": "Observações livres.",
+  "community.valor_v4": "Valor de 2 bytes da coluna IPv4 (ex.: 3001 em 61785:3001), dentro da faixa da banda. O dígito de família — o segundo — precisa conferir com esta coluna: 3x1x é v6, e trocar as colunas é recusado na hora. Valor fora da faixa entra e é a validação do plano que aponta.",
+  "community.valor_v6": "Valor de 2 bytes da coluna IPv6 (ex.: 3101): o gêmeo do v4, com o dígito de família (o segundo) em 1. As duas colunas podem carregar o mesmo valor quando a classe é família-agnóstica (ex.: 1010).",
+  "community.banda": "Partição que dá faixa ao valor (§5): local, transito, cliente, parceiro, conjunto, tamanho ou especial. `instrucao` é o código da large-community <asn>:<código>:<alvo>, que não carrega valor de 2 bytes; banda fora desta lista é recusada.",
 
   // Prefix authorizations
   "prefix.organization_id": "Organização dona da autorização (o filtro de entrada é derivado das autorizações ativas).",
