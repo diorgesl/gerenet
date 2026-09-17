@@ -23,7 +23,7 @@ def _auth() -> dict[str, str]:
     return {"X-API-Key": "teste-key"}
 
 
-def _device_com_snapshot(client: TestClient, nome: str, fixture: str) -> int:
+def _device_com_snapshot(nome: str, fixture: str, *, recursos: dict | None = None) -> int:
     from gerenet.db import SessionLocal
 
     with SessionLocal() as session:
@@ -37,6 +37,7 @@ def _device_com_snapshot(client: TestClient, nome: str, fixture: str) -> int:
                 # snapshot guarda e o leitor lê o arquivo do disco a partir dele
                 # (a convenção da casa — `tests/api/test_discovery_api.py:37`).
                 raw_files={"config_backup": [str(FIXTURES / fixture)]},
+                resources=recursos,
             )
         )
         session.commit()
@@ -83,7 +84,7 @@ def test_plano_vazio_devolve_200_sem_blocos(client: TestClient) -> None:
 
 
 def test_posso_adotar_e_depois_consultar(client: TestClient) -> None:
-    device_id = _device_com_snapshot(client, "ne-api-plano-01", "comunidades_edge.txt")
+    device_id = _device_com_snapshot("ne-api-plano-01", "comunidades_edge.txt")
     adocao = client.post(
         "/api/v1/communities/plan/adopt", json={"device_id": device_id}, headers=_auth()
     )
@@ -113,7 +114,7 @@ def test_equipamento_sem_coleta_e_404(client: TestClient) -> None:
 
 
 def test_validacao_devolve_os_achados(client: TestClient) -> None:
-    device_id = _device_com_snapshot(client, "ne-api-plano-03", "comunidades_edge.txt")
+    device_id = _device_com_snapshot("ne-api-plano-03", "comunidades_edge.txt")
     client.post("/api/v1/communities/plan/adopt", json={"device_id": device_id}, headers=_auth())
 
     resposta = client.get(
@@ -133,7 +134,7 @@ def test_aplicam_e_testam_saem_da_leitura(client: TestClient) -> None:
     validação — que resolve — acusaria `CUSTOMER-BGP-v4` aplicando a mesma
     classe. As duas superfícies se contradiriam sobre o mesmo plano.
     """
-    device_id = _device_com_snapshot(client, "ne-api-plano-04", "comunidades_edge.txt")
+    device_id = _device_com_snapshot("ne-api-plano-04", "comunidades_edge.txt")
     assert _adotar(client, device_id).status_code == 201
 
     consulta = client.get("/api/v1/communities/plan", headers=_auth()).json()
@@ -149,7 +150,7 @@ def test_aplicam_e_testam_saem_da_leitura(client: TestClient) -> None:
 
 def test_plano_de_outro_asn_principal_e_409(client: TestClient, tmp_path: Path) -> None:
     """R28: os filhos não têm recorte por plano ativo, então substituir recusa."""
-    primeiro = _device_com_snapshot(client, "ne-api-plano-05", "comunidades_edge.txt")
+    primeiro = _device_com_snapshot("ne-api-plano-05", "comunidades_edge.txt")
     assert _adotar(client, primeiro).status_code == 201
 
     outro = _device_com_config(
@@ -184,3 +185,74 @@ def test_equipamento_sem_asn_e_422(client: TestClient, tmp_path: Path) -> None:
 
 def test_sem_api_key_e_401(client: TestClient) -> None:
     assert client.get("/api/v1/communities/plan").status_code == 401
+
+
+def test_alvo_estabelecido_sai_com_estado_e_nao_para(client: TestClient) -> None:
+    """O `bgp_peers` da coleta é o que dá estado ao alvo, e o que o tira de `parados`.
+
+    Sem o recurso, todo alvo é `ausente` para a leitura e a poda do §9.3 leva
+    todos: o `GET /plan` sai sem alvo nenhum. Com o recurso, o alvo de pé entra
+    no plano com o estado coletado (`estado` do `AlvoPlanoOut`) e só quem a
+    coleta não viu é que para.
+    """
+    device_id = _device_com_snapshot(
+        "ne-api-plano-08", "comunidades_edge.txt",
+        recursos={"bgp_peers": [{"peer": "100.127.190.5", "estado": "established"}]},
+    )
+    adocao = _adotar(client, device_id)
+    assert adocao.status_code == 201
+    assert adocao.json()["parados"] == ["MSD-CDN-v4"]
+
+    consulta = client.get("/api/v1/communities/plan", headers=_auth()).json()
+    alvos = {a["nome"]: a for a in consulta["alvos"]}
+    assert alvos["PARCEIROS_CDN"]["estado"] == "established"
+    # O alvo sem membro conhecido na coleta não chega a ser gravado (§9.3).
+    assert "MSD-CDN-v4" not in alvos
+
+
+def test_readocao_de_mesmo_asn_conta_o_plano_em_vigor(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """R40: o `201` descreve o plano em vigor e diz se gravou.
+
+    Readotar o plano de **outro** equipamento com o mesmo ASN principal não
+    escreve nada (o serviço devolve o existente). Se o corpo contasse a proposta
+    do equipamento B, a página leria os números de uma proposta contra um plano
+    que continua o de antes, sem saber que nada foi gravado.
+    """
+    primeiro = _device_com_snapshot("ne-api-plano-09", "comunidades_edge.txt")
+    primeira = _adotar(client, primeiro)
+    assert primeira.status_code == 201
+    corpo_a = primeira.json()
+
+    outro = _device_com_config(
+        tmp_path, "ne-api-plano-10",
+        "ip community-filter advanced com-TRANSITO-FULL index 10 permit 65000:1010\n"
+        "ip community-filter advanced com-AS8167 index 10 permit 61785:8167\n"
+        "bgp 61785\n",
+        asn=61785,
+    )
+    segunda = _adotar(client, outro)
+    assert segunda.status_code == 201
+    corpo_b = segunda.json()
+
+    # Os três números são os do plano em vigor, iguais aos da primeira adoção:
+    # a proposta B tem menos classes, nenhum portão e nenhum alvo.
+    for campo in ("classes", "portoes", "alvos"):
+        assert corpo_b[campo] == corpo_a[campo]
+    consulta = client.get("/api/v1/communities/plan", headers=_auth()).json()
+    assert corpo_b["classes"] == len(consulta["classes"])
+    assert corpo_b["portoes"] == len(consulta["portoes"])
+    assert corpo_b["alvos"] == len(consulta["alvos"])
+
+    # Quem diz se houve escrita é o `ja_existia`: a primeira gravou, a segunda
+    # devolveu o plano que já estava (mesmo ASN principal não transiciona nada).
+    assert corpo_a["ja_existia"] is False
+    assert corpo_b["ja_existia"] is True
+    assert corpo_b["plano_id"] == corpo_a["plano_id"]
+
+    # Já as divergências e os parados descrevem a configuração **deste**
+    # equipamento, e não a escrita: o B não tem portão nem alvo nenhum.
+    assert corpo_b["divergencias"] == []
+    assert corpo_b["parados"] == []
+    assert corpo_a["divergencias"] != []

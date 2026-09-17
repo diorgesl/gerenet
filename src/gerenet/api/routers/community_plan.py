@@ -50,6 +50,10 @@ def validar(
 def adotar(payload: AdocaoPlanoIn, session: SessionDep, actor: ActorDep) -> PlanoAdotadoOut:
     """Grava na SoT o plano que a coleta do equipamento propõe. Idempotente.
 
+    O corpo descreve o plano **em vigor**: com o mesmo ASN principal o serviço
+    devolve o plano que já estava sem escrever, e aí a proposta deste equipamento
+    não é o que está valendo — quem diz que nada foi gravado é o `ja_existia`.
+
     O 409 e o 422 são recusas do serviço, e não guardas desta rota (R28/R31): o
     plano ativo é um só e o cabeçalho exige o ASN principal, então substituir o
     plano de outro ASN ou gravar sem ASN nenhum para antes de escrever — a
@@ -57,6 +61,7 @@ def adotar(payload: AdocaoPlanoIn, session: SessionDep, actor: ActorDep) -> Plan
     proposta não existe para ser adotada.
     """
     try:
+        plano_antes = svc.obter_plano(session)
         proposta = svc.propor_adocao(session, payload.device_id)
         plano = svc.adotar_plano(
             session, proposta, device_id=payload.device_id,
@@ -68,10 +73,17 @@ def adotar(payload: AdocaoPlanoIn, session: SessionDep, actor: ActorDep) -> Plan
         raise HTTPException(status_code=409, detail=str(erro)) from erro
     except ValidationError as erro:
         raise HTTPException(status_code=422, detail=str(erro)) from erro
+    # `adotar_plano` só volta daqui com um plano ativo (gravado agora, ou o que
+    # já estava), então esta leitura nunca é vazia: é o mesmo plano que o
+    # `GET /plan` devolve, e os números saem dele, não da proposta.
+    em_vigor = svc.obter_plano(session)
     return PlanoAdotadoOut(
-        plano_id=plano.id, asn_principal=plano.asn_principal,
-        classes=len(proposta.plano.classes), portoes=len(proposta.plano.portoes),
-        alvos=len(proposta.plano.alvos),
+        plano_id=plano.id,
+        asn_principal=plano.asn_principal,
+        ja_existia=plano_antes is not None and plano_antes.asn_principal == plano.asn_principal,
+        classes=len(em_vigor.classes),
+        portoes=len(em_vigor.portoes),
+        alvos=len(em_vigor.alvos),
         divergencias=[AchadoOut(**d.__dict__) for d in proposta.divergencias],
         parados=list(proposta.parados),
     )

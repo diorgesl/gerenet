@@ -1424,10 +1424,18 @@ class AdocaoPlanoIn(BaseModel):
 
 
 class PlanoAdotadoOut(BaseModel):
-    """O que a adoção do plano devolve: o que foi gravado e o que ficou de fora."""
+    """O que a adoção do plano devolve: o que ficou em vigor e o que foi visto.
+
+    `classes`, `portoes` e `alvos` são contados do plano em vigor, o mesmo que o
+    `GET /plan` devolve — duas chamadas do mesmo plano dão os mesmos números.
+    `ja_existia` diz se a chamada gravou: com o mesmo ASN principal o serviço
+    devolve o plano que já estava, sem escrever. `divergencias` e `parados` são
+    da proposta do equipamento consultado, e descrevem a configuração dele.
+    """
 
     plano_id: int
     asn_principal: int
+    ja_existia: bool
     classes: int
     portoes: int
     alvos: int
