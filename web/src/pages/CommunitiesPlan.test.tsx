@@ -52,9 +52,12 @@ const ACHADOS = [
 let validacaoPendente = false;
 let validacaoFalha = false;
 
+/* O `client` volta junto para o teste do refetch que falha: é por ele que a
+   consulta é refeita sem desmontar a página, como o `refetchOnWindowFocus`
+   faz quando o operador volta para a janela com a API fora. */
 function renderPlano() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  const utils = render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
         <AuthProvider>
@@ -63,6 +66,7 @@ function renderPlano() {
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return { ...utils, client };
 }
 
 describe("Comunidades · Plano", () => {
@@ -142,6 +146,33 @@ describe("Comunidades · Plano", () => {
     expect(alerta.textContent).toMatch(/^Não foi possível ler a validação/);
     expect(painel.textContent).not.toContain("Nenhuma divergência");
     expect(painel.textContent).not.toContain("(0)");
+  });
+
+  it("com a validação lida, o painel conta os achados no título", async () => {
+    renderPlano();
+    const painel = await screen.findByRole("region", { name: /divergências/i });
+    expect(within(painel).getByRole("heading").textContent).toBe("Divergências (1)");
+    expect(within(painel).getByText("4586")).toBeInTheDocument();
+  });
+
+  it("refetch que falha depois de uma carga boa tira o número do título", async () => {
+    const { client } = renderPlano();
+    const painel = await screen.findByRole("region", { name: /divergências/i });
+    expect(within(painel).getByRole("heading").textContent).toBe("Divergências (1)");
+
+    // A consulta volta falhando com o dado velho ainda no cache: o estado real
+    // do refetch falho do TanStack é `{status:"error", isError:true, data:[...]}`,
+    // e é o que o `refetchOnWindowFocus` produz sem nenhum caso exótico.
+    validacaoFalha = true;
+    await client.refetchQueries({ queryKey: ["communities-plan-validacao", null] }).catch(() => undefined);
+    const estado = client.getQueryState(["communities-plan-validacao", null]);
+    expect(estado?.status).toBe("error");
+    expect(estado?.data).toHaveLength(1);
+
+    // O título não pode contar o que o corpo diz não ter lido.
+    expect((await within(painel).findByRole("alert")).textContent).toMatch(/^Não foi possível ler a validação/);
+    expect(within(painel).getByRole("heading").textContent).toBe("Divergências");
+    expect(painel.textContent).not.toContain("(1)");
   });
 
   it("mostra o painel de divergências com o filtro e a linha", async () => {

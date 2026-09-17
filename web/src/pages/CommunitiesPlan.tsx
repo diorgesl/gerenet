@@ -148,8 +148,13 @@ export default function CommunitiesPlan() {
       <section aria-labelledby="plano-divergencias">
         {/* A contagem sai da resposta, e não de `achados` (que é `[]` sem ela):
             em voo ou com a leitura falha o painel não pode dizer "0" nem
-            "nenhuma divergência" — quem não mediu não tem o que afirmar. */}
-        <h2 id="plano-divergencias">Divergências{validacao.data ? ` (${achados.length})` : ""}</h2>
+            "nenhuma divergência" — quem não mediu não tem o que afirmar. O
+            título segue o MESMO sinal do corpo (`isError` zera o número): um
+            refetch que falha depois de uma carga boa deixa `data` velho no
+            cache, e sem isso o título contaria o que o alerta abaixo nega. */}
+        <h2 id="plano-divergencias">
+          Divergências{!validacao.isError && validacao.data ? ` (${achados.length})` : ""}
+        </h2>
         <DataTable<AchadoOut>
           colunas={[
             { key: "severidade", title: "Severidade" },
