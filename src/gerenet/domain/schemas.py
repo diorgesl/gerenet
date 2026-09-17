@@ -562,6 +562,10 @@ class CommunityCreate(BaseModel):
     name: str = Field(min_length=1, max_length=64)
     tipo: str = "padrao"  # validado no serviço contra models.COMMUNITY_TIPO
     notes: str | None = None
+    valor_v4: int | None = None
+    valor_v6: int | None = None
+    codigo: int | None = None
+    banda: str | None = None  # validado no serviço contra models.COMMUNITY_BANDA
 
 
 class CommunityOut(BaseModel):
@@ -578,6 +582,10 @@ class CommunityUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=64)
     tipo: str | None = None  # validado no serviço contra models.COMMUNITY_TIPO
     notes: str | None = None
+    valor_v4: int | None = None
+    valor_v6: int | None = None
+    codigo: int | None = None
+    banda: str | None = None
     admin_status: bool | None = None  # PATCH puro {"admin_status": false} roteia ao disable (Ruling 1)
 
 

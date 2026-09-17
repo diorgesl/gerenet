@@ -130,9 +130,11 @@ def test_cria_comunidade_global_com_tipo(session: Session) -> None:
     )
     assert evento is not None
     # M-12 (revisão final): `notes` fazia parte do painel do objeto criado (§18)
-    # e ficava de fora da trilha.
+    # e ficava de fora da trilha. O painel leva a linha inteira do vocabulário
+    # desde a F1 (plano de communities): valor, código e banda junto.
     assert evento.details["depois"] == {
         "name": "blackhole-sul", "tipo": "acao_blackhole", "notes": "v6/32 p/ Sul",
+        "banda": None, "valor_v4": None, "valor_v6": None, "codigo": None,
     }
     try:
         assert "blackhole-sul" in [c.name for c in svc.list_communities(session)]

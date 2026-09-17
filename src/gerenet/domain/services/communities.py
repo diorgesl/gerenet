@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from gerenet.domain import models
 from gerenet.domain.audit import registrar
+from gerenet.domain.communities_partition import conferir_linha
 from gerenet.domain.schemas import CommunityCreate, CommunityUpdate
 from gerenet.domain.services.errors import ConflictError, NotFoundError, ValidationError
 
@@ -16,6 +17,25 @@ def _validar_tipo(tipo: str) -> None:
     if tipo not in models.COMMUNITY_TIPO:
         validos = ", ".join(models.COMMUNITY_TIPO)
         raise ValidationError(f"Tipo de community inválido: {tipo} (válidos: {validos}).")
+
+
+def _validar_particao(
+    *, banda: str | None, valor_v4: int | None, valor_v6: int | None, codigo: int | None
+) -> None:
+    """Recusa só o que é sempre erro de digitação: a família na coluna errada.
+
+    As outras queixas da partição (valor fora de faixa, sem banda) são exceções
+    legítimas da §14.4: elas entram no plano e a validação as aponta, em vez de
+    a escrita impedir que o operador registre o que o equipamento tem.
+    """
+    problemas = conferir_linha(banda=banda, valor_v4=valor_v4, valor_v6=valor_v6, codigo=codigo)
+    for problema in problemas:
+        if problema.startswith("familia_incoerente"):
+            familia = problema.split(":", 1)[1]
+            raise ValidationError(
+                f"Valor 2 bytes na família errada (coluna {familia}): "
+                "o dígito de família do valor não confere com a coluna."
+            )
 
 
 def get_community(session: Session, community_id: int) -> models.Community:
@@ -33,13 +53,23 @@ def create_community(
     nome = (data.name or "").strip()
     if not nome:
         raise ValidationError("Nome da community não pode ser vazio.")
-    com = models.Community(name=nome, tipo=data.tipo, notes=data.notes)
+    _validar_particao(
+        banda=data.banda, valor_v4=data.valor_v4, valor_v6=data.valor_v6, codigo=data.codigo
+    )
+    com = models.Community(
+        name=nome, tipo=data.tipo, notes=data.notes,
+        banda=data.banda, valor_v4=data.valor_v4, valor_v6=data.valor_v6, codigo=data.codigo,
+    )
     session.add(com)
     try:
         session.flush()
         registrar(
             session, tipo="community.create", ator=actor, objeto="community", objeto_id=com.id,
-            antes=None, depois={"name": nome, "tipo": data.tipo, "notes": data.notes},
+            antes=None, depois={
+                "name": nome, "tipo": data.tipo, "notes": data.notes,
+                "banda": data.banda, "valor_v4": data.valor_v4,
+                "valor_v6": data.valor_v6, "codigo": data.codigo,
+            },
         )
         session.commit()
     except IntegrityError:
@@ -82,6 +112,13 @@ def update_community(
             raise ConflictError(f"Community já existe: {nome}.")
     if "tipo" in mudancas:
         _validar_tipo(mudancas["tipo"])
+    if {"banda", "valor_v4", "valor_v6", "codigo"} & set(mudancas):
+        _validar_particao(
+            banda=mudancas.get("banda", com.banda),
+            valor_v4=mudancas.get("valor_v4", com.valor_v4),
+            valor_v6=mudancas.get("valor_v6", com.valor_v6),
+            codigo=mudancas.get("codigo", com.codigo),
+        )
     antes = {campo: getattr(com, campo) for campo in mudancas}
     for campo, valor in mudancas.items():
         setattr(com, campo, valor)
